@@ -371,3 +371,216 @@ export const localBackend: Backend = {
 };
 
 export { createDescriptor };
+
+/* ------------------------------------------------------------------ */
+/* Compte de démonstration                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Identifiants du compte de démonstration.
+ * Ce ne sont PAS des identifiants de production : en mode démonstration, tout vit
+ * dans le navigateur et n'importe qui peut lire le localStorage. Le bouton
+ * « Entrer dans la démonstration » crée ce compte à la volée côté client.
+ */
+export const DEMO_EMAIL = 'demo@campagnes.app';
+export const DEMO_PASSWORD = 'campagnes2026';
+
+function svgDataUrl(svg: string): string {
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg.trim())}`;
+}
+
+/** Bandeau noir de pied de cadre — la couleur de marque, pas de dégradé. */
+const BAND_SVG = svgDataUrl(`
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="360" viewBox="0 0 1080 360">
+  <rect width="1080" height="360" fill="#000000"/>
+</svg>`);
+
+/** Coin noir, pour la campagne au format carré. */
+const CORNER_SVG = svgDataUrl(`
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1080" viewBox="0 0 1080 1080">
+  <path d="M0 0 H430 V430 Z" fill="#000000"/>
+</svg>`);
+
+const VERTICAL_THUMB = svgDataUrl(`
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920" viewBox="0 0 1080 1920">
+  <rect width="1080" height="1920" fill="#F3F4F6"/>
+  <rect y="1560" width="1080" height="360" fill="#000000"/>
+  <text x="540" y="1700" font-family="Inter, Helvetica, sans-serif" font-size="104"
+        font-weight="700" fill="#FFFFFF" text-anchor="middle">Rentrée 2026</text>
+  <text x="540" y="1800" font-family="Inter, Helvetica, sans-serif" font-size="46"
+        fill="#9CA3AF" text-anchor="middle">@amicale-abidjan</text>
+</svg>`);
+
+const SQUARE_THUMB = svgDataUrl(`
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1080" viewBox="0 0 1080 1080">
+  <rect width="1080" height="1080" fill="#F3F4F6"/>
+  <path d="M0 0 H430 V430 Z" fill="#000000"/>
+  <text x="540" y="960" font-family="Inter, Helvetica, sans-serif" font-size="92"
+        font-weight="700" fill="#000000" text-anchor="middle">Semaine de la santé</text>
+</svg>`);
+
+/**
+ * Crée (une seule fois) un compte de démonstration complet : profil, deux cadres
+ * et deux campagnes — une publiée, un brouillon. Idempotent : si le compte existe
+ * déjà, on se contente de reconnecter.
+ */
+export async function seedDemoAccount(): Promise<User> {
+  const db = readDb();
+  const existing = db.users.find((u) => u.email === DEMO_EMAIL);
+
+  if (existing) {
+    writeSession(existing.id);
+    return publicUser(existing);
+  }
+
+  const now = new Date().toISOString();
+  const userId = uid();
+
+  const user: DbUser = {
+    id: userId,
+    email: DEMO_EMAIL,
+    username: 'demo',
+    org_name: "Amicale des étudiants d'Abidjan",
+    logo_url: null,
+    plan: 'free',
+    onboarded_at: now,
+    created_at: now,
+    password: DEMO_PASSWORD,
+  };
+
+  const verticalFrame: Frame = {
+    id: uid(),
+    owner_id: userId,
+    name: 'Cadre — Rentrée 2026',
+    descriptor_json: {
+      version: 1,
+      ratio: '9:16',
+      background: 'transparent',
+      layers: [
+        {
+          id: 'demo-band',
+          type: 'image',
+          src: BAND_SVG,
+          label: 'bandeau.png',
+          x: 0,
+          y: 1560,
+          w: 1080,
+          h: 360,
+          rotation: 0,
+          z: 10,
+          opacity: 1,
+        },
+        {
+          id: 'demo-title',
+          type: 'text',
+          text: 'Rentrée 2026',
+          font: 'Inter',
+          size: 110,
+          color: '#FFFFFF',
+          align: 'center',
+          x: 90,
+          y: 1640,
+          w: 900,
+          h: 140,
+          rotation: 0,
+          z: 20,
+          opacity: 1,
+        },
+        {
+          id: 'demo-handle',
+          type: 'text',
+          text: '@amicale-abidjan',
+          font: 'Inter',
+          size: 48,
+          color: '#9CA3AF',
+          align: 'center',
+          x: 90,
+          y: 1790,
+          w: 900,
+          h: 62,
+          rotation: 0,
+          z: 30,
+          opacity: 1,
+        },
+      ],
+    },
+    thumbnail_url: VERTICAL_THUMB,
+    created_at: now,
+  };
+
+  const squareFrame: Frame = {
+    id: uid(),
+    owner_id: userId,
+    name: 'Cadre — Semaine de la santé',
+    descriptor_json: {
+      version: 1,
+      ratio: '1:1',
+      background: 'transparent',
+      layers: [
+        {
+          id: 'demo-corner',
+          type: 'image',
+          src: CORNER_SVG,
+          label: 'coin.png',
+          x: 0,
+          y: 0,
+          w: 430,
+          h: 430,
+          rotation: 0,
+          z: 10,
+          opacity: 1,
+        },
+        {
+          id: 'demo-square-title',
+          type: 'text',
+          text: 'Semaine de la santé',
+          font: 'Inter',
+          size: 92,
+          color: '#000000',
+          align: 'center',
+          x: 90,
+          y: 900,
+          w: 900,
+          h: 120,
+          rotation: 0,
+          z: 20,
+          opacity: 1,
+        },
+      ],
+    },
+    thumbnail_url: SQUARE_THUMB,
+    created_at: now,
+  };
+
+  const published: Campaign = {
+    id: uid(),
+    owner_id: userId,
+    name: 'Rentrée 2026 — UFHB',
+    slug: 'rentree-2026-ufhb',
+    frame_id: verticalFrame.id,
+    ratio: '9:16',
+    status: 'published',
+    created_at: now,
+  };
+
+  const draft: Campaign = {
+    id: uid(),
+    owner_id: userId,
+    name: 'Semaine de la santé',
+    slug: 'semaine-de-la-sante',
+    frame_id: squareFrame.id,
+    ratio: '1:1',
+    status: 'draft',
+    created_at: new Date(Date.now() - 86_400_000).toISOString(),
+  };
+
+  writeDb({
+    users: [...db.users, user],
+    frames: [...db.frames, verticalFrame, squareFrame],
+    campaigns: [...db.campaigns, published, draft],
+  });
+  writeSession(userId);
+
+  return publicUser(user);
+}
+

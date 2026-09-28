@@ -7,7 +7,8 @@ import { ArrowRight, Mail } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Field, Input } from '@/components/ui/input';
 import { InlineError, InlineInfo, Spinner } from '@/components/ui/feedback';
-import { backend, isSupabaseConfigured } from '@/lib/backend';
+import { backend, isDemoMode, isSupabaseConfigured } from '@/lib/backend';
+import { DEMO_EMAIL, DEMO_PASSWORD, seedDemoAccount } from '@/lib/backend/local';
 import { useSession } from '@/lib/backend/session';
 
 type Mode = 'login' | 'signup';
@@ -21,9 +22,23 @@ export function AuthForm({ mode }: { mode: Mode }) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
-  const [pending, setPending] = useState<'form' | 'google' | null>(null);
+  const [pending, setPending] = useState<'form' | 'google' | 'demo' | null>(null);
 
   const isSignup = mode === 'signup';
+
+  /** Ouvre un compte de démonstration complet (profil, cadres, campagnes). */
+  async function handleDemo() {
+    setError(null);
+    setInfo(null);
+    setPending('demo');
+    try {
+      await seedDemoAccount();
+      await refresh();
+      router.push('/dashboard');
+    } finally {
+      setPending(null);
+    }
+  }
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -83,6 +98,30 @@ export function AuthForm({ mode }: { mode: Mode }) {
           ? 'Un seul compte : celui de votre organisation. Vos participants n’en auront jamais.'
           : 'Accédez à vos campagnes, vos cadres et vos paramètres.'}
       </p>
+
+      {/* Accès direct : en mode démonstration, aucun compte n'existe au départ. */}
+      {isDemoMode && (
+        <div className="mt-6 rounded-lg border border-gray-200 bg-gray-50 p-4">
+          <p className="text-[13px] font-medium text-ink">Compte de démonstration</p>
+          <p className="mt-1 text-xs leading-relaxed text-gray-500">
+            Un clic : profil complet, deux cadres et deux campagnes déjà en place
+            (une publiée, un brouillon).
+          </p>
+          <p className="mt-2 font-mono text-[11px] text-gray-500">
+            {DEMO_EMAIL} · {DEMO_PASSWORD}
+          </p>
+          <Button
+            type="button"
+            variant="secondary"
+            size="md"
+            className="mt-3 w-full"
+            onClick={handleDemo}
+            disabled={pending !== null}
+          >
+            {pending === 'demo' ? <Spinner /> : 'Entrer dans la démonstration'}
+          </Button>
+        </div>
+      )}
 
       {isSupabaseConfigured && (
         <>
@@ -172,7 +211,8 @@ export function AuthForm({ mode }: { mode: Mode }) {
       {!isSupabaseConfigured && (
         <p className="mt-6 flex items-start gap-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-500">
           <Mail className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-          Mode démonstration : l’inscription est locale et immédiate, aucune confirmation par email.
+          Mode démonstration : l’inscription est immédiate et les données restent
+          dans ce navigateur. Aucune confirmation par email.
         </p>
       )}
     </div>
