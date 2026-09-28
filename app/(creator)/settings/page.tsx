@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowRight, Check, Coins, ExternalLink, Trash2 } from 'lucide-react';
+import { ArrowRight, Check, ExternalLink, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Field, Input, InputPrefix } from '@/components/ui/input';
@@ -228,19 +228,14 @@ export default function SettingsPage() {
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-200 pt-4">
-            <div className="flex items-center gap-2 text-[13px] text-gray-500">
-              <Coins className="size-4 text-purple" strokeWidth={1.75} aria-hidden />
-              Solde de distribution :{' '}
-              <span className="font-semibold text-gray-900">
-                {new Intl.NumberFormat('fr-FR').format(user.credits ?? 0)}
-              </span>{' '}
-              participations
-            </div>
+            <p className="text-[13px] text-gray-500">
+              La distribution est facturée à l’usage, sur devis, dans toutes les formules.
+            </p>
             <Link
-              href="/credits"
+              href="/tarifs"
               className="text-[13px] font-medium text-ink underline underline-offset-4"
             >
-              Recharger
+              Voir la grille
             </Link>
           </div>
 

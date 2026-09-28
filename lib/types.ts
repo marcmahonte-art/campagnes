@@ -14,28 +14,7 @@ export interface User {
   org_name: string | null;
   logo_url: string | null;
   plan: PlanKind;
-  /** Solde de crédits de distribution. 1 participant = 1 crédit. */
-  credits: number;
   onboarded_at: string | null;
-  created_at: string;
-}
-
-/** Mouvement de crédits : achat d'un pack, dotation, ou consommation. */
-export type CreditReason =
-  | 'pack_purchase'
-  | 'free_quota'
-  | 'campaign_budget'
-  | 'participation'
-  | 'refund';
-
-export interface CreditTransaction {
-  id: string;
-  owner_id: string;
-  /** Positif pour un crédit, négatif pour une consommation. */
-  amount: number;
-  reason: CreditReason;
-  label: string;
-  campaign_id: string | null;
   created_at: string;
 }
 
@@ -119,10 +98,6 @@ export interface Campaign {
   frame_id: string | null;
   ratio: Ratio;
   status: CampaignStatus;
-  /** Nombre de participations que la campagne est autorisée à servir. 0 = non défini. */
-  distribution_budget: number;
-  /** Participations réellement abouties : c'est ce qui a été décompté. */
-  credits_consumed: number;
   created_at: string;
 }
 

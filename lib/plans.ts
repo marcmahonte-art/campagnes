@@ -2,8 +2,8 @@
  * Plans, fonctionnalités et droits — source unique de vérité.
  *
  * Le modèle est volontairement binaire : un plan **a** ou **n'a pas** un module.
- * Les quotas de distribution, eux, sont gérés séparément (voir `lib/credits.ts`),
- * parce qu'ils se consomment à l'usage et pas au mois.
+ * La distribution, elle, est facturée à l'usage et sur devis : elle ne fait donc
+ * pas partie des droits, et vit séparément dans `lib/distribution.ts`.
  */
 
 export type PlanId = 'free' | 'creator' | 'organization';

@@ -3,16 +3,16 @@ import { ArrowRight, Coins, ShieldCheck, Sparkles } from 'lucide-react';
 import { SiteHeader } from '@/components/site-header';
 import { ButtonLink } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { PackCard } from '@/components/credits/pack-card';
+import { OfferCard } from '@/components/plans/offer-card';
 import { ComparisonTable } from '@/components/plans/comparison-table';
 import { PricingPlans } from '@/components/plans/pricing-plans';
-import { CREDIT_PACKS, FREE_TEST_QUOTA } from '@/lib/credits';
+import { DISTRIBUTION_CONTACT_EMAIL, DISTRIBUTION_OFFERS, quoteHref } from '@/lib/distribution';
 import { PLANS, PREMIUM_MODULES } from '@/lib/plans';
 
 export const metadata: Metadata = {
   title: 'Tarifs',
   description:
-    'Trois formules — Free, Creator, Organisation — et une distribution facturée à l’usage. 1 participant = 1 crédit.',
+    'Trois formules — Free, Creator, Organisation — et une distribution facturée à l’usage, sur devis.',
 };
 
 export default function TarifsPage() {
@@ -30,9 +30,9 @@ export default function TarifsPage() {
             L’abonnement paie les outils. La distribution se paie à l’usage.
           </h1>
           <p className="mt-5 max-w-2xl text-base leading-relaxed text-gray-500">
-            Créer une campagne est gratuit. Vous ne payez la diffusion que lorsqu’un participant
-            aboutit réellement : partager un lien à 10 000 personnes ne consomme rien tant que
-            personne ne participe.
+            Créer une campagne est gratuit. Vous ne payez la diffusion que pour le volume que vous
+            visez réellement : partager un lien à 10 000 personnes ne coûte rien tant que personne
+            ne participe.
           </p>
         </div>
       </section>
@@ -51,17 +51,17 @@ export default function TarifsPage() {
               Distribution
             </p>
             <h2 className="mt-3 text-[28px] font-bold leading-tight md:text-[36px]">
-              1 participant = 1 crédit.
+              Vous payez le volume que vous visez.
             </h2>
             <p className="mt-4 text-base leading-relaxed text-gray-500">
-              Les crédits sont attachés à votre compte, pas à une campagne. Vous arbitrez ensuite le
-              budget de chaque campagne : rien n’est consommé à la simple ouverture du lien.
+              Indiquez le nombre de participants attendu : nous établissons un devis à partir de la
+              grille ci-dessous. Plus le volume est important, plus le prix par participant baisse.
             </p>
           </header>
 
           <div className="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-            {CREDIT_PACKS.map((pack) => (
-              <PackCard key={pack.id} pack={pack} />
+            {DISTRIBUTION_OFFERS.map((offer) => (
+              <OfferCard key={offer.id} offer={offer} />
             ))}
           </div>
 
@@ -70,19 +70,20 @@ export default function TarifsPage() {
               <Sparkles className="size-5" strokeWidth={1.75} aria-hidden />
             </span>
             <div className="flex-1">
-              <h3 className="text-[15px] font-semibold">
-                {FREE_TEST_QUOTA} participations de test offertes
-              </h3>
+              <h3 className="text-[15px] font-semibold">Un volume qui ne figure pas dans la grille ?</h3>
               <p className="mt-1 text-[13px] leading-relaxed text-gray-500">
-                À l’inscription, votre compte reçoit {FREE_TEST_QUOTA} crédits : de quoi publier une
-                vraie campagne et voir ce que votre communauté en fait, avant de payer quoi que ce
-                soit.
+                Écrivez-nous avec le contexte de votre campagne : nous adaptons les conditions.
+                Réponse sous 48 heures ouvrées à{' '}
+                <span className="font-medium text-gray-700">{DISTRIBUTION_CONTACT_EMAIL}</span>.
               </p>
             </div>
-            <ButtonLink href="/signup" variant="primary" size="sm" className="shrink-0">
-              Créer ma campagne
+            <a
+              href={quoteHref()}
+              className="bg-brand-gradient inline-flex h-9 shrink-0 items-center gap-2 rounded-pill px-4 text-[13px] font-medium text-white shadow-sm transition-shadow hover:shadow-md"
+            >
+              Demander un devis
               <ArrowRight className="size-4" aria-hidden />
-            </ButtonLink>
+            </a>
           </Card>
         </div>
       </section>

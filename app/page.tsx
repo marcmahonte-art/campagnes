@@ -3,7 +3,6 @@ import { SiteHeader } from '@/components/site-header';
 import { ButtonLink } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { RATIO_LIST } from '@/lib/ratios';
-import { FREE_TEST_QUOTA } from '@/lib/credits';
 import { PLAN_LIST, formatFcfa } from '@/lib/plans';
 
 const STEPS = [
@@ -195,7 +194,7 @@ export default function HomePage() {
               <ArrowRight className="size-4" aria-hidden />
             </ButtonLink>
             <span className="text-[13px] text-gray-500">
-              {FREE_TEST_QUOTA} participations de test offertes à l’inscription.
+              Création et publication gratuites, sans carte bancaire.
             </span>
           </div>
         </div>

@@ -1,7 +1,6 @@
 import type {
   Campaign,
   CampaignWithFrame,
-  CreditTransaction,
   CreatorProfile,
   Descriptor,
   Frame,
@@ -10,7 +9,6 @@ import type {
   User,
 } from '@/lib/types';
 import { createDescriptor } from '@/lib/descriptor';
-import { FREE_TEST_QUOTA, PACKS_BY_ID } from '@/lib/credits';
 import type {
   Backend,
   CreateCampaignInput,
@@ -41,11 +39,10 @@ interface Db {
   users: DbUser[];
   frames: Frame[];
   campaigns: Campaign[];
-  transactions: CreditTransaction[];
 }
 
 function emptyDb(): Db {
-  return { users: [], frames: [], campaigns: [], transactions: [] };
+  return { users: [], frames: [], campaigns: [] };
 }
 
 function readDb(): Db {
@@ -58,7 +55,6 @@ function readDb(): Db {
       users: Array.isArray(parsed.users) ? parsed.users : [],
       frames: Array.isArray(parsed.frames) ? parsed.frames : [],
       campaigns: Array.isArray(parsed.campaigns) ? parsed.campaigns : [],
-      transactions: Array.isArray(parsed.transactions) ? parsed.transactions : [],
     };
   } catch {
     return emptyDb();
@@ -149,7 +145,6 @@ export const localBackend: Backend = {
       org_name: null,
       logo_url: null,
       plan: 'free',
-      credits: FREE_TEST_QUOTA,
       onboarded_at: null,
       created_at: new Date().toISOString(),
       password,
@@ -244,7 +239,6 @@ export const localBackend: Backend = {
       users: db.users.filter((u) => u.id !== id),
       frames: db.frames.filter((f) => f.owner_id !== id),
       campaigns: db.campaigns.filter((c) => c.owner_id !== id),
-      transactions: db.transactions.filter((t) => t.owner_id !== id),
     });
     writeSession(null);
     return {};
@@ -333,8 +327,6 @@ export const localBackend: Backend = {
       frame_id: null,
       ratio: input.ratio,
       status: 'draft',
-      distribution_budget: 0,
-      credits_consumed: 0,
       created_at: new Date().toISOString(),
     };
     db.campaigns.push(campaign);
@@ -388,7 +380,7 @@ export const localBackend: Backend = {
       });
   },
 
-  /* --- Abonnement et distribution ----------------------------------- */
+  /* --- Formule ------------------------------------------------------ */
   async setPlan(userId, plan: PlanKind): Promise<Result> {
     await delay(200);
     const db = readDb();
@@ -398,110 +390,6 @@ export const localBackend: Backend = {
     writeDb(db);
     window.dispatchEvent(new Event('campagnes:auth'));
     return {};
-  },
-
-  async listCreditTransactions(userId) {
-    return readDb()
-      .transactions.filter((t) => t.owner_id === userId)
-      .sort((a, b) => b.created_at.localeCompare(a.created_at));
-  },
-
-  async purchasePack(userId, packId): Promise<Result<{ credits: number }>> {
-    await delay(600);
-    const pack = PACKS_BY_ID[packId];
-    if (!pack) return { error: 'Pack de distribution inconnu.' };
-    if (pack.participants === null) {
-      return { error: 'Ce volume se traite sur devis. Écrivez-nous et nous revenons vers vous.' };
-    }
-
-    // Aucun prestataire de paiement n'est branché à ce stade : la confirmation est
-    // simulée. C'est ici que viendra l'appel CinetPay / FedaPay, suivi du webhook.
-    const db = readDb();
-    const index = db.users.findIndex((u) => u.id === userId);
-    if (index === -1) return { error: 'Profil introuvable.' };
-
-    const credits = (db.users[index].credits ?? 0) + pack.participants;
-    db.users[index] = { ...db.users[index], credits };
-    db.transactions.push({
-      id: uid(),
-      owner_id: userId,
-      amount: pack.participants,
-      reason: 'pack_purchase',
-      label: `Pack ${pack.name} — ${pack.participants} participations`,
-      campaign_id: null,
-      created_at: new Date().toISOString(),
-    });
-
-    writeDb(db);
-    window.dispatchEvent(new Event('campagnes:auth'));
-    return { data: { credits } };
-  },
-
-  async grantFreeQuota(userId): Promise<Result<{ credits: number }>> {
-    const db = readDb();
-    const index = db.users.findIndex((u) => u.id === userId);
-    if (index === -1) return { error: 'Profil introuvable.' };
-    if (db.transactions.some((t) => t.owner_id === userId && t.reason === 'free_quota')) {
-      return { data: { credits: db.users[index].credits ?? 0 } };
-    }
-
-    const credits = (db.users[index].credits ?? 0) + FREE_TEST_QUOTA;
-    db.users[index] = { ...db.users[index], credits };
-    db.transactions.push({
-      id: uid(),
-      owner_id: userId,
-      amount: FREE_TEST_QUOTA,
-      reason: 'free_quota',
-      label: `Dotation de bienvenue — ${FREE_TEST_QUOTA} participations de test`,
-      campaign_id: null,
-      created_at: new Date().toISOString(),
-    });
-
-    writeDb(db);
-    window.dispatchEvent(new Event('campagnes:auth'));
-    return { data: { credits } };
-  },
-
-  async consumeParticipation(campaignId, count = 1): Promise<Result<{ remaining: number }>> {
-    const db = readDb();
-    const campaignIndex = db.campaigns.findIndex((c) => c.id === campaignId);
-    if (campaignIndex === -1) return { error: 'Campagne introuvable.' };
-
-    const campaign = db.campaigns[campaignIndex];
-    const userIndex = db.users.findIndex((u) => u.id === campaign.owner_id);
-    if (userIndex === -1) return { error: 'Propriétaire introuvable.' };
-
-    const owner = db.users[userIndex];
-    const remainingBudget = campaign.distribution_budget - campaign.credits_consumed;
-
-    if (campaign.distribution_budget <= 0) {
-      return { error: 'Aucun budget de distribution défini pour cette campagne.' };
-    }
-    if (remainingBudget < count) {
-      return { error: 'Budget de distribution épuisé pour cette campagne.' };
-    }
-    if ((owner.credits ?? 0) < count) {
-      return { error: 'Solde de crédits insuffisant.' };
-    }
-
-    db.campaigns[campaignIndex] = {
-      ...campaign,
-      credits_consumed: campaign.credits_consumed + count,
-    };
-    db.users[userIndex] = { ...owner, credits: owner.credits - count };
-    db.transactions.push({
-      id: uid(),
-      owner_id: owner.id,
-      amount: -count,
-      reason: 'participation',
-      label: `${count} participation${count > 1 ? 's' : ''} — ${campaign.name}`,
-      campaign_id: campaign.id,
-      created_at: new Date().toISOString(),
-    });
-
-    writeDb(db);
-    window.dispatchEvent(new Event('campagnes:auth'));
-    return { data: { remaining: owner.credits - count } };
   },
 
   /* --- Médias ------------------------------------------------------- */
@@ -593,9 +481,8 @@ export async function seedDemoAccount(): Promise<User> {
     org_name: "Amicale des étudiants d'Abidjan",
     logo_url: null,
     // Le compte de démonstration arrive en Creator : c'est ce qui permet de voir
-    // les modules premium (Motion, Analytics, QR, Branding) sans rien payer.
+    // les modules premium (Motion, Analytics, QR) sans rien payer.
     plan: 'creator',
-    credits: FREE_TEST_QUOTA + 500,
     onboarded_at: now,
     created_at: now,
     password: DEMO_PASSWORD,
@@ -713,10 +600,6 @@ export async function seedDemoAccount(): Promise<User> {
     frame_id: verticalFrame.id,
     ratio: '9:16',
     status: 'published',
-    // Budget déjà arbitré sur la campagne publiée : la démonstration montre un
-    // compteur de distribution à mi-parcours, plus parlant qu'un zéro.
-    distribution_budget: 250,
-    credits_consumed: 37,
     created_at: now,
   };
 
@@ -728,48 +611,13 @@ export async function seedDemoAccount(): Promise<User> {
     frame_id: squareFrame.id,
     ratio: '1:1',
     status: 'draft',
-    distribution_budget: 0,
-    credits_consumed: 0,
     created_at: new Date(Date.now() - 86_400_000).toISOString(),
   };
-
-  // Deux écritures au journal des crédits : la dotation de bienvenue, et l'achat
-  // d'un pack. L'historique de démonstration n'est donc jamais vide.
-  const transactions: CreditTransaction[] = [
-    {
-      id: uid(),
-      owner_id: userId,
-      amount: FREE_TEST_QUOTA,
-      reason: 'free_quota',
-      label: `Dotation de bienvenue — ${FREE_TEST_QUOTA} participations de test`,
-      campaign_id: null,
-      created_at: now,
-    },
-    {
-      id: uid(),
-      owner_id: userId,
-      amount: 500,
-      reason: 'pack_purchase',
-      label: 'Pack Populaire — 500 participations',
-      campaign_id: null,
-      created_at: now,
-    },
-    {
-      id: uid(),
-      owner_id: userId,
-      amount: -37,
-      reason: 'participation',
-      label: `37 participations — ${published.name}`,
-      campaign_id: published.id,
-      created_at: now,
-    },
-  ];
 
   writeDb({
     users: [...db.users, user],
     frames: [...db.frames, verticalFrame, squareFrame],
     campaigns: [...db.campaigns, published, draft],
-    transactions: [...db.transactions, ...transactions],
   });
   writeSession(userId);
 

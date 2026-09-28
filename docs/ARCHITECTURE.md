@@ -50,9 +50,8 @@ campagnes/
 │   │   ├── dashboard/page.tsx        # « Mes campagnes » + bouton Nouvelle campagne
 │   │   ├── campaigns/
 │   │   │   ├── new/page.tsx          # nom + slug + format → crée le brouillon
-│   │   │   └── [id]/page.tsx         # Frame Engine + Motion + budget + JSON + publication
-│   │   ├── credits/page.tsx          # solde, packs, historique des mouvements
-│   │   ├── analytics/page.tsx        # consommation de distribution et usage des formats
+│   │   │   └── [id]/page.tsx         # Frame Engine + Motion + JSON + publication
+│   │   ├── analytics/page.tsx        # usage des formats et état des campagnes
 │   │   ├── qr-codes/page.tsx         # un QR code par campagne publiée
 │   │   └── settings/page.tsx         # formule, profil, email, mot de passe, suppression
 │   │
@@ -81,16 +80,15 @@ campagnes/
 │   │   ├── plan-card.tsx             # carte de formule + pastille de formule
 │   │   ├── comparison-table.tsx      # matrice, repliée en blocs sur mobile
 │   │   ├── feature-gate.tsx          # verrou d'un module premium
-│   │   └── pricing-plans.tsx         # grille interactive (activation de formule)
-│   ├── credits/
-│   │   └── pack-card.tsx             # pack de distribution
+│   │   ├── pricing-plans.tsx         # grille interactive (activation de formule)
+│   │   └── offer-card.tsx            # offre de distribution : volume, prix, devis
 │   └── frame/
 │       └── frame-editor.tsx          # canvas Fabric.js (Frame Engine + lecture d'animation)
 │
 ├── lib/
-│   ├── types.ts                      # User, Frame, Campaign, Descriptor, CreditTransaction…
+│   ├── types.ts                      # User, Frame, Campaign, Descriptor, GalleryItem…
 │   ├── plans.ts                      # formules, droits, libellés, matrice, modules premium
-│   ├── credits.ts                    # packs, prix, quotas, taux de consommation
+│   ├── distribution.ts               # grille tarifaire FCFA + demande de devis
 │   ├── motion.ts                     # Motion Engine — pur et déterministe
 │   ├── video-export.ts               # rendu hors écran : PNG + WebM, filigrane
 │   ├── descriptor.ts                 # création / lecture / validation du JSON versionné
@@ -108,7 +106,7 @@ campagnes/
 │
 ├── middleware.ts                     # /@pseudo → /u/pseudo  +  rafraîchissement de session
 ├── supabase/migrations/0001_init.sql          # tables + RLS + trigger + storage + vue
-├── supabase/migrations/0002_plans_credits.sql # formules + crédits + packs + fonctions SQL
+├── supabase/migrations/0002_plans_distribution.sql # formules + grille tarifaire + fonction SQL
 ├── docs/ARCHITECTURE.md              # ce document
 ├── .env.example
 ├── tailwind.config.ts
@@ -276,90 +274,87 @@ accent (CTA principal, état actif, halo), jamais un fond permanent.
 
 ---
 
-## 7. Formules, crédits et distribution (Phase B)
+## 7. Formules et distribution (Phase B)
 
-Fichier exécutable : `supabase/migrations/0002_plans_credits.sql`.
+Fichier exécutable : `supabase/migrations/0002_plans_distribution.sql`.
 
 ### 7.1 Le modèle, en une phrase
 
 **L'abonnement paie les outils, la distribution se paie à l'usage.**
 Les modules (Frame Pro, Motion, Analytics, QR, Branding, Domaine…) sont binaires : une
-formule les a, ou ne les a pas. La diffusion, elle, se consomme à l'unité.
+formule les a, ou ne les a pas. La diffusion, elle, se facture par volume — sur devis.
 
 ### 7.2 Décision de schéma : renommer plutôt que recréer
 
 La migration 0001 créait `plan_kind as enum ('free','pro','org')` — des brouillons. La
 grille tarifaire fixe les noms définitifs. 0002 fait donc un `alter type … rename value`
 (Postgres ≥ 10) au lieu de recréer le type : les lignes existantes ne sont pas perdues.
-`'pro'` → `'creator'`, `'org'` → `'organization'`.
+`'pro'` → `'creator'`, `'org'` → `'organization'`. Un filet de sécurité recrée le type
+si la 0001 n'avait pas encore été appliquée.
 
-### 7.3 Colonnes ajoutées
+### 7.3 Pas de solde, pas de compteur, pas de journal
 
-| Table | Colonne | Rôle |
-|---|---|---|
-| `users` | `credits integer not null default 0` | solde de participations, contrainte `>= 0` |
-| `campaigns` | `distribution_budget integer not null default 0` | participations autorisées, `>= 0` |
-| `campaigns` | `credits_consumed integer not null default 0` | participations abouties |
+Décision produit assumée : **le produit n'affiche jamais un faux bouton d'achat.** La
+distribution se traite au cas par cas, donc il n'existe volontairement aucune de ces
+colonnes ni tables :
 
-Contrainte `campaigns_credits_within_budget` : `credits_consumed <= distribution_budget`.
-Elle rend impossible un dépassement de budget, même en cas de bug applicatif.
+- pas de `users.credits`, pas de `campaigns.distribution_budget` ni `credits_consumed` ;
+- pas de `credit_transactions` ni d'enum `credit_reason` ;
+- pas de fonction `consume_participation` ni `purchase_credit_pack`.
 
-### 7.4 Le prix vit en base
+Conséquence directe : rien à décompter, donc **aucune logique d'argent à faire respecter
+côté serveur**. C'est le principal gain de simplicité de cette version.
 
-`public.credit_packs(id, name, participants, price_fcfa, sort_order)` porte la grille. Le
-fichier `lib/credits.ts` n'en est que le **miroir d'affichage** : c'est la table qui fait
-foi au moment d'un achat. Conséquence voulue — un changement de prix ne demande aucun
-redéploiement.
+> Une version antérieure de la migration portait un système de crédits (1 participant =
+> 1 crédit). Il a été retiré sur décision produit. La base n'ayant jamais été
+> provisionnée, le fichier 0002 a été réécrit plutôt que corrigé par une 0003.
 
-Le pack « 10 000 et plus » n'est **pas** dans la table : il se traite sur devis, et
-`purchase_credit_pack` refuse tout identifiant absent.
+### 7.4 La grille tarifaire vit en base
 
-### 7.5 Le journal des mouvements
+`public.distribution_offers(id, name, participants, price_fcfa, sort_order)` porte les
+volumes et les prix. Le fichier `lib/distribution.ts` n'en est que le **miroir
+d'affichage** — il ajoute ce que la table n'a pas à porter : la description commerciale
+de chaque offre et le libellé du palier « sur devis ».
 
-`public.credit_transactions(id, owner_id, amount, reason, label, campaign_id, created_at)`
-avec `amount <> 0` (positif = crédit, négatif = débit) et un enum `credit_reason` :
-`pack_purchase`, `free_quota`, `campaign_budget`, `participation`, `refund`.
+Conséquence voulue : un changement de prix ne demande **aucun redéploiement**, une simple
+édition de ligne dans le tableau de bord Supabase suffit.
 
-RLS : **lecture seule** pour le propriétaire. Aucune policy d'écriture — les seules
-écritures passent par les fonctions `security definer`. Un solde ne peut donc pas être
-modifié depuis le navigateur, même avec un client Supabase compromis.
+RLS : **lecture publique** (`anon`, `authenticated`) — la grille est affichée sur la page
+tarifs sans compte. **Aucune policy d'écriture** : la grille se modifie en `service_role`.
 
-### 7.6 Toute la logique d'argent est en SQL
+Le palier « Grand volume » (10 000 participants et plus) n'est **pas** dans la table : il
+se traite sur devis, cas par cas.
 
-| Fonction | Rôle |
-|---|---|
-| `grant_free_quota()` | dotation de bienvenue, idempotente (vérifie `reason = 'free_quota'`) |
-| `purchase_credit_pack(p_pack_id)` | crédite le solde, journalise l'achat |
-| `consume_participation(p_campaign_id, p_count)` | décrémente solde **et** campagne, sous `for update` |
-| `set_own_plan(p_plan)` | changement de formule |
+### 7.5 La demande de devis remplace l'achat
 
-`consume_participation` verrouille la ligne de campagne (`select … for update`) puis celle
-de l'utilisateur : deux participations simultanées ne peuvent pas lire le même solde.
-C'est le point qui justifie de ne pas faire ce calcul côté client.
+`lib/distribution.ts` expose `quoteHref(offer)` : une URL `mailto:` pré-remplie (objet et
+corps reprenant le volume et le prix affiché). Chaque `OfferCard` pointe dessus. C'est le
+seul « bouton d'action » de la section distribution — pas de panier, pas de paiement
+simulé, pas de redirection vers un prestataire.
 
-Le trigger `handle_new_user` est remplacé pour créditer les 20 participations de test dès
-la création du profil — y compris par Google, où aucun code client ne s'exécute avant.
+`formatFcfa()` centralise l'affichage (`fr-FR`, espace insécable fine normalisée en espace
+simple, suffixe ` FCFA`). Aucun écran ne réécrit un prix à la main.
 
-> **À verrouiller avant production.** `set_own_plan` et `purchase_credit_pack` sont
-> exécutables par `authenticated` pour permettre la recette sans prestataire. En
-> production elles doivent être révoquées et réservées au webhook de paiement
-> (`service_role`). C'est écrit dans l'en-tête de la migration.
+### 7.6 Activation d'une formule
 
-### 7.7 Le décompte ne se déclenche jamais à l'ouverture du lien
+Une seule fonction `security definer` subsiste : `set_own_plan(p_plan plan_kind)`. Elle
+vérifie `auth.uid()` puis met à jour la ligne de l'appelant — rien d'autre.
 
-Un lien partagé à 10 000 personnes dont 1 000 participent consomme **1 000** crédits, pas
-10 000. `consume_participation` est appelée au moment où le visuel est réellement produit —
-c'est-à-dire dans le parcours participant (Phase C), jamais au chargement de page.
+> **À verrouiller avant production.** `set_own_plan` est exécutable par `authenticated`
+> pour permettre la recette sans prestataire branché. En production elle doit être
+> révoquée pour `authenticated` et réservée au webhook de paiement (`service_role`).
+> C'est écrit dans l'en-tête et dans le commentaire de la fonction.
 
-### 7.8 Où vit chaque règle
+### 7.7 Où vit chaque règle
 
 | Règle | Fichier | Consommé par |
 |---|---|---|
 | Quels modules pour quelle formule | `lib/plans.ts` → `hasFeature()` | nav, verrous, export |
-| Volumes, prix, quotas | `lib/credits.ts` | page tarifs, page crédits |
-| Autorité finale sur le solde | `0002_plans_credits.sql` | Postgres uniquement |
+| Volumes, prix affichés, libellé du devis | `lib/distribution.ts` | page tarifs |
+| Prix faisant foi pour un devis | `distribution_offers` (Postgres) | tableau de bord Supabase |
+| Activation d'une formule | `set_own_plan` (`0002_plans_distribution.sql`) | Postgres uniquement |
 
-Un seul point de vérité par règle. Aucun écran ne redéfinit un droit en local.
+Un seul point de vérité par règle. Aucun écran ne redéfinit un droit ni un prix en local.
 
 ---
 

@@ -1,7 +1,6 @@
 import type {
   Campaign,
   CampaignWithFrame,
-  CreditTransaction,
   CreatorProfile,
   Descriptor,
   Frame,
@@ -10,7 +9,6 @@ import type {
   User,
 } from '@/lib/types';
 import { parseDescriptor } from '@/lib/descriptor';
-import { PACKS_BY_ID } from '@/lib/credits';
 import { supabaseBrowser } from '@/lib/supabase/client';
 import { MEDIA_BUCKET, SITE_URL } from './config';
 import type {
@@ -36,7 +34,6 @@ function rowToUser(row: Row): User {
     org_name: (row.org_name as string | null) ?? null,
     logo_url: (row.logo_url as string | null) ?? null,
     plan: (row.plan as User['plan']) ?? 'free',
-    credits: Number(row.credits ?? 0),
     onboarded_at: (row.onboarded_at as string | null) ?? null,
     created_at: String(row.created_at ?? new Date().toISOString()),
   };
@@ -62,20 +59,6 @@ function rowToCampaign(row: Row): Campaign {
     frame_id: (row.frame_id as string | null) ?? null,
     ratio: (row.ratio as Campaign['ratio']) ?? '1:1',
     status: (row.status as Campaign['status']) ?? 'draft',
-    distribution_budget: Number(row.distribution_budget ?? 0),
-    credits_consumed: Number(row.credits_consumed ?? 0),
-    created_at: String(row.created_at ?? new Date().toISOString()),
-  };
-}
-
-function rowToTransaction(row: Row): CreditTransaction {
-  return {
-    id: String(row.id),
-    owner_id: String(row.owner_id),
-    amount: Number(row.amount ?? 0),
-    reason: row.reason as CreditTransaction['reason'],
-    label: String(row.label ?? ''),
-    campaign_id: (row.campaign_id as string | null) ?? null,
     created_at: String(row.created_at ?? new Date().toISOString()),
   };
 }
@@ -370,53 +353,13 @@ export const supabaseBackend: Backend = {
     }));
   },
 
-  /* --- Abonnement et distribution ----------------------------------- */
-  // Toute la logique d'argent vit en SQL (migration 0002), jamais dans le client :
-  // un solde de crédits ne doit pas pouvoir être modifié depuis le navigateur.
+  /* --- Formule ------------------------------------------------------ */
+  // Le changement de formule est une opération serveur : la fonction SQL
+  // `set_own_plan` est le seul chemin, et elle sera réservée au webhook de
+  // paiement en production (voir l'en-tête de la migration 0002).
   async setPlan(_userId, plan: PlanKind): Promise<Result> {
     const { error } = await supabaseBrowser().rpc('set_own_plan', { p_plan: plan });
     return error ? { error: message(error, 'Le changement de formule a échoué.') } : {};
-  },
-
-  async listCreditTransactions(userId) {
-    const { data, error } = await supabaseBrowser()
-      .from('credit_transactions')
-      .select('*')
-      .eq('owner_id', userId)
-      .order('created_at', { ascending: false });
-    if (error || !data) return [];
-    return (data as Row[]).map(rowToTransaction);
-  },
-
-  async purchasePack(_userId, packId): Promise<Result<{ credits: number }>> {
-    const pack = PACKS_BY_ID[packId];
-    if (!pack) return { error: 'Pack de distribution inconnu.' };
-    if (pack.participants === null) {
-      return { error: 'Ce volume se traite sur devis. Écrivez-nous et nous revenons vers vous.' };
-    }
-
-    // `purchase_credit_pack` est appelée par le webhook du prestataire de paiement
-    // en production. Ici elle sert à l'activation manuelle du temps de la recette.
-    const { data, error } = await supabaseBrowser().rpc('purchase_credit_pack', {
-      p_pack_id: packId,
-    });
-    if (error) return { error: message(error, 'L’achat du pack a échoué.') };
-    return { data: { credits: Number(data ?? 0) } };
-  },
-
-  async grantFreeQuota(): Promise<Result<{ credits: number }>> {
-    const { data, error } = await supabaseBrowser().rpc('grant_free_quota');
-    if (error) return { error: message(error, 'L’attribution de la dotation a échoué.') };
-    return { data: { credits: Number(data ?? 0) } };
-  },
-
-  async consumeParticipation(campaignId, count = 1): Promise<Result<{ remaining: number }>> {
-    const { data, error } = await supabaseBrowser().rpc('consume_participation', {
-      p_campaign_id: campaignId,
-      p_count: count,
-    });
-    if (error) return { error: message(error, 'La participation n’a pas pu être décomptée.') };
-    return { data: { remaining: Number(data ?? 0) } };
   },
 
   /* --- Médias ------------------------------------------------------- */

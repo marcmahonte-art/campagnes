@@ -25,15 +25,13 @@
 | Page publique du créateur `campagnes.app/@pseudo` | ✅ |
 | Paramètres de compte (nom, pseudo, logo, email, mot de passe, suppression) | ✅ |
 
-### Phase B — formules, crédits, animation et export
+### Phase B — formules, distribution, animation et export
 
 | Livrable | État |
 |---|---|
 | Grille tarifaire publique `/tarifs` (Free · Creator · Organisation) | ✅ |
 | Matrice comparative par fonctionnalité | ✅ |
-| Crédits de distribution (1 participant = 1 crédit) | ✅ |
-| Achat de packs + historique des mouvements `/credits` | ✅ |
-| Budget de distribution par campagne | ✅ |
+| Grille de distribution en FCFA + demande de devis par email | ✅ |
 | Changement de formule (paramètres, immédiat en recette) | ✅ |
 | Verrouillage des modules premium selon la formule | ✅ |
 | **Motion Engine** — presets + description en français | ✅ |
@@ -58,12 +56,12 @@ paiement réel, branding, domaine personnalisé, multi-utilisateurs, rendu serve
 | Frame Pro · Motion · Analytics · QR · Branding | — | ✅ | ✅ |
 | Domaine · Multi-utilisateurs · Galerie privée · Rapports | — | — | ✅ |
 
-**Distribution** — facturée à l'usage, dans tous les plans. Les crédits sont attachés au
-compte ; chaque campagne reçoit un budget. Un crédit n'est décompté que lorsqu'un
-participant aboutit réellement, jamais à l'ouverture du lien. `20` participations de test
-sont offertes à l'inscription.
+**Distribution** — facturée à l'usage, dans tous les plans. Les tarifs sont **indicatifs et
+affichés en FCFA** (100 participants = 2 500, 500 = 5 000, 1 000 = 7 500, 5 000 = 20 000,
+au-delà sur devis). Aucun paiement n'est simulé dans le produit : chaque volume renvoie à une
+**demande de devis** (`mailto:`), et le reste se traite avec l'équipe.
 
-Source unique de vérité : `lib/plans.ts` (droits) et `lib/credits.ts` (volumes et prix).
+Source unique de vérité : `lib/plans.ts` (droits) et `lib/distribution.ts` (volumes et prix).
 
 ---
 
@@ -81,9 +79,9 @@ discret le signale en haut de page.
 ### Compte de démonstration
 
 Le bouton **« Entrer dans la démonstration »** (écrans *Connexion* et *Inscription*) crée
-un compte complet : profil, deux cadres, une campagne publiée, un brouillon, un solde de
-crédits et son historique. Le compte arrive en formule **Creator**, ce qui permet de voir
-les modules premium (Motion, Analytics, QR) sans rien payer.
+un compte complet : profil, deux cadres, une campagne publiée et un brouillon. Le compte
+arrive en formule **Creator**, ce qui permet de voir les modules premium (Motion, Analytics,
+QR) sans rien payer.
 
 Identifiants, si vous préférez passer par le formulaire :
 
@@ -100,8 +98,8 @@ demo@campagnes.app / campagnes2026
 2. Exécuter les migrations **dans l'ordre** dans **SQL Editor** :
    - `supabase/migrations/0001_init.sql` — tables, policies RLS, trigger d'inscription,
      bucket `media`, vue publique `creator_profiles`.
-   - `supabase/migrations/0002_plans_credits.sql` — formules, crédits, packs, journal des
-     mouvements et fonctions SQL d'argent.
+   - `supabase/migrations/0002_plans_distribution.sql` — formules, grille tarifaire de
+     distribution et fonction SQL de changement de formule.
 3. Activer le fournisseur **Google** dans *Authentication → Providers*.
 4. Copier `.env.example` en `.env.local` et renseigner :
 
@@ -114,11 +112,11 @@ NEXT_PUBLIC_SITE_URL=http://localhost:3000
 Aucune ligne d'écran ne change : toute la couche données passe par la façade
 `lib/backend/index.ts`.
 
-> **Argent et sécurité.** Toute la logique de crédits vit en SQL, dans des fonctions
-> `security definer` : le client appelle, il ne calcule jamais. Avant la mise en
-> production, deux points sont à verrouiller — `set_own_plan` et `purchase_credit_pack`
-> doivent être révoquées pour `authenticated` et réservées au webhook de paiement
-> (`service_role`). C'est documenté dans l'en-tête de la migration 0002.
+> **Sécurité.** Les droits d'accès sont calculés côté application (`lib/plans.ts`) et la
+> seule écriture sensible en base est le changement de formule, isolé dans une fonction
+> `security definer`. Avant la mise en production, `set_own_plan` doit être révoquée pour
+> `authenticated` et réservée au webhook de paiement (`service_role`). C'est documenté dans
+> l'en-tête de la migration 0002.
 
 ### Déploiement Vercel
 
@@ -136,7 +134,7 @@ app/
   tarifs/                        grille tarifaire publique + matrice comparative
   galerie/                       campagnes publiées, tous créateurs
   (auth)/                        login · signup · onboarding
-  (creator)/                     dashboard · campaigns/[id] · credits · analytics
+  (creator)/                     dashboard · campaigns/[id] · analytics
                                  qr-codes · settings · campaigns/new
   u/[username]/                  profil public du créateur
   auth/callback/                 échange du code OAuth Google
@@ -145,13 +143,12 @@ components/
   frame/frame-editor.tsx         Frame Engine (Fabric.js) + lecture d'animation
   campaign/motion-panel.tsx      Motion Engine : presets, description, export
   campaign/descriptor-viewer.tsx JSON du descripteur, inspectable
-  plans/                         cartes de formule, matrice, verrou de module
-  credits/pack-card.tsx          packs de distribution
+  plans/                         cartes de formule, matrice, verrou de module, offre
   dashboard/                     navigation (sensible à la formule) + vignette
 lib/
   backend/                       façade données : Supabase ou mode local
   plans.ts                       formules, droits, libellés, matrice
-  credits.ts                     packs, prix, quotas, taux de consommation
+  distribution.ts                grille tarifaire FCFA + demande de devis
   motion.ts                      Motion Engine — pur et déterministe
   video-export.ts                rendu hors écran : PNG et WebM
   descriptor.ts                  lecture / écriture du descripteur versionné
@@ -159,7 +156,7 @@ lib/
   slug.ts                        slugify + normalisation du @pseudo
   supabase/                      clients navigateur et serveur
 supabase/migrations/0001_init.sql
-supabase/migrations/0002_plans_credits.sql
+supabase/migrations/0002_plans_distribution.sql
 middleware.ts                    /@pseudo → /u/pseudo + session
 ```
 
