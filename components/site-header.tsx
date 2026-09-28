@@ -29,6 +29,26 @@ export function SiteHeader({ transparent = false }: { transparent?: boolean }) {
           ) : (
             <>
               <Link
+                href="/galerie"
+                className={
+                  transparent
+                    ? 'hidden rounded-pill px-4 py-2 text-sm font-medium text-white/80 transition-colors hover:text-white sm:block'
+                    : 'hidden rounded-pill px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:text-ink sm:block'
+                }
+              >
+                Galerie
+              </Link>
+              <Link
+                href="/tarifs"
+                className={
+                  transparent
+                    ? 'hidden rounded-pill px-4 py-2 text-sm font-medium text-white/80 transition-colors hover:text-white sm:block'
+                    : 'hidden rounded-pill px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:text-ink sm:block'
+                }
+              >
+                Tarifs
+              </Link>
+              <Link
                 href="/login"
                 className={
                   transparent

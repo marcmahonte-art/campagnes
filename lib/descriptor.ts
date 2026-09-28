@@ -7,6 +7,17 @@ import {
   type TextLayer,
 } from './types';
 import { isRatio, ratioSpec } from './ratios';
+import type { LayerMotion, MotionPlan, MotionPresetId } from './motion';
+
+const MOTION_PRESETS_IDS: MotionPresetId[] = [
+  'auto',
+  'apparition',
+  'flottement',
+  'mouvement',
+  'pulsation',
+  'elegant',
+  'energique',
+];
 
 /**
  * Le descripteur est le contrat entre le créateur et le futur rendu participant.
@@ -29,7 +40,13 @@ export function createDescriptor(ratio: Ratio = '1:1'): Descriptor {
     ratio,
     background: 'transparent',
     layers: [],
+    motion: null,
   };
+}
+
+/** Applique ou retire l'animation du cadre. */
+export function withMotion(descriptor: Descriptor, motion: MotionPlan | null): Descriptor {
+  return { ...descriptor, motion };
 }
 
 export function nextZ(layers: Layer[]): number {
@@ -104,6 +121,37 @@ function str(value: unknown, fallback: string): string {
   return typeof value === 'string' && value.length > 0 ? value : fallback;
 }
 
+/** Relit l'animation d'un cadre. Renvoie `null` si absente ou illisible. */
+export function parseMotion(input: unknown): MotionPlan | null {
+  if (!input || typeof input !== 'object') return null;
+  const raw = input as Record<string, unknown>;
+
+  const preset = MOTION_PRESETS_IDS.includes(raw.preset as MotionPresetId)
+    ? (raw.preset as MotionPresetId)
+    : 'auto';
+
+  const rawLayers = Array.isArray(raw.layers) ? raw.layers : [];
+
+  const layers: LayerMotion[] = rawLayers.map((entry) => {
+    const l = (entry && typeof entry === 'object' ? entry : {}) as Record<string, unknown>;
+    return {
+      fadeIn: num(l.fadeIn, 0.2),
+      floatY: num(l.floatY, 0),
+      floatX: num(l.floatX, 0),
+      pulse: num(l.pulse, 0),
+      rotate: num(l.rotate, 0),
+      cycles: num(l.cycles, 1),
+    };
+  });
+
+  return {
+    preset,
+    durationMs: num(raw.durationMs, 3000),
+    stagger: num(raw.stagger, 0.05),
+    layers,
+  };
+}
+
 /**
  * Relit un descripteur éventuellement incomplet (ancienne version, JSON édité à la
  * main, donnée revenue de la base). Ne lève jamais : renvoie toujours un descripteur
@@ -162,6 +210,7 @@ export function parseDescriptor(input: unknown): Descriptor {
     ratio,
     background: str(raw.background, 'transparent'),
     layers,
+    motion: parseMotion(raw.motion),
   };
 }
 
@@ -172,6 +221,7 @@ export function serializeDescriptor(descriptor: Descriptor): string {
       version: descriptor.version,
       ratio: descriptor.ratio,
       background: descriptor.background,
+      ...(descriptor.motion ? { motion: descriptor.motion } : {}),
       layers: [...descriptor.layers]
         .sort((a, b) => a.z - b.z)
         .map((l) => {
@@ -228,6 +278,20 @@ export function validateDescriptor(descriptor: Descriptor): ValidationResult {
     }
     if (layer.type === 'text' && layer.text.trim() === '') {
       warnings.push(`Le calque texte ${layer.id} est vide.`);
+    }
+  }
+
+  if (descriptor.motion) {
+    if (descriptor.motion.durationMs <= 0) {
+      errors.push("La durée de l'animation doit être positive.");
+    }
+    if (descriptor.motion.layers.length === 0) {
+      errors.push("L'animation ne définit aucun mouvement de calque.");
+    } else if (descriptor.motion.layers.length !== descriptor.layers.length) {
+      warnings.push(
+        "Le nombre de mouvements ne correspond pas au nombre de calques : " +
+          "les calques excédentaires reprendront le premier mouvement.",
+      );
     }
   }
 

@@ -3,9 +3,10 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
-import { LogOut } from 'lucide-react';
+import { Coins, LogOut } from 'lucide-react';
 import { Logo } from '@/components/ui/logo';
 import { Spinner } from '@/components/ui/feedback';
+import { PlanBadge } from '@/components/plans/plan-card';
 import { MobileTabBar, SidebarNav } from '@/components/dashboard/nav';
 import { useSession } from '@/lib/backend/session';
 
@@ -45,7 +46,20 @@ export default function CreatorLayout({ children }: { children: React.ReactNode 
             <SidebarNav />
           </div>
 
-          <div className="mt-auto pt-8">
+          <div className="mt-auto flex flex-col gap-3 pt-8">
+            <Link
+              href="/credits"
+              className="flex items-center justify-between rounded-md border border-gray-200 bg-white px-3 py-2.5 text-[13px] transition-colors hover:border-ink"
+            >
+              <span className="flex items-center gap-2 text-gray-500">
+                <Coins className="size-3.5" strokeWidth={1.75} aria-hidden />
+                Distribution
+              </span>
+              <span className="font-semibold">
+                {new Intl.NumberFormat('fr-FR').format(user.credits ?? 0)}
+              </span>
+            </Link>
+
             <div className="flex items-center gap-3 rounded-md border border-gray-200 bg-white p-3">
               <span className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-ink text-[11px] font-semibold text-white">
                 {user.logo_url ? (
@@ -76,6 +90,16 @@ export default function CreatorLayout({ children }: { children: React.ReactNode 
               >
                 <LogOut className="size-4" strokeWidth={1.75} aria-hidden />
               </button>
+            </div>
+
+            <div className="flex items-center justify-between px-1">
+              <PlanBadge plan={user.plan} />
+              <Link
+                href="/settings#formule"
+                className="text-[12px] text-gray-500 underline underline-offset-4 transition-colors hover:text-ink"
+              >
+                Gérer
+              </Link>
             </div>
           </div>
         </aside>

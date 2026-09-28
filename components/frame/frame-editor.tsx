@@ -6,6 +6,7 @@ import { ImagePlus, Loader2, Trash2, Type } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { ratioSpec } from '@/lib/ratios';
 import { parseDescriptor } from '@/lib/descriptor';
+import { sampleAt } from '@/lib/motion';
 import { backend } from '@/lib/backend';
 import type { Descriptor, ImageLayer, Layer, TextAlign, TextLayer } from '@/lib/types';
 
@@ -29,10 +30,13 @@ export function FrameEditor({
   descriptor,
   onChange,
   onReady,
+  playing = false,
 }: {
   descriptor: Descriptor;
   onChange: (next: Descriptor) => void;
   onReady?: (api: { fitToView: () => void; exportThumbnail: () => string | null }) => void;
+  /** Lecture de l'animation. L'édition reprend la main dès que le drapeau retombe. */
+  playing?: boolean;
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasElRef = useRef<HTMLCanvasElement>(null);
@@ -43,6 +47,11 @@ export function FrameEditor({
   const lastEmitted = useRef<string>('');
   const descriptorRef = useRef(descriptor);
   descriptorRef.current = descriptor;
+
+  /** Transformations d'origine, mémorisées pendant la lecture de l'animation. */
+  const baseTransforms = useRef<
+    Map<FabricObject, { left: number; top: number; scaleX: number; scaleY: number; angle: number; opacity: number }>
+  >(new Map());
 
   const [zoom, setZoom] = useState(0.3);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -255,6 +264,95 @@ export function FrameEditor({
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, [fitToView]);
+
+  /* ---------------- Lecture de l'animation ---------------- */
+  /**
+   * Pendant la lecture, on anime les objets du canvas d'édition avec exactement
+   * le même `sampleAt()` que l'export. À l'arrêt, chaque objet retrouve sa
+   * transformation d'origine : la lecture ne modifie jamais le descripteur.
+   */
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const plan = descriptor.motion ?? null;
+    const objects = canvas.getObjects();
+
+    if (!playing || !plan || objects.length === 0) {
+      if (baseTransforms.current.size > 0) {
+        for (const [object, base] of baseTransforms.current) {
+          object.set({
+            left: base.left,
+            top: base.top,
+            scaleX: base.scaleX,
+            scaleY: base.scaleY,
+            angle: base.angle,
+            opacity: base.opacity,
+          });
+          object.setCoords();
+        }
+        baseTransforms.current.clear();
+        canvas.selection = true;
+        canvas.requestRenderAll();
+      }
+      return;
+    }
+
+    // Instantané des positions : c'est ce qui permet de revenir proprement.
+    baseTransforms.current = new Map(
+      objects.map((object) => [
+        object,
+        {
+          left: object.left ?? 0,
+          top: object.top ?? 0,
+          scaleX: object.scaleX ?? 1,
+          scaleY: object.scaleY ?? 1,
+          angle: object.angle ?? 0,
+          opacity: object.opacity ?? 1,
+        },
+      ]),
+    );
+
+    canvas.discardActiveObject();
+    canvas.selection = false;
+
+    const sortedLayers = [...descriptor.layers].sort((a, b) => a.z - b.z);
+    const start = performance.now();
+    let frame = 0;
+
+    const tick = () => {
+      const elapsed = performance.now() - start;
+      objects.forEach((object, index) => {
+        const base = baseTransforms.current.get(object);
+        if (!base) return;
+        const layer = sortedLayers[index];
+        const transform = sampleAt(
+          plan,
+          index,
+          elapsed,
+          layer?.w ?? spec.width,
+          layer?.h ?? spec.height,
+        );
+        object.set({
+          left: base.left + transform.dx,
+          top: base.top + transform.dy,
+          scaleX: base.scaleX * transform.scale,
+          scaleY: base.scaleY * transform.scale,
+          angle: base.angle + transform.rotation,
+          opacity: base.opacity * transform.opacity,
+        });
+        object.setCoords();
+      });
+      canvas.requestRenderAll();
+      // La boucle s'arrête sur la dernière image : l'aperçu fige le résultat.
+      if (elapsed < plan.durationMs) frame = requestAnimationFrame(tick);
+    };
+
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+    // `descriptor.motion` est volontairement la seule dépendance qui compte ici.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playing, descriptor.motion, spec.width, spec.height]);
 
   /* ---------------- Suppression au clavier ---------------- */
   useEffect(() => {

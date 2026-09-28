@@ -1,4 +1,4 @@
-# Campagnes — Architecture (Phase A : socle + compte créateur)
+# Campagnes — Architecture (Phase A : socle + compte créateur · Phase B : formules, distribution, animation)
 
 > **Règle absolue du produit** : ne jamais exposer de panneau de configuration complexe.
 > **Principe** : *je dépose → je positionne → c'est prêt.*
@@ -50,9 +50,14 @@ campagnes/
 │   │   ├── dashboard/page.tsx        # « Mes campagnes » + bouton Nouvelle campagne
 │   │   ├── campaigns/
 │   │   │   ├── new/page.tsx          # nom + slug + format → crée le brouillon
-│   │   │   └── [id]/page.tsx         # Frame Engine + inspecteur JSON + publication
-│   │   └── settings/page.tsx         # nom, @pseudo, logo, email, mot de passe, suppression
+│   │   │   └── [id]/page.tsx         # Frame Engine + Motion + budget + JSON + publication
+│   │   ├── credits/page.tsx          # solde, packs, historique des mouvements
+│   │   ├── analytics/page.tsx        # consommation de distribution et usage des formats
+│   │   ├── qr-codes/page.tsx         # un QR code par campagne publiée
+│   │   └── settings/page.tsx         # formule, profil, email, mot de passe, suppression
 │   │
+│   ├── tarifs/page.tsx               # grille publique + matrice comparative
+│   ├── galerie/page.tsx              # campagnes publiées, tous créateurs
 │   ├── u/[username]/page.tsx         # profil public du créateur (URL canonique)
 │   └── auth/callback/route.ts        # échange du code OAuth (Google) contre une session
 │
@@ -61,26 +66,39 @@ campagnes/
 │   │   ├── button.tsx                # primary / secondary / ghost / destructive
 │   │   ├── input.tsx                 # hauteur 48px, rayon 12px, focus violet
 │   │   ├── card.tsx
-│   │   ├── badge.tsx                 # brouillon / publié
+│   │   ├── badge.tsx                 # brouillon / publié / PRO
+│   │   ├── feedback.tsx              # erreurs en ligne, info, bandeau démo
 │   │   ├── logo.tsx                  # wordmark « Campagnes » (Satisfy)
+│   │   ├── logo-upload.tsx
 │   │   └── ratio-picker.tsx          # Carré · Paysage · Vertical (jamais une résolution)
 │   ├── dashboard/
-│   │   ├── nav.tsx
+│   │   ├── nav.tsx                   # navigation sensible à la formule
 │   │   └── campaign-card.tsx
 │   ├── campaign/
-│   │   ├── publish-bar.tsx           # publier / dépublier + lien public
+│   │   ├── motion-panel.tsx          # Motion Engine : presets, description, export
 │   │   └── descriptor-viewer.tsx     # le JSON du descripteur, inspectable
+│   ├── plans/
+│   │   ├── plan-card.tsx             # carte de formule + pastille de formule
+│   │   ├── comparison-table.tsx      # matrice, repliée en blocs sur mobile
+│   │   ├── feature-gate.tsx          # verrou d'un module premium
+│   │   └── pricing-plans.tsx         # grille interactive (activation de formule)
+│   ├── credits/
+│   │   └── pack-card.tsx             # pack de distribution
 │   └── frame/
-│       ├── frame-editor.tsx          # canvas Fabric.js (le cœur du Frame Engine)
-│       └── layer-panel.tsx           # 4 actions visibles + menu •••
+│       └── frame-editor.tsx          # canvas Fabric.js (Frame Engine + lecture d'animation)
 │
 ├── lib/
-│   ├── types.ts                      # User, Frame, Campaign, Descriptor…
+│   ├── types.ts                      # User, Frame, Campaign, Descriptor, CreditTransaction…
+│   ├── plans.ts                      # formules, droits, libellés, matrice, modules premium
+│   ├── credits.ts                    # packs, prix, quotas, taux de consommation
+│   ├── motion.ts                     # Motion Engine — pur et déterministe
+│   ├── video-export.ts               # rendu hors écran : PNG + WebM, filigrane
 │   ├── descriptor.ts                 # création / lecture / validation du JSON versionné
 │   ├── ratios.ts                     # 1:1 · 16:9 · 9:16 → dimensions de travail
 │   ├── slug.ts                       # slugify + génération de slug unique
 │   ├── backend/
 │   │   ├── index.ts                  # façade unique (détecte Supabase ou mode local)
+│   │   ├── types.ts                  # contrat `Backend`
 │   │   ├── supabase.ts               # implémentation réelle
 │   │   ├── local.ts                  # implémentation de démo (localStorage)
 │   │   └── session.tsx               # SessionProvider / useSession
@@ -89,7 +107,8 @@ campagnes/
 │       └── server.ts                 # client serveur (cookies)
 │
 ├── middleware.ts                     # /@pseudo → /u/pseudo  +  rafraîchissement de session
-├── supabase/migrations/0001_init.sql # tables + RLS + trigger + storage + vue publique
+├── supabase/migrations/0001_init.sql          # tables + RLS + trigger + storage + vue
+├── supabase/migrations/0002_plans_credits.sql # formules + crédits + packs + fonctions SQL
 ├── docs/ARCHITECTURE.md              # ce document
 ├── .env.example
 ├── tailwind.config.ts
@@ -257,8 +276,169 @@ accent (CTA principal, état actif, halo), jamais un fond permanent.
 
 ---
 
-## 7. Ce qui n'est PAS construit (hors périmètre Phase A)
+## 7. Formules, crédits et distribution (Phase B)
 
-Compte participant · Animation IA (Motion Engine) · page `/c/[slug]` · analytics ·
-QR code · paiement · branding · tout rendu serveur. Les tables `events`,
-`subscriptions` du plan d'implémentation ne sont **pas** créées.
+Fichier exécutable : `supabase/migrations/0002_plans_credits.sql`.
+
+### 7.1 Le modèle, en une phrase
+
+**L'abonnement paie les outils, la distribution se paie à l'usage.**
+Les modules (Frame Pro, Motion, Analytics, QR, Branding, Domaine…) sont binaires : une
+formule les a, ou ne les a pas. La diffusion, elle, se consomme à l'unité.
+
+### 7.2 Décision de schéma : renommer plutôt que recréer
+
+La migration 0001 créait `plan_kind as enum ('free','pro','org')` — des brouillons. La
+grille tarifaire fixe les noms définitifs. 0002 fait donc un `alter type … rename value`
+(Postgres ≥ 10) au lieu de recréer le type : les lignes existantes ne sont pas perdues.
+`'pro'` → `'creator'`, `'org'` → `'organization'`.
+
+### 7.3 Colonnes ajoutées
+
+| Table | Colonne | Rôle |
+|---|---|---|
+| `users` | `credits integer not null default 0` | solde de participations, contrainte `>= 0` |
+| `campaigns` | `distribution_budget integer not null default 0` | participations autorisées, `>= 0` |
+| `campaigns` | `credits_consumed integer not null default 0` | participations abouties |
+
+Contrainte `campaigns_credits_within_budget` : `credits_consumed <= distribution_budget`.
+Elle rend impossible un dépassement de budget, même en cas de bug applicatif.
+
+### 7.4 Le prix vit en base
+
+`public.credit_packs(id, name, participants, price_fcfa, sort_order)` porte la grille. Le
+fichier `lib/credits.ts` n'en est que le **miroir d'affichage** : c'est la table qui fait
+foi au moment d'un achat. Conséquence voulue — un changement de prix ne demande aucun
+redéploiement.
+
+Le pack « 10 000 et plus » n'est **pas** dans la table : il se traite sur devis, et
+`purchase_credit_pack` refuse tout identifiant absent.
+
+### 7.5 Le journal des mouvements
+
+`public.credit_transactions(id, owner_id, amount, reason, label, campaign_id, created_at)`
+avec `amount <> 0` (positif = crédit, négatif = débit) et un enum `credit_reason` :
+`pack_purchase`, `free_quota`, `campaign_budget`, `participation`, `refund`.
+
+RLS : **lecture seule** pour le propriétaire. Aucune policy d'écriture — les seules
+écritures passent par les fonctions `security definer`. Un solde ne peut donc pas être
+modifié depuis le navigateur, même avec un client Supabase compromis.
+
+### 7.6 Toute la logique d'argent est en SQL
+
+| Fonction | Rôle |
+|---|---|
+| `grant_free_quota()` | dotation de bienvenue, idempotente (vérifie `reason = 'free_quota'`) |
+| `purchase_credit_pack(p_pack_id)` | crédite le solde, journalise l'achat |
+| `consume_participation(p_campaign_id, p_count)` | décrémente solde **et** campagne, sous `for update` |
+| `set_own_plan(p_plan)` | changement de formule |
+
+`consume_participation` verrouille la ligne de campagne (`select … for update`) puis celle
+de l'utilisateur : deux participations simultanées ne peuvent pas lire le même solde.
+C'est le point qui justifie de ne pas faire ce calcul côté client.
+
+Le trigger `handle_new_user` est remplacé pour créditer les 20 participations de test dès
+la création du profil — y compris par Google, où aucun code client ne s'exécute avant.
+
+> **À verrouiller avant production.** `set_own_plan` et `purchase_credit_pack` sont
+> exécutables par `authenticated` pour permettre la recette sans prestataire. En
+> production elles doivent être révoquées et réservées au webhook de paiement
+> (`service_role`). C'est écrit dans l'en-tête de la migration.
+
+### 7.7 Le décompte ne se déclenche jamais à l'ouverture du lien
+
+Un lien partagé à 10 000 personnes dont 1 000 participent consomme **1 000** crédits, pas
+10 000. `consume_participation` est appelée au moment où le visuel est réellement produit —
+c'est-à-dire dans le parcours participant (Phase C), jamais au chargement de page.
+
+### 7.8 Où vit chaque règle
+
+| Règle | Fichier | Consommé par |
+|---|---|---|
+| Quels modules pour quelle formule | `lib/plans.ts` → `hasFeature()` | nav, verrous, export |
+| Volumes, prix, quotas | `lib/credits.ts` | page tarifs, page crédits |
+| Autorité finale sur le solde | `0002_plans_credits.sql` | Postgres uniquement |
+
+Un seul point de vérité par règle. Aucun écran ne redéfinit un droit en local.
+
+---
+
+## 8. Motion Engine et export
+
+### 8.1 Le Motion Engine est pur et déterministe
+
+`lib/motion.ts` ne touche ni au DOM ni au canvas. Il produit un `MotionPlan`
+(paramètres), puis `sampleAt(plan, layerIndex, tMs, w, h)` renvoie la transformation d'un
+calque à un instant donné : `{ opacity, dx, dy, scale, rotation }`.
+
+**Le même `sampleAt()` alimente l'aperçu et l'export.** C'est la garantie structurelle
+que l'aperçu et la vidéo ne peuvent pas diverger — il n'y a pas deux implémentations à
+tenir synchronisées.
+
+### 8.2 L'utilisateur ne règle rien
+
+`interpretPrompt()` traduit une phrase française en plan, par mots-clés, après
+normalisation (accents retirés, minuscules) :
+
+> « le cadre apparaît doucement puis flotte légèrement » → fondu + flottement, rythme lent.
+
+Aucun keyframe, aucun easing, aucun FPS, aucune durée n'est exposé — conformément à la
+règle absolue du produit. `interpretPrompt` est le point de branchement naturel d'un vrai
+modèle de langage : la signature ne changerait pas, seul le corps.
+
+Le plan est **stocké dans le descripteur** (`descriptor.motion`). Un cadre animé reste donc
+rejouable à l'identique, exactement comme un cadre statique — c'est ce qui permet de le
+rejouer côté participant en Phase C sans stocker de vidéo.
+
+### 8.3 Le rendu ne capture jamais le canvas d'édition
+
+`lib/video-export.ts` reconstruit un `StaticCanvas` **hors écran**, à la résolution native
+du format, à partir du descripteur. Conséquence : l'export ne dépend ni du zoom, ni de la
+taille de la fenêtre, ni du DPR de la machine.
+
+| Sortie | Mécanisme |
+|---|---|
+| PNG | `toDataURL` sur le canvas hors écran |
+| WebM | `MediaRecorder` sur `canvas.captureStream(fps)` |
+
+Aucune dépendance externe, aucun rendu serveur, aucun téléversement : la vidéo est produite
+dans le navigateur. Le type MIME est négocié (`vp9` → `vp8` → `webm` → `mp4`) et
+l'extension du fichier suit le type réellement obtenu.
+
+### 8.4 Le filigrane
+
+Le plan Free appose `campagnes.app` en bas à droite, taille proportionnelle au format,
+blanc à 78 % avec une ombre portée douce. Il est ajouté **après** le calcul des
+transformations et n'entre pas dans la liste des objets animés : il reste donc immobile
+pendant toute la séquence. `hasFeature(plan, 'no_watermark')` est le seul arbitre.
+
+---
+
+## 9. Verrouillage des modules premium
+
+Principe : **on ne cache jamais ce qui existe.** Un module verrouillé reste visible, avec sa
+description et la formule qui le débloque. C'est ce qui donne envie de monter en gamme sans
+jamais bloquer un créateur Free dans son parcours de base.
+
+| Endroit | Comportement |
+|---|---|
+| `components/dashboard/nav.tsx` | l'entrée reste listée, marquée `PRO`, et mène au verrou |
+| Pages `analytics` / `qr-codes` | `FeatureGate` en tête, si `hasFeature()` est faux |
+| `MotionPanel` | remplacé par le verrou, si le plan n'inclut pas `motion` |
+| Export | filigrane si `no_watermark` est absent |
+
+`FeatureGate` renvoie toujours vers `Paramètres → Formule`, où le changement s'effectue —
+pas vers la page publique des tarifs.
+
+---
+
+## 10. Ce qui n'est PAS construit
+
+Compte participant · page participant `/c/[slug]` · paiement réel (aucun prestataire
+branché : l'achat de pack et le changement de formule sont **simulés**, et le disent dans
+l'interface) · branding · domaine personnalisé · multi-utilisateurs · galerie privée ·
+rapports PDF · tout rendu serveur.
+
+Les tables `events` et `subscriptions` du plan d'implémentation ne sont **pas** créées :
+`events` n'a de sens qu'avec le parcours participant, et `subscriptions` attend le
+prestataire de paiement.

@@ -3,6 +3,8 @@ import { SiteHeader } from '@/components/site-header';
 import { ButtonLink } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { RATIO_LIST } from '@/lib/ratios';
+import { FREE_TEST_QUOTA } from '@/lib/credits';
+import { PLAN_LIST, formatFcfa } from '@/lib/plans';
 
 const STEPS = [
   {
@@ -66,7 +68,7 @@ export default function HomePage() {
 
           <p className="mt-8 flex items-center gap-2 text-[13px] text-white/45">
             <Sparkles className="size-3.5" aria-hidden />
-            L’animation par IA arrive bientôt.
+            Animation assistée et export vidéo inclus dans Creator.
           </p>
         </div>
       </section>
@@ -159,6 +161,46 @@ export default function HomePage() {
         </Card>
       </section>
 
+      {/* ---------- Tarifs (aperçu) ---------- */}
+      <section className="border-t border-gray-200 bg-gray-50">
+        <div className="container-shell py-20 md:py-28">
+          <header className="max-w-2xl">
+            <h2 className="text-[28px] font-bold leading-tight md:text-[36px]">
+              Créer est gratuit. Diffuser se paie à l’usage.
+            </h2>
+            <p className="mt-3 text-base text-gray-500">
+              Vous ne payez la distribution que lorsqu’un participant aboutit réellement. Partager un
+              lien à 10 000 personnes ne consomme rien tant que personne ne participe.
+            </p>
+          </header>
+
+          <div className="mt-12 grid gap-5 md:grid-cols-3">
+            {PLAN_LIST.map((plan) => (
+              <Card key={plan.id} className="p-6" interactive>
+                <h3 className="text-[20px] font-semibold">{plan.name}</h3>
+                <p className="mt-1 text-[13px] text-gray-500">{plan.tagline}</p>
+                <p className="mt-4 text-[24px] font-bold leading-none">
+                  {plan.priceFcfa === 0 ? 'Gratuit' : formatFcfa(plan.priceFcfa)}
+                  {plan.priceFcfa > 0 && (
+                    <span className="ml-1 text-[13px] font-medium text-gray-500">/ mois</span>
+                  )}
+                </p>
+              </Card>
+            ))}
+          </div>
+
+          <div className="mt-8 flex flex-wrap items-center gap-3">
+            <ButtonLink href="/tarifs" variant="secondary">
+              Voir le détail des formules
+              <ArrowRight className="size-4" aria-hidden />
+            </ButtonLink>
+            <span className="text-[13px] text-gray-500">
+              {FREE_TEST_QUOTA} participations de test offertes à l’inscription.
+            </span>
+          </div>
+        </div>
+      </section>
+
       {/* ---------- Pied de page ---------- */}
       <footer className="border-t border-gray-200">
         <div className="container-shell flex flex-col items-start justify-between gap-4 py-10 md:flex-row md:items-center">
@@ -167,6 +209,12 @@ export default function HomePage() {
             <p className="mt-2 text-[13px] text-gray-500">Créez. Animez. Partagez.</p>
           </div>
           <nav className="flex flex-wrap items-center gap-x-6 gap-y-2 text-[13px] text-gray-500">
+            <ButtonLink href="/galerie" variant="ghost" size="sm">
+              Galerie
+            </ButtonLink>
+            <ButtonLink href="/tarifs" variant="ghost" size="sm">
+              Tarifs
+            </ButtonLink>
             <ButtonLink href="/signup" variant="ghost" size="sm">
               Créer un compte
             </ButtonLink>

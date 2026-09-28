@@ -3,15 +3,18 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowRight, Check, ExternalLink, Trash2 } from 'lucide-react';
+import { ArrowRight, Check, Coins, ExternalLink, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Field, Input, InputPrefix } from '@/components/ui/input';
 import { LogoUploader } from '@/components/ui/logo-upload';
-import { InlineError, Spinner } from '@/components/ui/feedback';
+import { DismissibleNotice, InlineError, Spinner } from '@/components/ui/feedback';
+import { PlanBadge } from '@/components/plans/plan-card';
 import { backend } from '@/lib/backend';
 import { useSession } from '@/lib/backend/session';
 import { isValidUsername, normalizeUsername } from '@/lib/slug';
+import { FEATURE_LABELS, PLAN_LIST, planOf } from '@/lib/plans';
+import { formatFcfa } from '@/lib/plans';
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -28,6 +31,8 @@ export default function SettingsPage() {
   const [passwordState, setPasswordState] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [planPending, setPlanPending] = useState<string | null>(null);
+  const [planNotice, setPlanNotice] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -36,6 +41,25 @@ export default function SettingsPage() {
     setLogoUrl(user.logo_url);
     setEmail(user.email);
   }, [user]);
+
+  async function changePlan(plan: 'free' | 'creator' | 'organization') {
+    if (!user) return;
+    setError(null);
+    setPlanPending(plan);
+    const result = await backend.setPlan(user.id, plan);
+    if (result.error) {
+      setError(result.error);
+      setPlanPending(null);
+      return;
+    }
+    await refresh();
+    setPlanPending(null);
+    setPlanNotice(
+      plan === 'free'
+        ? 'Votre compte est repassé en formule Free. Vos campagnes sont intactes.'
+        : `Formule ${planOf(plan).name} activée.`,
+    );
+  }
 
   if (!user) {
     return (
@@ -129,6 +153,104 @@ export default function SettingsPage() {
       </header>
 
       <InlineError>{error}</InlineError>
+
+      {/* ---------------- Formule ---------------- */}
+      <Card className="scroll-mt-6 p-5 md:p-6" >
+        <div id="formule" className="flex flex-col gap-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <h2 className="text-[15px] font-semibold">Formule</h2>
+              <PlanBadge plan={user.plan} />
+            </div>
+            <Link
+              href="/tarifs"
+              className="flex items-center gap-1.5 text-[13px] text-gray-500 transition-colors hover:text-ink"
+            >
+              Comparer les formules
+              <ExternalLink className="size-3.5" aria-hidden />
+            </Link>
+          </div>
+
+          {planNotice && (
+            <DismissibleNotice onDismiss={() => setPlanNotice(null)}>{planNotice}</DismissibleNotice>
+          )}
+
+          <div className="grid gap-3 md:grid-cols-3">
+            {PLAN_LIST.map((plan) => {
+              const current = user.plan === plan.id;
+              return (
+                <div
+                  key={plan.id}
+                  className={
+                    current
+                      ? 'flex flex-col gap-3 rounded-md border border-transparent bg-gray-50 p-4 ring-brand-gradient'
+                      : 'flex flex-col gap-3 rounded-md border border-gray-200 p-4'
+                  }
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[14px] font-semibold">{plan.name}</span>
+                    {current && (
+                      <span className="text-[11px] font-medium uppercase tracking-wide text-purple">
+                        Active
+                      </span>
+                    )}
+                  </div>
+
+                  <p className="text-[13px] font-medium text-gray-700">
+                    {plan.priceFcfa === 0 ? 'Gratuit' : `${formatFcfa(plan.priceFcfa)} / mois`}
+                  </p>
+
+                  <p className="flex-1 text-[12px] leading-relaxed text-gray-500">
+                    {plan.features.length === 0
+                      ? 'Création, galerie, 3 formats, lien de partage.'
+                      : plan.features
+                          .slice(0, 4)
+                          .map((f) => FEATURE_LABELS[f])
+                          .join(' · ')}
+                    {plan.features.length > 4 && ` · +${plan.features.length - 4}`}
+                  </p>
+
+                  <Button
+                    variant={current ? 'ghost' : plan.highlight ? 'primary' : 'secondary'}
+                    size="sm"
+                    disabled={current || planPending !== null}
+                    onClick={() => void changePlan(plan.id)}
+                  >
+                    {current
+                      ? 'Formule active'
+                      : planPending === plan.id
+                        ? 'Activation…'
+                        : `Choisir ${plan.name}`}
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-200 pt-4">
+            <div className="flex items-center gap-2 text-[13px] text-gray-500">
+              <Coins className="size-4 text-purple" strokeWidth={1.75} aria-hidden />
+              Solde de distribution :{' '}
+              <span className="font-semibold text-gray-900">
+                {new Intl.NumberFormat('fr-FR').format(user.credits ?? 0)}
+              </span>{' '}
+              participations
+            </div>
+            <Link
+              href="/credits"
+              className="text-[13px] font-medium text-ink underline underline-offset-4"
+            >
+              Recharger
+            </Link>
+          </div>
+
+          <p className="text-[12px] leading-relaxed text-gray-500">
+            Aucun prestataire de paiement n’est branché à ce stade : le changement de formule est
+            immédiat, pour la recette. En production, seules les formules gratuites basculeront
+            librement ; les autres passeront par le guichet de paiement.
+          </p>
+        </div>
+      </Card>
 
       {/* ---------------- Profil ---------------- */}
       <Card className="p-5 md:p-6">

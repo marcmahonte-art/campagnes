@@ -1,12 +1,16 @@
 import type {
   Campaign,
   CampaignWithFrame,
+  CreditTransaction,
   CreatorProfile,
   Descriptor,
   Frame,
+  GalleryItem,
+  PlanKind,
   User,
 } from '@/lib/types';
 import { parseDescriptor } from '@/lib/descriptor';
+import { PACKS_BY_ID } from '@/lib/credits';
 import { supabaseBrowser } from '@/lib/supabase/client';
 import { MEDIA_BUCKET, SITE_URL } from './config';
 import type {
@@ -32,6 +36,7 @@ function rowToUser(row: Row): User {
     org_name: (row.org_name as string | null) ?? null,
     logo_url: (row.logo_url as string | null) ?? null,
     plan: (row.plan as User['plan']) ?? 'free',
+    credits: Number(row.credits ?? 0),
     onboarded_at: (row.onboarded_at as string | null) ?? null,
     created_at: String(row.created_at ?? new Date().toISOString()),
   };
@@ -57,6 +62,20 @@ function rowToCampaign(row: Row): Campaign {
     frame_id: (row.frame_id as string | null) ?? null,
     ratio: (row.ratio as Campaign['ratio']) ?? '1:1',
     status: (row.status as Campaign['status']) ?? 'draft',
+    distribution_budget: Number(row.distribution_budget ?? 0),
+    credits_consumed: Number(row.credits_consumed ?? 0),
+    created_at: String(row.created_at ?? new Date().toISOString()),
+  };
+}
+
+function rowToTransaction(row: Row): CreditTransaction {
+  return {
+    id: String(row.id),
+    owner_id: String(row.owner_id),
+    amount: Number(row.amount ?? 0),
+    reason: row.reason as CreditTransaction['reason'],
+    label: String(row.label ?? ''),
+    campaign_id: (row.campaign_id as string | null) ?? null,
     created_at: String(row.created_at ?? new Date().toISOString()),
   };
 }
@@ -295,6 +314,109 @@ export const supabaseBackend: Backend = {
   async listSlugs() {
     const { data } = await supabaseBrowser().from('campaigns').select('slug');
     return (data as { slug: string }[] | null)?.map((r) => r.slug) ?? [];
+  },
+
+  /* --- Galerie publique --------------------------------------------- */
+  async listGallery(): Promise<GalleryItem[]> {
+    const sb = supabaseBrowser();
+
+    // RLS fait le travail : la policy `campaigns_select_owner_or_published`
+    // ne laisse passer que `status = 'published'` pour un visiteur anonyme.
+    const { data, error } = await sb
+      .from('campaigns')
+      .select('*')
+      .eq('status', 'published')
+      .order('created_at', { ascending: false })
+      .limit(120);
+    if (error || !data) return [];
+
+    const campaigns = (data as Row[]).map(rowToCampaign);
+    if (campaigns.length === 0) return [];
+
+    const frameIds = [
+      ...new Set(campaigns.map((c) => c.frame_id).filter((id): id is string => Boolean(id))),
+    ];
+    const ownerIds = [...new Set(campaigns.map((c) => c.owner_id))];
+
+    const framesById = new Map<string, Frame>();
+    if (frameIds.length > 0) {
+      const { data: frames } = await sb.from('frames').select('*').in('id', frameIds);
+      ((frames as Row[] | null) ?? []).forEach((f) => {
+        const frame = rowToFrame(f);
+        framesById.set(frame.id, frame);
+      });
+    }
+
+    // La vue `creator_profiles` ne contient que les champs publics.
+    const creatorsById = new Map<string, CreatorProfile>();
+    const { data: creators } = await sb
+      .from('creator_profiles')
+      .select('id, username, org_name, logo_url, created_at')
+      .in('id', ownerIds);
+    ((creators as Row[] | null) ?? []).forEach((c) => {
+      creatorsById.set(String(c.id), {
+        id: String(c.id),
+        username: String(c.username ?? ''),
+        org_name: (c.org_name as string | null) ?? null,
+        logo_url: (c.logo_url as string | null) ?? null,
+        created_at: String(c.created_at ?? ''),
+      });
+    });
+
+    return campaigns.map((c) => ({
+      ...c,
+      frame: c.frame_id ? framesById.get(c.frame_id) ?? null : null,
+      creator: creatorsById.get(c.owner_id) ?? null,
+    }));
+  },
+
+  /* --- Abonnement et distribution ----------------------------------- */
+  // Toute la logique d'argent vit en SQL (migration 0002), jamais dans le client :
+  // un solde de crédits ne doit pas pouvoir être modifié depuis le navigateur.
+  async setPlan(_userId, plan: PlanKind): Promise<Result> {
+    const { error } = await supabaseBrowser().rpc('set_own_plan', { p_plan: plan });
+    return error ? { error: message(error, 'Le changement de formule a échoué.') } : {};
+  },
+
+  async listCreditTransactions(userId) {
+    const { data, error } = await supabaseBrowser()
+      .from('credit_transactions')
+      .select('*')
+      .eq('owner_id', userId)
+      .order('created_at', { ascending: false });
+    if (error || !data) return [];
+    return (data as Row[]).map(rowToTransaction);
+  },
+
+  async purchasePack(_userId, packId): Promise<Result<{ credits: number }>> {
+    const pack = PACKS_BY_ID[packId];
+    if (!pack) return { error: 'Pack de distribution inconnu.' };
+    if (pack.participants === null) {
+      return { error: 'Ce volume se traite sur devis. Écrivez-nous et nous revenons vers vous.' };
+    }
+
+    // `purchase_credit_pack` est appelée par le webhook du prestataire de paiement
+    // en production. Ici elle sert à l'activation manuelle du temps de la recette.
+    const { data, error } = await supabaseBrowser().rpc('purchase_credit_pack', {
+      p_pack_id: packId,
+    });
+    if (error) return { error: message(error, 'L’achat du pack a échoué.') };
+    return { data: { credits: Number(data ?? 0) } };
+  },
+
+  async grantFreeQuota(): Promise<Result<{ credits: number }>> {
+    const { data, error } = await supabaseBrowser().rpc('grant_free_quota');
+    if (error) return { error: message(error, 'L’attribution de la dotation a échoué.') };
+    return { data: { credits: Number(data ?? 0) } };
+  },
+
+  async consumeParticipation(campaignId, count = 1): Promise<Result<{ remaining: number }>> {
+    const { data, error } = await supabaseBrowser().rpc('consume_participation', {
+      p_campaign_id: campaignId,
+      p_count: count,
+    });
+    if (error) return { error: message(error, 'La participation n’a pas pu être décomptée.') };
+    return { data: { remaining: Number(data ?? 0) } };
   },
 
   /* --- Médias ------------------------------------------------------- */

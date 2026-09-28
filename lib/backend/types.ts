@@ -1,9 +1,12 @@
 import type {
   Campaign,
   CampaignWithFrame,
+  CreditTransaction,
   CreatorProfile,
   Descriptor,
   Frame,
+  GalleryItem,
+  PlanKind,
   Ratio,
   User,
 } from '@/lib/types';
@@ -74,10 +77,33 @@ export interface Backend {
   createCampaign(input: CreateCampaignInput): Promise<Result<Campaign>>;
   updateCampaign(
     campaignId: string,
-    patch: Partial<Pick<Campaign, 'name' | 'slug' | 'ratio' | 'status' | 'frame_id'>>,
+    patch: Partial<
+      Pick<
+        Campaign,
+        'name' | 'slug' | 'ratio' | 'status' | 'frame_id' | 'distribution_budget'
+      >
+    >,
   ): Promise<Result>;
   deleteCampaign(campaignId: string): Promise<Result>;
   listSlugs(): Promise<string[]>;
+
+  /* --- Galerie publique --------------------------------------------- */
+  /** Toutes les campagnes publiées, tous créateurs confondus (§13). */
+  listGallery(): Promise<GalleryItem[]>;
+
+  /* --- Abonnement et distribution ----------------------------------- */
+  /** Change le plan du compte (activation immédiate en démonstration). */
+  setPlan(userId: string, plan: PlanKind): Promise<Result>;
+  listCreditTransactions(userId: string): Promise<CreditTransaction[]>;
+  /** Achat d'un pack de distribution. Crédite le solde et journalise l'opération. */
+  purchasePack(userId: string, packId: string): Promise<Result<{ credits: number }>>;
+  /** Dotation de bienvenue du plan Free (idempotente). */
+  grantFreeQuota(userId: string): Promise<Result<{ credits: number }>>;
+  /**
+   * Consomme un crédit quand un participant aboutit réellement (visuel créé),
+   * jamais à la simple ouverture du lien (§11 du document).
+   */
+  consumeParticipation(campaignId: string, count?: number): Promise<Result<{ remaining: number }>>;
 
   /* --- Médias ------------------------------------------------------- */
   uploadImage(file: File, folder: string): Promise<Result<string>>;

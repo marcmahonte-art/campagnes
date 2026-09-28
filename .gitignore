@@ -26,4 +26,7 @@ npm-debug.log*
 
 # Assets de travail du designer (lourds, hors dépôt)
 *.ai
-docs/*.png
+docs/**/*.png
+docs/**/*.PNG
+docs/**/*.jpg
+docs/**/*.jpeg
