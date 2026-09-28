@@ -1,0 +1,116 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* =====================================================================
+   Campagnes — Design tokens
+   Un seul dégradé dans tout le produit : --gradient-brand.
+   ===================================================================== */
+:root {
+  --black: #000000;
+  --white: #ffffff;
+
+  --purple: #7b61ff;
+  --coral: #ff6b6b;
+  --yellow: #ffd93d;
+
+  --gray-50: #f9fafb;
+  --gray-100: #f3f4f6;
+  --gray-200: #e5e7eb;
+  --gray-400: #9ca3af;
+  --gray-500: #6b7280;
+  --gray-700: #374151;
+  --gray-900: #111827;
+
+  /* Dégradé signature — 135°, trois arrêts, jamais décliné. */
+  --gradient-brand: linear-gradient(
+    135deg,
+    #7b61ff 0%,
+    #ff6b6b 50%,
+    #ffd93d 100%
+  );
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --radius-pill: 999px;
+
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.12);
+
+  --ease-brand: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-white text-ink font-sans antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+
+  /* Focus visible : accent violet, jamais de contour par défaut. */
+  :focus-visible {
+    outline: 2px solid var(--purple);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  ::selection {
+    background: rgba(123, 97, 255, 0.18);
+  }
+}
+
+@layer components {
+  /* Le seul fond dégradé autorisé. */
+  .bg-brand-gradient {
+    background-image: var(--gradient-brand);
+  }
+
+  .text-brand-gradient {
+    background-image: var(--gradient-brand);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* Bordure dégradée (CTA premium, état actif). */
+  .ring-brand-gradient {
+    position: relative;
+  }
+  .ring-brand-gradient::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1.5px;
+    background: var(--gradient-brand);
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  /* Halos décoratifs : le dégradé reste un accent, jamais un fond plein. */
+  .halo {
+    background: var(--gradient-brand);
+    filter: blur(90px);
+    opacity: 0.28;
+  }
+
+  .surface {
+    @apply bg-white border border-gray-200 rounded-lg;
+  }
+}
+
+@layer utilities {
+  .container-shell {
+    @apply mx-auto w-full max-w-shell px-4 md:px-6;
+  }
+}

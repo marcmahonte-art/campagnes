@@ -1,0 +1,26 @@
+node_modules/
+.next/
+.next.stale/
+.next.*/
+out/
+build/
+dist/
+dev.log
+
+.env
+.env.local
+.env*.local
+
+*.tsbuildinfo
+next-env.d.ts
+
+.DS_Store
+Thumbs.db
+
+.vercel
+*.log
+npm-debug.log*
+
+# Assets de travail du designer (lourds, hors dépôt)
+*.ai
+docs/*.png
