@@ -42,7 +42,8 @@ export function DescriptorViewer({ descriptor }: { descriptor: Descriptor }) {
           </span>
           <span className="mt-0.5 block text-xs text-gray-500">
             version {descriptor.version} · ratio {descriptor.ratio} ·{' '}
-            {descriptor.layers.length} calque{descriptor.layers.length > 1 ? 's' : ''}
+            {descriptor.layers.length} calque{descriptor.layers.length > 1 ? 's' : ''} ·{' '}
+            {descriptor.photo_anchor ? 'zone photo' : 'cadre entier'}
           </span>
         </span>
 

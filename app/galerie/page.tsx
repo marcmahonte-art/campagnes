@@ -48,8 +48,8 @@ export default function GaleriePage() {
             Les campagnes publiées sur Campagnes.
           </h1>
           <p className="mt-5 max-w-2xl text-base leading-relaxed text-gray-500">
-            Chaque vignette correspond à un cadre réel. Ouvrez-en une pour voir le descripteur qui
-            la décrit — c’est lui qui garantit un rendu identique pour tous les participants.
+            Chaque vignette est un cadre réel et prêt à l’emploi : ouvrez-en une pour appliquer le
+            cadre à votre photo et repartir avec votre visuel, sans compte.
           </p>
         </div>
       </section>
@@ -76,47 +76,51 @@ export default function GaleriePage() {
             {items.map((item) => {
               const spec = ratioSpec(item.ratio);
               return (
-                <Card key={item.id} className="flex flex-col overflow-hidden" interactive>
-                  <div className="flex aspect-[4/3] items-center justify-center overflow-hidden bg-gray-100 p-4">
-                    {item.frame?.thumbnail_url ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={item.frame.thumbnail_url}
-                        alt={`Aperçu de la campagne ${item.name}`}
-                        className="max-h-full max-w-full object-contain"
-                      />
-                    ) : (
-                      <span
-                        aria-hidden
-                        className="rounded-sm border-2 border-gray-300 bg-white"
-                        style={{
-                          width: item.ratio === '16:9' ? 150 : item.ratio === '9:16' ? 84 : 112,
-                          height: item.ratio === '16:9' ? 84 : item.ratio === '9:16' ? 150 : 112,
-                        }}
-                      />
-                    )}
-                  </div>
-
-                  <div className="flex flex-1 flex-col gap-2 p-5">
-                    <div className="flex items-start justify-between gap-3">
-                      <h2 className="text-[15px] font-semibold leading-snug">{item.name}</h2>
-                      <span className="shrink-0 rounded-pill border border-gray-200 px-2 py-0.5 text-[11px] text-gray-500">
-                        {spec.label}
-                      </span>
+                <Link key={item.id} href={`/c/${item.slug}`} className="block">
+                  <Card className="flex h-full flex-col overflow-hidden" interactive>
+                    <div className="flex aspect-[4/3] items-center justify-center overflow-hidden bg-gray-100 p-4">
+                      {item.frame?.thumbnail_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={item.frame.thumbnail_url}
+                          alt={`Aperçu de la campagne ${item.name}`}
+                          className="max-h-full max-w-full object-contain"
+                        />
+                      ) : (
+                        <span
+                          aria-hidden
+                          className="rounded-sm border-2 border-gray-300 bg-white"
+                          style={{
+                            width: item.ratio === '16:9' ? 150 : item.ratio === '9:16' ? 84 : 112,
+                            height: item.ratio === '16:9' ? 84 : item.ratio === '9:16' ? 150 : 112,
+                          }}
+                        />
+                      )}
                     </div>
 
-                    {item.creator ? (
-                      <Link
-                        href={`/@${item.creator.username}`}
-                        className="text-[13px] text-gray-500 transition-colors hover:text-ink"
-                      >
-                        {item.creator.org_name || `@${item.creator.username}`}
-                      </Link>
-                    ) : (
-                      <span className="text-[13px] text-gray-400">Créateur inconnu</span>
-                    )}
-                  </div>
-                </Card>
+                    <div className="flex flex-1 flex-col gap-2 p-5">
+                      <div className="flex items-start justify-between gap-3">
+                        <h2 className="text-[15px] font-semibold leading-snug">{item.name}</h2>
+                        <span className="shrink-0 rounded-pill border border-gray-200 px-2 py-0.5 text-[11px] text-gray-500">
+                          {spec.label}
+                        </span>
+                      </div>
+
+                      {item.creator ? (
+                        <span className="text-[13px] text-gray-500">
+                          {item.creator.org_name || `@${item.creator.username}`}
+                        </span>
+                      ) : (
+                        <span className="text-[13px] text-gray-400">Créateur inconnu</span>
+                      )}
+
+                      <span className="mt-auto flex items-center gap-1 pt-2 text-[13px] font-medium text-ink">
+                        Utiliser ce cadre
+                        <ArrowRight className="size-3.5" aria-hidden />
+                      </span>
+                    </div>
+                  </Card>
+                </Link>
               );
             })}
           </div>

@@ -10,13 +10,24 @@ import type { CampaignWithFrame } from '@/lib/types';
  * Vignette de campagne — sobre, sans surcharge visuelle (§18 du design system).
  * Aperçu : la vignette si elle existe, sinon la silhouette du format choisi.
  */
-export function CampaignCard({ campaign }: { campaign: CampaignWithFrame }) {
+export function CampaignCard({
+  campaign,
+  href,
+}: {
+  campaign: CampaignWithFrame;
+  /**
+   * Destination du clic. Par défaut l'éditeur, qui est privé — une page publique
+   * doit donc pointer explicitement vers le parcours participant `/c/[slug]`,
+   * sinon le visiteur tombe sur un écran de connexion.
+   */
+  href?: string;
+}) {
   const spec = ratioSpec(campaign.ratio);
   const aspect = `${spec.width} / ${spec.height}`;
 
   return (
     <Link
-      href={`/campaigns/${campaign.id}`}
+      href={href ?? `/campaigns/${campaign.id}`}
       className="group flex flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm transition-shadow duration-200 ease-brand hover:shadow-md"
     >
       <div className="relative border-b border-gray-200 bg-gray-50">

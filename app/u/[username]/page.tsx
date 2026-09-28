@@ -123,7 +123,13 @@ export default function PublicProfilePage() {
           ) : (
             <div className="mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
               {campaigns.map((campaign) => (
-                <CampaignCard key={campaign.id} campaign={campaign} />
+                <CampaignCard
+                  key={campaign.id}
+                  campaign={campaign}
+                  // Visiteur anonyme : on l'envoie vers le parcours participant,
+                  // jamais vers l'éditeur qui exige un compte.
+                  href={`/c/${campaign.slug}`}
+                />
               ))}
             </div>
           )}

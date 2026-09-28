@@ -85,6 +85,13 @@ export interface Backend {
   /** Toutes les campagnes publiées, tous créateurs confondus (§13). */
   listGallery(): Promise<GalleryItem[]>;
 
+  /**
+   * Une campagne publiée, par son slug — c'est l'entrée du parcours participant.
+   * Renvoie `null` pour un brouillon : un lien partagé ne doit jamais révéler
+   * l'existence d'une campagne non publiée.
+   */
+  getPublicCampaign(slug: string): Promise<GalleryItem | null>;
+
   /* --- Formule ------------------------------------------------------ */
   /** Change la formule du compte (activation immédiate en recette). */
   setPlan(userId: string, plan: PlanKind): Promise<Result>;

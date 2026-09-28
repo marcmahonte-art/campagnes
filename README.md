@@ -9,7 +9,7 @@
 
 ---
 
-## État : Phase A (socle) + Phase B (formules, distribution, animation)
+## État : Phase A (socle) + Phase B (formules, distribution, animation) + Phase C (participant)
 
 ### Phase A — compte créateur et Frame Engine
 
@@ -42,8 +42,24 @@
 | QR Codes de campagne (`/qr-codes`) | ✅ |
 | Galerie publique (`/galerie`) | ✅ |
 
-**Hors périmètre (non construit)** : compte participant, page participant `/c/[slug]`,
-paiement réel, branding, domaine personnalisé, multi-utilisateurs, rendu serveur.
+### Phase C — le parcours participant
+
+| Livrable | État |
+|---|---|
+| Page publique `/c/[slug]` — aucun compte, aucune application | ✅ |
+| Dépôt de la photo (clic ou glisser-déposer) | ✅ |
+| Positionnement : glisser + zoom, cadre immobile, commandes sous l'aperçu | ✅ |
+| La photo ne peut jamais découvrir la zone (contraintes de couverture) | ✅ |
+| **Mode Cadre** — la photo couvre tout le cadre, visible à travers le PNG | ✅ |
+| **Mode Fond** — le créateur désigne une zone photo, la photo s'y découpe | ✅ |
+| Enregistrement PNG à la résolution native du format | ✅ |
+| Enregistrement vidéo quand le cadre est animé | ✅ |
+| Filigrane affiché à l'écran **avant** le téléchargement, s'il s'applique | ✅ |
+| La photo ne quitte jamais l'appareil du participant | ✅ |
+
+**Hors périmètre (non construit)** : paiement réel, branding, domaine personnalisé,
+multi-utilisateurs, galerie privée, rendu serveur, modération des photos participantes
+(inutile : rien n'est stocké).
 
 ---
 
@@ -137,21 +153,25 @@ app/
   (creator)/                     dashboard · campaigns/[id] · analytics
                                  qr-codes · settings · campaigns/new
   u/[username]/                  profil public du créateur
+  c/[slug]/                      parcours participant (public, sans compte)
   auth/callback/                 échange du code OAuth Google
 components/
   ui/                            atomes du design system
   frame/frame-editor.tsx         Frame Engine (Fabric.js) + lecture d'animation
   campaign/motion-panel.tsx      Motion Engine : presets, description, export
   campaign/descriptor-viewer.tsx JSON du descripteur, inspectable
+  participant/participant-stage.tsx  positionnement de la photo dans sa zone
   plans/                         cartes de formule, matrice, verrou de module, offre
   dashboard/                     navigation (sensible à la formule) + vignette
 lib/
   backend/                       façade données : Supabase ou mode local
   plans.ts                       formules, droits, libellés, matrice
   distribution.ts                grille tarifaire FCFA + demande de devis
+  participant.ts                 composition cadre + photo, cadrage, contraintes
   motion.ts                      Motion Engine — pur et déterministe
   video-export.ts                rendu hors écran : PNG et WebM
-  descriptor.ts                  lecture / écriture du descripteur versionné
+  descriptor.ts                  lecture / écriture du descripteur versionné,
+                                 zone photo, animation effectivement jouée
   ratios.ts                      Carré · Paysage · Vertical
   slug.ts                        slugify + normalisation du @pseudo
   supabase/                      clients navigateur et serveur
@@ -243,3 +263,67 @@ comme un cadre statique.
 
 Le plan **Free** appose un filigrane discret `campagnes.app` sur les exports ; il disparaît
 avec Creator. Vérifié par `hasFeature(plan, 'no_watermark')`.
+
+---
+
+## Le parcours participant
+
+C'est la raison d'être de la plateforme : sans lui, un créateur fabriquerait des cadres que
+personne ne pourrait utiliser. Le participant ouvre `/c/[slug]`, dépose sa photo, la place,
+et repart avec son visuel — **sans compte, sans application, sans formulaire**.
+
+Toute la mécanique tient dans une idée : **la photo du participant est un calque comme un
+autre**. Le descripteur du créateur n'est jamais modifié ; on y glisse une couche image à la
+bonne place (`lib/participant.ts`). Le rendu emprunte ensuite le chemin existant,
+`exportPng()` / `exportVideo()` : l'aperçu et le fichier téléchargé ne peuvent donc pas
+diverger — c'est la même garantie que côté créateur.
+
+### Deux modes, une seule géométrie
+
+Le descripteur porte un champ optionnel `photo_anchor` :
+
+- **absent → mode Cadre.** La photo passe sous tous les calques et n'apparaît qu'à travers les
+  zones transparentes du PNG. C'est le mode historique, inchangé.
+- **présent → mode Fond.** Il contient l'identifiant du calque qui délimite la zone photo. La
+  photo est découpée à son emprise et posée **juste au-dessus** de lui : elle masque ce calque
+  dans la zone, et le décor de celui-ci reste visible tout autour. Le créateur désigne cette
+  zone depuis l'inspecteur de calques (« Définir comme zone photo »).
+
+Dans les deux cas, le reste du module ne connaît qu'un rectangle — la *zone* — et non le
+format. `photoZone()` renvoie le cadre entier en mode Cadre, l'emprise du calque désigné
+(rotation comprise) en mode Fond. Toute la géométrie s'écrit donc en arithmétique de
+rectangle, et un seul jeu de tests couvre les deux modes.
+
+### Deux règles tenues par construction
+
+- **La photo couvre toujours la zone.** Un cadre est un PNG à zones transparentes : si la
+  photo laissait un trou, on verrait le damier. Le domaine de déplacement est calculé pour
+  rendre ce trou impossible, y compris en cas de code fautif en amont (`clampPlacement`).
+  Au zoom minimal, l'axe qui contraint la couverture est simplement verrouillé.
+- **Rien ne quitte l'appareil.** La photo est lue en data URL dans le navigateur et n'est
+  jamais téléversée. Il n'y a ni stockage, ni trace, ni modération à prévoir — et le
+  participant n'a rien à accepter.
+
+### En mode Fond, la zone est fixe
+
+`sampleAt()` indexe les mouvements **par position de calque**, et chaque calque s'anime autour
+de sa propre origine. Une fenêtre qui bougerait pendant que la photo reste immobile laisserait
+donc forcément dépasser la photo d'un côté. La zone photo est donc figée : le mouvement du
+calque qui la délimite est neutralisé (`effectiveMotion()`), les autres calques continuent
+d'animer normalement.
+
+Deux conséquences assumées :
+
+- `composeDescriptor()` réserve une **position neutre** dans le plan d'animation pour la photo.
+  Sans cela, l'insérer décalerait tous les calques suivants et le cadre ne jouerait plus la
+  même animation.
+- La règle vit dans **une seule fonction**, `effectiveMotion()`, appelée par l'aperçu du
+  créateur, par l'export et par le parcours participant. C'est ce qui interdit à l'aperçu de
+  mentir — et `validateDescriptor()` avertit le créateur quand sa zone sera figée.
+
+### Le filigrane suit la formule du créateur
+
+Le participant n'a pas de formule. Le filigrane est donc décidé par celle du créateur, et il
+est **affiché à l'écran avant le téléchargement**, aux mêmes proportions que dans l'export :
+l'aperçu ne ment pas. La projection publique n'expose qu'un booléen `watermark` — jamais la
+formule elle-même (voir `creator_profiles` dans `0001_init.sql`).

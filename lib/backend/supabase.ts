@@ -50,6 +50,23 @@ function rowToFrame(row: Row): Frame {
   };
 }
 
+/**
+ * Projection publique d'un créateur — la vue `creator_profiles` ne porte ni email ni plan,
+ * seulement l'effet visible de la formule (`watermark`).
+ */
+function rowToCreator(row: Row): CreatorProfile {
+  return {
+    id: String(row.id),
+    username: String(row.username ?? ''),
+    org_name: (row.org_name as string | null) ?? null,
+    logo_url: (row.logo_url as string | null) ?? null,
+    created_at: String(row.created_at ?? ''),
+    // En cas de doute on filigrane : mieux vaut un export marqué qu'un export
+    // qui contourne la formule par accident.
+    watermark: row.watermark === undefined ? true : Boolean(row.watermark),
+  };
+}
+
 function rowToCampaign(row: Row): Campaign {
   return {
     id: String(row.id),
@@ -199,12 +216,14 @@ export const supabaseBackend: Backend = {
 
   async getCreatorProfile(username): Promise<CreatorProfile | null> {
     // On lit la VUE publique, jamais la table `users` (qui contient email et plan).
+    // `watermark` doit figurer dans la projection : sans lui, la vue renverrait
+    // `undefined` et un créateur Free passerait pour payant.
     const { data } = await supabaseBrowser()
       .from('creator_profiles')
-      .select('id, username, org_name, logo_url, created_at')
+      .select('id, username, org_name, logo_url, created_at, watermark')
       .eq('username', username)
       .maybeSingle();
-    return (data as CreatorProfile | null) ?? null;
+    return data ? rowToCreator(data as Row) : null;
   },
 
   /* --- Cadres ------------------------------------------------------- */
@@ -334,16 +353,10 @@ export const supabaseBackend: Backend = {
     const creatorsById = new Map<string, CreatorProfile>();
     const { data: creators } = await sb
       .from('creator_profiles')
-      .select('id, username, org_name, logo_url, created_at')
+      .select('id, username, org_name, logo_url, created_at, watermark')
       .in('id', ownerIds);
     ((creators as Row[] | null) ?? []).forEach((c) => {
-      creatorsById.set(String(c.id), {
-        id: String(c.id),
-        username: String(c.username ?? ''),
-        org_name: (c.org_name as string | null) ?? null,
-        logo_url: (c.logo_url as string | null) ?? null,
-        created_at: String(c.created_at ?? ''),
-      });
+      creatorsById.set(String(c.id), rowToCreator(c));
     });
 
     return campaigns.map((c) => ({
@@ -351,6 +364,37 @@ export const supabaseBackend: Backend = {
       frame: c.frame_id ? framesById.get(c.frame_id) ?? null : null,
       creator: creatorsById.get(c.owner_id) ?? null,
     }));
+  },
+
+  /**
+   * Entrée du parcours participant. Le filtre `status = 'published'` est explicite
+   * en plus de la policy : un brouillon doit être indiscernable d'un slug inexistant.
+   */
+  async getPublicCampaign(slug): Promise<GalleryItem | null> {
+    const sb = supabaseBrowser();
+
+    const { data } = await sb
+      .from('campaigns')
+      .select('*')
+      .eq('slug', slug)
+      .eq('status', 'published')
+      .maybeSingle();
+    if (!data) return null;
+
+    const campaign = rowToCampaign(data as Row);
+    const frame = campaign.frame_id ? await this.getFrame(campaign.frame_id) : null;
+
+    const { data: creator } = await sb
+      .from('creator_profiles')
+      .select('id, username, org_name, logo_url, created_at, watermark')
+      .eq('id', campaign.owner_id)
+      .maybeSingle();
+
+    return {
+      ...campaign,
+      frame,
+      creator: creator ? rowToCreator(creator as Row) : null,
+    };
   },
 
   /* --- Formule ------------------------------------------------------ */

@@ -54,6 +54,76 @@ export function nextZ(layers: Layer[]): number {
 }
 
 /* ------------------------------------------------------------------ */
+/* Zone photo — mode Cadre / mode Fond                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Un rectangle du repère natif du ratio. C'est la seule géométrie dont le
+ * parcours participant a besoin : que la photo doive couvrir tout le cadre ou
+ * seulement une fenêtre, le calcul est identique.
+ */
+export interface PhotoZone {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * Identifiant réservé du calque que le parcours participant ajoute pour porter
+ * la photo. Réservé au sens du contrat : un descripteur qui contient ce calque
+ * décrit un visuel en cours de composition, jamais un cadre publié.
+ */
+export const PARTICIPANT_PHOTO_ID = 'participant-photo';
+
+/** Le cadre entier, dans le repère du ratio. */
+export function frameZone(ratio: Ratio): PhotoZone {
+  const spec = ratioSpec(ratio);
+  return { x: 0, y: 0, w: spec.width, h: spec.height };
+}
+
+/**
+ * Emprise d'un calque, rotation comprise.
+ *
+ * La rotation s'applique autour du centre : celui-ci ne bouge pas, seule
+ * l'emprise grandit. On retient le rectangle englobant plutôt que le calque
+ * pivoté, parce que c'est la seule forme pour laquelle la règle « la photo
+ * couvre la zone » reste exacte.
+ */
+function layerBounds(layer: Layer): PhotoZone {
+  const radians = (layer.rotation * Math.PI) / 180;
+  const cos = Math.abs(Math.cos(radians));
+  const sin = Math.abs(Math.sin(radians));
+  const w = layer.w * cos + layer.h * sin;
+  const h = layer.w * sin + layer.h * cos;
+  return {
+    x: layer.x + layer.w / 2 - w / 2,
+    y: layer.y + layer.h / 2 - h / 2,
+    w,
+    h,
+  };
+}
+
+/**
+ * Où la photo du participant doit apparaître.
+ *
+ * Sans ancre — ou si l'ancre ne désigne plus rien — c'est le cadre entier :
+ * c'est le mode Cadre, et c'est aussi le repli sûr, puisqu'un cadre entier n'est
+ * jamais plus petit qu'une de ses zones.
+ */
+export function photoZone(descriptor: Descriptor): PhotoZone {
+  const anchorId = descriptor.photo_anchor;
+  if (!anchorId) return frameZone(descriptor.ratio);
+
+  const anchor = descriptor.layers.find((layer) => layer.id === anchorId);
+  if (!anchor) return frameZone(descriptor.ratio);
+
+  const bounds = layerBounds(anchor);
+  if (bounds.w <= 0 || bounds.h <= 0) return frameZone(descriptor.ratio);
+  return bounds;
+}
+
+/* ------------------------------------------------------------------ */
 /* Fabriques de calques                                                */
 /* ------------------------------------------------------------------ */
 
@@ -210,6 +280,13 @@ export function parseDescriptor(input: unknown): Descriptor {
     ratio,
     background: str(raw.background, 'transparent'),
     layers,
+    // On conserve l'identifiant tel quel, même s'il ne désigne aucun calque :
+    // `photoZone()` retombe alors sur le cadre entier, et la validation signale
+    // le problème au créateur plutôt que de lui faire perdre sa zone en silence.
+    photo_anchor:
+      typeof raw.photo_anchor === 'string' && raw.photo_anchor.length > 0
+        ? raw.photo_anchor
+        : undefined,
     motion: parseMotion(raw.motion),
   };
 }
@@ -221,6 +298,9 @@ export function serializeDescriptor(descriptor: Descriptor): string {
       version: descriptor.version,
       ratio: descriptor.ratio,
       background: descriptor.background,
+      // Omis quand absent : un cadre en mode Cadre se sérialise exactement comme
+      // avant l'introduction de la zone photo.
+      ...(descriptor.photo_anchor ? { photo_anchor: descriptor.photo_anchor } : {}),
       ...(descriptor.motion ? { motion: descriptor.motion } : {}),
       layers: [...descriptor.layers]
         .sort((a, b) => a.z - b.z)
@@ -236,6 +316,92 @@ export function serializeDescriptor(descriptor: Descriptor): string {
     null,
     2,
   );
+}
+
+/* ------------------------------------------------------------------ */
+/* Animation réellement rejouée                                        */
+/* ------------------------------------------------------------------ */
+
+/** Un calque immobile. Sert à réserver une position dans un plan d'animation. */
+export const NEUTRAL_MOTION: LayerMotion = {
+  fadeIn: 0,
+  floatY: 0,
+  floatX: 0,
+  pulse: 0,
+  rotate: 0,
+  cycles: 1,
+};
+
+function isNeutralMotion(motion: LayerMotion): boolean {
+  return (
+    motion.fadeIn === 0 &&
+    motion.floatY === 0 &&
+    motion.floatX === 0 &&
+    motion.pulse === 0 &&
+    motion.rotate === 0
+  );
+}
+
+/**
+ * Insère un mouvement neutre à la position `index`, après avoir complété le plan
+ * jusqu'à `layerCount` entrées.
+ *
+ * Nécessaire parce que `sampleAt()` indexe les mouvements **par position** :
+ * glisser un calque au milieu du descripteur décalerait sinon tous les suivants,
+ * et le cadre ne jouerait plus la même animation. La photo du participant occupe
+ * donc une position, avec un mouvement neutre — les calques du créateur gardent
+ * exactement les leurs.
+ */
+export function insertNeutralMotion(
+  motion: MotionPlan | null | undefined,
+  index: number,
+  layerCount: number,
+): MotionPlan | null {
+  if (!motion) return null;
+
+  const layers = [...motion.layers];
+  // Un plan plus court que le nombre de calques ferait « boucler » les indices :
+  // on le complète d'abord, ce qui ne change rien aux positions déjà définies.
+  while (layers.length < layerCount) layers.push({ ...NEUTRAL_MOTION });
+  layers.splice(Math.min(index, layers.length), 0, { ...NEUTRAL_MOTION });
+
+  return { ...motion, layers };
+}
+
+/**
+ * Le plan d'animation que ce descripteur joue réellement.
+ *
+ * En mode Fond, la zone photo et la photo forment un bloc fixe : si l'ancre
+ * bougeait, la fenêtre se déplacerait sans la photo et la laisserait dépasser.
+ * Son mouvement est donc neutralisé — les autres calques continuent d'animer.
+ *
+ * Fonction unique, appelée par l'aperçu du créateur comme par l'export et le
+ * parcours participant : c'est ce qui interdit à l'aperçu de mentir.
+ */
+export function effectiveMotion(descriptor: Descriptor): MotionPlan | null {
+  const plan = descriptor.motion ?? null;
+  if (!plan) return null;
+
+  const layers = [...descriptor.layers].sort((a, b) => a.z - b.z);
+
+  // Un plan sans aucun mouvement (JSON édité à la main) ferait échouer
+  // l'échantillonnage : on le remplace par un plan neutre, plutôt que de laisser
+  // croire à une animation qui n'existe pas.
+  if (plan.layers.length === 0) {
+    const count = Math.max(1, layers.length);
+    return { ...plan, layers: Array.from({ length: count }, () => ({ ...NEUTRAL_MOTION })) };
+  }
+
+  if (!descriptor.photo_anchor) return plan;
+
+  const index = layers.findIndex((layer) => layer.id === descriptor.photo_anchor);
+  if (index === -1) return plan;
+
+  const out = [...plan.layers];
+  // `sampleAt()` lit `plan.layers[index % length]` : on neutralise l'entrée qui
+  // pilote réellement ce calque, même si le plan est plus court que le descripteur.
+  out[index % out.length] = { ...NEUTRAL_MOTION };
+  return { ...plan, layers: out };
 }
 
 /* ------------------------------------------------------------------ */
@@ -295,6 +461,35 @@ export function validateDescriptor(descriptor: Descriptor): ValidationResult {
     }
   }
 
+  if (descriptor.photo_anchor) {
+    const anchor = descriptor.layers.find((layer) => layer.id === descriptor.photo_anchor);
+
+    if (!anchor) {
+      warnings.push(
+        "La zone photo désigne un calque qui n'existe plus : le cadre repasse en mode Cadre.",
+      );
+    } else {
+      if (anchor.rotation % 360 !== 0) {
+        warnings.push(
+          "Le calque qui délimite la zone photo est pivoté : la zone retenue est son " +
+            'emprise rectangulaire, pas le calque lui-même.',
+        );
+      }
+
+      if (descriptor.motion && descriptor.motion.layers.length > 0) {
+        const sorted = [...descriptor.layers].sort((a, b) => a.z - b.z);
+        const index = sorted.findIndex((layer) => layer.id === anchor.id);
+        const entry = descriptor.motion.layers[index % descriptor.motion.layers.length];
+        if (entry && !isNeutralMotion(entry)) {
+          warnings.push(
+            "La zone photo reste fixe pendant l'animation : le mouvement de ce calque " +
+              'ne sera pas joué, sinon la photo dépasserait de sa fenêtre.',
+          );
+        }
+      }
+    }
+  }
+
   return { ok: errors.length === 0, errors, warnings };
 }
 
@@ -320,7 +515,13 @@ export function updateLayer(
 }
 
 export function removeLayer(descriptor: Descriptor, id: string): Descriptor {
-  return { ...descriptor, layers: descriptor.layers.filter((l) => l.id !== id) };
+  return {
+    ...descriptor,
+    layers: descriptor.layers.filter((l) => l.id !== id),
+    // Supprimer le calque qui délimitait la zone photo remet le cadre en mode
+    // Cadre. On ne laisse pas d'ancre orpheline derrière soi.
+    ...(descriptor.photo_anchor === id ? { photo_anchor: undefined } : {}),
+  };
 }
 
 /** Ordre des calques : « devant » / « derrière » sans exposer de notion de z-index. */

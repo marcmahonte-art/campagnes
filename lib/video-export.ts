@@ -12,8 +12,9 @@
  */
 
 import { ratioSpec } from './ratios';
-import { sampleAt, type MotionPlan } from './motion';
+import { DEFAULT_MOTION_DURATION, sampleAt, type MotionPlan } from './motion';
 import { hasFeature, type PlanId } from './plans';
+import { PARTICIPANT_PHOTO_ID, effectiveMotion, photoZone } from './descriptor';
 import type { Descriptor, Layer } from './types';
 
 export interface ExportProgress {
@@ -64,8 +65,17 @@ interface RenderTarget {
 }
 
 async function buildRenderTarget(descriptor: Descriptor): Promise<RenderTarget> {
-  const { StaticCanvas, FabricImage, IText } = await import('fabric');
+  const { StaticCanvas, FabricImage, IText, Rect } = await import('fabric');
   const spec = ratioSpec(descriptor.ratio);
+
+  /**
+   * En mode Fond, la photo du participant doit être découpée à la zone : sans
+   * cela elle déborderait sur le décor du cadre. Le rectangle de découpe est
+   * `absolutePositioned`, donc exprimé dans le repère du canvas — insensible au
+   * déplacement de la photo comme au zoom de l'aperçu.
+   */
+  const zone = photoZone(descriptor);
+  const clipPhoto = Boolean(descriptor.photo_anchor);
 
   const element = document.createElement('canvas');
   const canvas = new StaticCanvas(element, {
@@ -122,6 +132,19 @@ async function buildRenderTarget(descriptor: Descriptor): Promise<RenderTarget> 
         });
         image.scaleX = layer.w / naturalWidth;
         image.scaleY = layer.h / naturalHeight;
+
+        if (clipPhoto && layer.id === PARTICIPANT_PHOTO_ID) {
+          image.clipPath = new Rect({
+            left: zone.x,
+            top: zone.y,
+            width: zone.w,
+            height: zone.h,
+            originX: 'left',
+            originY: 'top',
+            absolutePositioned: true,
+          });
+        }
+
         canvas.add(image);
         objects.push(image);
       }
@@ -303,13 +326,13 @@ export async function exportVideo(options: ExportOptions): Promise<VideoResult> 
     // Le filigrane a été ajouté APRÈS le calcul des transformations et n'est pas
     // dans `target.objects` : il reste donc immobile pendant toute la séquence.
 
-    const motion: MotionPlan =
-      descriptor.motion ?? {
-        preset: 'auto',
-        durationMs: 3000,
-        stagger: 0,
-        layers: [],
-      };
+    /*
+     * L'animation réellement jouée. En mode Fond, le calque qui délimite la zone
+     * photo est figé : sans cela la fenêtre se déplacerait sans la photo et la
+     * laisserait dépasser. L'aperçu du créateur applique la même règle, donc la
+     * vidéo correspond bien à ce qu'il a vu.
+     */
+    const motion = effectiveMotion(descriptor);
 
     const stream = target.element.captureStream(fps);
     const recorder = new MediaRecorder(stream, {
@@ -328,7 +351,7 @@ export async function exportVideo(options: ExportOptions): Promise<VideoResult> 
 
     recorder.start();
 
-    const duration = Math.max(400, motion.durationMs);
+    const duration = Math.max(400, motion?.durationMs ?? DEFAULT_MOTION_DURATION);
     const start = performance.now();
 
     await new Promise<void>((resolve, reject) => {
@@ -339,7 +362,9 @@ export async function exportVideo(options: ExportOptions): Promise<VideoResult> 
         }
 
         const elapsed = performance.now() - start;
-        applyMotion(target, motion, elapsed);
+        // Sans animation déclarée, on enregistre simplement le cadre au repos :
+        // `sampleAt()` n'a rien à échantillonner et planterait sur un plan vide.
+        if (motion) applyMotion(target, motion, elapsed);
         target.canvas.renderAll();
         options.onProgress?.({ ratio: Math.min(1, elapsed / duration) });
 

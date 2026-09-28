@@ -88,6 +88,18 @@ function publicUser(u: DbUser): User {
   return rest;
 }
 
+/** Projection publique : jamais l'email, jamais la formule — seulement son effet visible. */
+function publicCreator(u: DbUser): CreatorProfile {
+  return {
+    id: u.id,
+    username: u.username,
+    org_name: u.org_name,
+    logo_url: u.logo_url,
+    created_at: u.created_at,
+    watermark: u.plan === 'free',
+  };
+}
+
 const delay = (ms = 180) => new Promise((r) => setTimeout(r, ms));
 
 export const localBackend: Backend = {
@@ -250,14 +262,7 @@ export const localBackend: Backend = {
 
   async getCreatorProfile(username): Promise<CreatorProfile | null> {
     const user = readDb().users.find((u) => u.username === username);
-    if (!user) return null;
-    return {
-      id: user.id,
-      username: user.username,
-      org_name: user.org_name,
-      logo_url: user.logo_url,
-      created_at: user.created_at,
-    };
+    return user ? publicCreator(user) : null;
   },
 
   /* --- Cadres ------------------------------------------------------- */
@@ -367,17 +372,26 @@ export const localBackend: Backend = {
         return {
           ...c,
           frame: db.frames.find((f) => f.id === c.frame_id) ?? null,
-          creator: owner
-            ? {
-                id: owner.id,
-                username: owner.username,
-                org_name: owner.org_name,
-                logo_url: owner.logo_url,
-                created_at: owner.created_at,
-              }
-            : null,
+          creator: owner ? publicCreator(owner) : null,
         };
       });
+  },
+
+  /**
+   * Entrée du parcours participant. Un brouillon est traité comme inexistant :
+   * le lien ne doit rien laisser filtrer sur les campagnes non publiées.
+   */
+  async getPublicCampaign(slug): Promise<GalleryItem | null> {
+    const db = readDb();
+    const campaign = db.campaigns.find((c) => c.slug === slug && c.status === 'published');
+    if (!campaign) return null;
+
+    const owner = db.users.find((u) => u.id === campaign.owner_id);
+    return {
+      ...campaign,
+      frame: db.frames.find((f) => f.id === campaign.frame_id) ?? null,
+      creator: owner ? publicCreator(owner) : null,
+    };
   },
 
   /* --- Formule ------------------------------------------------------ */

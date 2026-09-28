@@ -25,6 +25,12 @@ export interface CreatorProfile {
   org_name: string | null;
   logo_url: string | null;
   created_at: string;
+  /**
+   * Vrai si les visuels issus des campagnes de ce créateur portent le filigrane.
+   * Dérivé de la formule, sans révéler laquelle : c'est exactement — et seulement —
+   * ce dont le parcours participant a besoin pour composer son export.
+   */
+  watermark: boolean;
 }
 
 /* ------------------------------------------------------------------ */
@@ -72,6 +78,21 @@ export interface Descriptor {
   ratio: Ratio;
   background: 'transparent' | string;
   layers: Layer[];
+  /**
+   * Mode d'accueil de la photo du participant.
+   *
+   * Absent → **mode Cadre** : la photo couvre tout le cadre et n'apparaît qu'à
+   * travers les zones transparentes du visuel.
+   *
+   * Présent → **mode Fond** : identifiant du calque qui délimite la zone photo.
+   * La photo est découpée à son emprise et posée **juste au-dessus** de lui ;
+   * elle masque donc ce calque dans la zone, tandis que son décor reste visible
+   * tout autour.
+   *
+   * Le calque désigné n'est pas un conteneur : c'est un repère. Rien n'est
+   * déplacé, rien n'est modifié dans les calques du créateur.
+   */
+  photo_anchor?: string;
   /**
    * Animation du cadre (Motion Engine). Absent = cadre statique.
    * Stocké ici pour que le cadre reste rejouable à l'identique, aperçu comme rendu.

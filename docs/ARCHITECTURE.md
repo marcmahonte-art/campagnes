@@ -57,6 +57,7 @@ campagnes/
 │   │
 │   ├── tarifs/page.tsx               # grille publique + matrice comparative
 │   ├── galerie/page.tsx              # campagnes publiées, tous créateurs
+│   ├── c/[slug]/page.tsx             # parcours participant : public, sans compte
 │   ├── u/[username]/page.tsx         # profil public du créateur (URL canonique)
 │   └── auth/callback/route.ts        # échange du code OAuth (Google) contre une session
 │
@@ -82,6 +83,8 @@ campagnes/
 │   │   ├── feature-gate.tsx          # verrou d'un module premium
 │   │   ├── pricing-plans.tsx         # grille interactive (activation de formule)
 │   │   └── offer-card.tsx            # offre de distribution : volume, prix, devis
+│   ├── participant/
+│   │   └── participant-stage.tsx     # photo du participant derrière le cadre (Fabric)
 │   └── frame/
 │       └── frame-editor.tsx          # canvas Fabric.js (Frame Engine + lecture d'animation)
 │
@@ -89,6 +92,7 @@ campagnes/
 │   ├── types.ts                      # User, Frame, Campaign, Descriptor, GalleryItem…
 │   ├── plans.ts                      # formules, droits, libellés, matrice, modules premium
 │   ├── distribution.ts               # grille tarifaire FCFA + demande de devis
+│   ├── participant.ts                # composition cadre + photo, couverture, contraintes
 │   ├── motion.ts                     # Motion Engine — pur et déterministe
 │   ├── video-export.ts               # rendu hors écran : PNG + WebM, filigrane
 │   ├── descriptor.ts                 # création / lecture / validation du JSON versionné
@@ -195,8 +199,13 @@ il est explicite et réversible (une ligne à supprimer).
 
 RLS filtre des **lignes**, pas des **colonnes**. Comme `users` contient `email` et
 `plan`, on n'ouvre pas la table aux anonymes : on expose une **vue**
-`public.creator_profiles` (`id, username, org_name, logo_url, created_at`) accordée à
-`anon` et `authenticated`. La page `/u/[username]` lit la vue, jamais la table.
+`public.creator_profiles` (`id, username, org_name, logo_url, created_at, watermark`)
+accordée à `anon` et `authenticated`. La page `/u/[username]` et le parcours participant
+lisent la vue, jamais la table.
+
+`watermark` est un booléen **dérivé** de la formule (`plan = 'free'`), pas la formule
+elle-même : le parcours participant doit savoir s'il doit marquer le visuel qu'il produit,
+et rien de plus. Voir §9.4.
 
 ### 3.5 Création automatique du profil
 
@@ -214,6 +223,7 @@ couvre les deux chemins. `/onboarding` ne fait ensuite qu'un `UPDATE`.
   "version": 1,
   "ratio": "9:16",
   "background": "transparent",
+  "photo_anchor": "l1",          // facultatif — voir §9.2
   "layers": [
     { "id": "l1", "type": "image", "src": "…", "x": 0, "y": 0, "w": 1080, "h": 1920,
       "rotation": 0, "z": 10, "opacity": 1 },
@@ -231,8 +241,13 @@ Règles :
   1080×1920) — jamais dans le repère de l'écran. C'est ce qui rend le cadre rejouable
   sur un écran de créateur comme sur le futur rendu participant.
 - `lib/descriptor.ts` est le seul endroit qui écrit ou relit ce JSON.
+- `photo_anchor` est **facultatif et omis quand absent** : un cadre en mode Cadre se
+  sérialise exactement comme avant l'introduction de la zone photo. La contrainte
+  `frames_descriptor_shape` n'exige que `version`, `ratio` et `layers` — les champs
+  additionnels sont donc acceptés sans migration.
 - Le composant `DescriptorViewer` l'affiche en clair dans l'éditeur : c'est le livrable
-  « JSON visible/inspectable » demandé.
+  « JSON visible/inspectable » demandé. Il affiche aussi le mode retenu (cadre entier ou
+  zone photo) et les avertissements de `validateDescriptor()`.
 
 ---
 
@@ -409,7 +424,156 @@ pendant toute la séquence. `hasFeature(plan, 'no_watermark')` est le seul arbit
 
 ---
 
-## 9. Verrouillage des modules premium
+## 9. Le parcours participant (Phase C)
+
+Route publique : `app/c/[slug]/page.tsx`. Aucune garde d'accès, aucune session, aucun
+formulaire. C'est le seul écran que voit la communauté du créateur.
+
+### 9.1 Une seule idée : la photo est un calque comme un autre
+
+Le descripteur du créateur n'est **jamais** modifié. `composeDescriptor()`
+(`lib/participant.ts`) y glisse une couche image à la bonne place. Le rendu emprunte ensuite
+le chemin déjà existant — `exportPng()` et `exportVideo()` de `lib/video-export.ts`.
+
+Conséquence recherchée : **l'aperçu et le fichier téléchargé ne peuvent pas diverger**, et
+le parcours participant n'a introduit aucune nouvelle logique de rendu. Le contrat de
+rejouabilité du descripteur tient sa promesse.
+
+### 9.2 Deux modes, une seule géométrie : la zone
+
+Le descripteur porte un champ optionnel `photo_anchor` — l'identifiant du calque qui
+délimite la zone photo.
+
+| `photo_anchor` | Mode | Où va la photo |
+|---|---|---|
+| absent | **Cadre** | sous tous les calques ; visible à travers les zones transparentes du PNG |
+| présent | **Fond** | **juste au-dessus** du calque désigné ; elle le masque dans la zone, son décor reste visible autour |
+
+Le choix « au-dessus de l'ancre » est délibéré : si la photo passait *sous* un calque
+opaque, elle serait invisible. Au-dessus, l'ancre sert de repère et disparaît dans la zone —
+ce qui rend le mode Fond impossible à rater, même avec un calque plein.
+
+`photoZone()` (`lib/descriptor.ts`) renvoie le rectangle à couvrir : le cadre entier en mode
+Cadre, l'**emprise** du calque désigné en mode Fond — rotation comprise, car la rotation
+s'applique autour du centre et le rectangle englobant est la seule forme pour laquelle la
+règle de couverture reste exacte.
+
+Conséquence architecturale : **tout le reste du module s'écrit en arithmétique de
+rectangle**, sans jamais connaître le format. Un seul jeu de tests couvre les deux modes.
+
+### 9.3 La photo couvre toujours la zone
+
+Un cadre est un PNG à zones transparentes : si la photo laissait un trou, on verrait le
+damier. Le domaine de déplacement est donc borné, et il est **toujours inclus dans les
+négatifs ou nuls** — la photo déborde de la zone, jamais l'inverse.
+
+| Fonction | Rôle |
+|---|---|
+| `coverSize()` | taille minimale pour couvrir la zone (zoom = 1) |
+| `placementBounds()` | domaine autorisé du coin supérieur gauche |
+| `clampPlacement()` | ramène un placement dans ce domaine |
+| `zoomAroundCenter()` | zoome en gardant fixe le point sous le centre de la zone |
+| `movableAxes()` | dit si la photo peut encore bouger sur chaque axe |
+
+Au zoom minimal, l'axe qui contraint la couverture a un domaine réduit à un point : il est
+donc verrouillé, ce qui est le comportement attendu et non un bug. `zoomAroundCenter()`
+existe parce que zoomer sans compenser ferait « sauter » la photo vers un coin — le
+réglage paraîtrait cassé.
+
+Les contraintes sont appliquées **aussi pendant le glissement** (`object:moving`), pas
+seulement à la fin : le participant ne voit jamais un trou apparaître puis disparaître.
+
+Deux détails qui comptent :
+
+- **La découpe est `absolutePositioned`.** Le rectangle de découpe vit dans le repère du
+  canvas, donc il ne suit ni le déplacement de la photo ni le zoom de la vue. Un rectangle
+  relatif à l'objet glisserait avec la photo — c'est la différence entre « la photo
+  apparaît dans la fenêtre » et « la fenêtre se promène sur la photo ». Fabric neutralise
+  pour cela la transformation de l'objet dans le contexte de découpe, et
+  `shouldLayoutClipPath()` renvoie `false` : la découpe n'affecte donc pas la boîte
+  englobante, ce qui est indispensable puisque `clampPlacement()` lit `left`/`top`.
+- **Aucun arrondi dans `photoLayer()`.** Le placement affiché et le placement exporté sont
+  les mêmes nombres, au bit près. Un `Math.round()` sur la taille de la photo pouvait la
+  rétrécir d'un demi-pixel et rouvrir un liseré de damier sur le bord de la zone.
+
+### 9.4 En mode Fond, la zone est fixe
+
+`sampleAt()` (`lib/motion.ts`) indexe les mouvements **par position de calque**, et chaque
+calque s'anime autour de sa propre origine. Une fenêtre qui bougerait pendant que la photo
+reste immobile laisserait donc forcément dépasser la photo d'un côté : la couverture est
+impossible à garantir dès que l'ancre est animée.
+
+Le mouvement du calque qui délimite la zone est donc **neutralisé** par
+`effectiveMotion()`. Les autres calques continuent d'animer normalement — c'est même le
+rendu attendu d'une affiche à fenêtre photo : une fenêtre stable, un décor qui vit.
+
+Cette règle vit dans **une seule fonction**, appelée par trois consommateurs :
+
+| Consommateur | Fichier |
+|---|---|
+| Aperçu du créateur | `components/frame/frame-editor.tsx` |
+| Export PNG / vidéo | `lib/video-export.ts` |
+| Parcours participant | `lib/participant.ts` → `composeDescriptor()` |
+
+C'est ce qui interdit à l'aperçu du créateur de mentir : s'il voyait son fond bouger alors
+que le participant le verra fixe, il validerait un cadre qui ne ressemble pas à ce qui sera
+produit. `validateDescriptor()` avertit d'ailleurs le créateur quand sa zone sera figée.
+
+### 9.5 L'insertion de la photo ne décale pas l'animation
+
+Puisque `sampleAt()` lit `plan.layers[layerIndex % plan.layers.length]`, glisser la photo
+au milieu du descripteur décalerait tous les calques suivants : le cadre ne jouerait plus
+la même animation.
+
+`composeDescriptor()` appelle donc `insertNeutralMotion()` (`lib/descriptor.ts`), qui
+complète le plan jusqu'au nombre de calques puis insère un **mouvement neutre** à la
+position de la photo. Les calques du créateur gardent très exactement le leur, et
+`motion.layers.length === layers.length` reste vrai — donc l'avertissement de validation
+sur un décalage de longueur ne se déclenche pas à tort.
+
+### 9.6 Rien ne quitte l'appareil
+
+La photo est lue en data URL dans le navigateur (`readPhotoFile()`) et n'est **jamais**
+téléversée. Il n'y a ni compte, ni stockage, ni trace, ni modération à prévoir. C'est une
+promesse produit, écrite dans l'interface (« Votre photo reste sur votre appareil »), pas
+un détail d'implémentation.
+
+Le fichier n'est pas filtré sur son type MIME déclaré — peu fiable sur mobile — mais sur la
+capacité réelle du navigateur à le décoder.
+
+### 9.7 Le filigrane suit la formule du créateur
+
+Le participant n'a pas de formule. Le filigrane est donc décidé par celle du créateur.
+
+`creator_profiles` (la vue publique) n'expose **pas** `plan`, seulement un booléen dérivé
+`watermark = (plan = 'free')`. C'est exactement — et seulement — l'information dont le
+parcours a besoin : exposer `plan` révélerait le niveau d'abonnement du créateur.
+
+Deux points d'honnêteté :
+
+- le filigrane est **affiché à l'écran, aux mêmes proportions que dans l'export**, avant
+  que le participant ne télécharge quoi que ce soit. Sans cela, il découvrirait un visuel
+  marqué après coup : l'aperçu mentirait ;
+- en cas de doute (créateur inconnu), `rowToCreator()` retombe sur `watermark = true`.
+  Mieux vaut un export marqué qu'un export qui contourne la formule par accident.
+
+### 9.8 Aucune migration supplémentaire
+
+Les policies de `0001_init.sql` avaient été écrites pour ce parcours :
+
+| Policy | Ce qu'elle permet ici |
+|---|---|
+| `campaigns_select_owner_or_published` | `anon` lit une campagne publiée |
+| `frames_select_owner_or_published` | `anon` lit le cadre de cette campagne |
+| `media_read_public` | `anon` charge les images du cadre |
+
+`getPublicCampaign(slug)` filtre en plus explicitement sur `status = 'published'` : un
+brouillon doit être **indiscernable d'un slug inexistant**. Un lien partagé ne doit jamais
+révéler l'existence d'une campagne non publiée.
+
+---
+
+## 10. Verrouillage des modules premium
 
 Principe : **on ne cache jamais ce qui existe.** Un module verrouillé reste visible, avec sa
 description et la formule qui le débloque. C'est ce qui donne envie de monter en gamme sans
@@ -427,13 +591,18 @@ pas vers la page publique des tarifs.
 
 ---
 
-## 10. Ce qui n'est PAS construit
+## 11. Ce qui n'est PAS construit
 
-Compte participant · page participant `/c/[slug]` · paiement réel (aucun prestataire
-branché : l'achat de pack et le changement de formule sont **simulés**, et le disent dans
-l'interface) · branding · domaine personnalisé · multi-utilisateurs · galerie privée ·
-rapports PDF · tout rendu serveur.
+Paiement réel (aucun prestataire branché : le changement de formule est **immédiat en
+recette**, et la migration 0002 dit explicitement qu'il doit être réservé au webhook de
+paiement en production) · branding · domaine personnalisé · multi-utilisateurs · galerie
+privée · rapports PDF · tout rendu serveur.
+
+Côté participant, il n'y a **rien** à construire de plus : pas de compte, pas de stockage,
+pas de modération. C'est une conséquence directe du choix de tout traiter dans le navigateur
+(§9.3).
 
 Les tables `events` et `subscriptions` du plan d'implémentation ne sont **pas** créées :
-`events` n'a de sens qu'avec le parcours participant, et `subscriptions` attend le
+`events` supposerait de tracer les participations, ce que le parcours participant ne fait
+délibérément pas (la photo ne quitte jamais l'appareil) ; `subscriptions` attend le
 prestataire de paiement.

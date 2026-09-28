@@ -236,19 +236,24 @@ create policy "campaigns_delete_owner" on public.campaigns
 -- 6. Vue publique du créateur
 --    RLS ne sait pas filtrer des colonnes : on expose donc une vue qui ne
 --    contient QUE les champs publics. `email` et `plan` restent privés.
+--
+--    `watermark` est un booléen DÉRIVÉ de la formule, pas la formule elle-même :
+--    le parcours participant doit savoir s'il doit marquer le visuel qu'il
+--    produit, et rien de plus. Exposer `plan` révélerait le niveau d'abonnement.
 -- ---------------------------------------------------------------------
 drop view if exists public.creator_profiles;
 create view public.creator_profiles
 with (security_invoker = off)   -- la vue s'exécute avec les droits de son propriétaire
 as
-  select id, username, org_name, logo_url, created_at
+  select id, username, org_name, logo_url, created_at,
+         (plan = 'free') as watermark
   from public.users;
 
 revoke all on public.creator_profiles from anon, authenticated;
 grant select on public.creator_profiles to anon, authenticated;
 
 comment on view public.creator_profiles is
-  'Projection publique d''un créateur : username, org_name, logo_url. Aucune donnée privée.';
+  'Projection publique d''un créateur : username, org_name, logo_url et l''effet visible de la formule (watermark). Aucune donnée privée.';
 
 -- ---------------------------------------------------------------------
 -- 7. Storage — bucket `media` (logos créateur, PNG de cadre, vignettes)

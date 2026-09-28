@@ -5,7 +5,7 @@ import type { Canvas as FabricCanvas, FabricObject } from 'fabric';
 import { ImagePlus, Loader2, Trash2, Type } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { ratioSpec } from '@/lib/ratios';
-import { parseDescriptor } from '@/lib/descriptor';
+import { effectiveMotion, parseDescriptor } from '@/lib/descriptor';
 import { sampleAt } from '@/lib/motion';
 import { backend } from '@/lib/backend';
 import type { Descriptor, ImageLayer, Layer, TextAlign, TextLayer } from '@/lib/types';
@@ -268,14 +268,15 @@ export function FrameEditor({
   /* ---------------- Lecture de l'animation ---------------- */
   /**
    * Pendant la lecture, on anime les objets du canvas d'édition avec exactement
-   * le même `sampleAt()` que l'export. À l'arrêt, chaque objet retrouve sa
-   * transformation d'origine : la lecture ne modifie jamais le descripteur.
+   * le même `sampleAt()` que l'export, et le même plan effectif (`effectiveMotion`).
+   * À l'arrêt, chaque objet retrouve sa transformation d'origine : la lecture ne
+   * modifie jamais le descripteur.
    */
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const plan = descriptor.motion ?? null;
+    const plan = effectiveMotion(descriptor);
     const objects = canvas.getObjects();
 
     if (!playing || !plan || objects.length === 0) {
@@ -350,9 +351,11 @@ export function FrameEditor({
 
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-    // `descriptor.motion` est volontairement la seule dépendance qui compte ici.
+    // Seuls comptent le fait de jouer, le plan d'animation et l'identité du
+    // calque qui délimite la zone photo — c'est tout ce dont `effectiveMotion`
+    // dépend pour choisir les mouvements réellement joués.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playing, descriptor.motion, spec.width, spec.height]);
+  }, [playing, descriptor.motion, descriptor.photo_anchor, spec.width, spec.height]);
 
   /* ---------------- Suppression au clavier ---------------- */
   useEffect(() => {
@@ -489,6 +492,18 @@ export function FrameEditor({
   }, [emitFromCanvas]);
 
   const selectedLayer = descriptor.layers.find((l) => l.id === selectedId) ?? null;
+  const zoneLayer = descriptor.layers.find((l) => l.id === descriptor.photo_anchor) ?? null;
+
+  /**
+   * Désigne — ou retire — la zone photo. Une seule à la fois : le descripteur ne
+   * porte qu'une ancre, donc désigner un calque remplace le précédent.
+   */
+  const setPhotoZone = useCallback(
+    (layerId: string | null) => {
+      onChange({ ...descriptor, photo_anchor: layerId ?? undefined });
+    },
+    [descriptor, onChange],
+  );
 
   return (
     <div className="flex flex-col gap-5 lg:flex-row">
@@ -583,6 +598,13 @@ export function FrameEditor({
               onPatch={patchSelected}
               onDelete={deleteSelected}
               onOrder={moveSelected}
+              isZone={descriptor.photo_anchor === selectedLayer.id}
+              otherZone={zoneLayer && zoneLayer.id !== selectedLayer.id ? zoneLayer : null}
+              onToggleZone={() =>
+                setPhotoZone(
+                  descriptor.photo_anchor === selectedLayer.id ? null : selectedLayer.id,
+                )
+              }
             />
           ) : (
             <p className="py-4 text-center text-[13px] leading-relaxed text-gray-500">
@@ -604,16 +626,33 @@ export function FrameEditor({
 /* de configuration complexe (§13 et règle UX n°2).                    */
 /* ------------------------------------------------------------------ */
 
+/** Comment nommer un calque à l'écran, sans jamais montrer d'identifiant technique. */
+function layerLabel(layer: Layer): string {
+  if (layer.type === 'text') {
+    const text = layer.text.trim();
+    return text.length > 0 ? `« ${text.slice(0, 24)} »` : 'Texte';
+  }
+  return layer.label?.trim() || 'Image';
+}
+
 function LayerInspector({
   layer,
   onPatch,
   onDelete,
   onOrder,
+  isZone,
+  otherZone,
+  onToggleZone,
 }: {
   layer: Layer;
   onPatch: (patch: Partial<TextLayer> & Partial<ImageLayer>) => void;
   onDelete: () => void;
   onOrder: (direction: 'front' | 'back') => void;
+  /** Ce calque est-il celui qui délimite la zone photo du parcours participant ? */
+  isZone: boolean;
+  /** Le calque qui délimite déjà la zone, s'il s'agit d'un autre. */
+  otherZone: Layer | null;
+  onToggleZone: () => void;
 }) {
   const [advanced, setAdvanced] = useState(false);
   const isText = layer.type === 'text';
@@ -648,6 +687,52 @@ function LayerInspector({
           className="rounded-md border border-gray-200 py-2 text-[13px] transition-colors hover:border-ink"
         >
           Derrière
+        </button>
+      </div>
+
+      {/*
+        Zone photo — la seule décision de « rôle » que le créateur prend sur un
+        calque. Elle reste donc au même niveau que Devant / Derrière, sans
+        ouvrir de panneau : un bouton, une phrase, et l'état se lit d'un coup.
+      */}
+      <div
+        className={cn(
+          'rounded-md border p-3 transition-colors',
+          isZone ? 'border-ink bg-gray-50' : 'border-gray-200',
+        )}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-medium text-gray-700">Zone photo</span>
+          {isZone && (
+            <span className="rounded-pill bg-ink px-2 py-0.5 text-[10px] font-medium text-white">
+              Active
+            </span>
+          )}
+        </div>
+
+        <p className="mt-1.5 text-[11px] leading-relaxed text-gray-500">
+          {isZone
+            ? "Les participants placeront leur photo ici. Ce calque est masqué dans la zone et reste visible tout autour."
+            : "La photo du participant s’affichera à l’emplacement de ce calque."}
+        </p>
+
+        {!isZone && otherZone && (
+          <p className="mt-1.5 text-[11px] text-gray-400">
+            Remplace la zone actuelle : {layerLabel(otherZone)}.
+          </p>
+        )}
+
+        <button
+          type="button"
+          onClick={onToggleZone}
+          className={cn(
+            'mt-2.5 w-full rounded-md border py-2 text-[12px] transition-colors',
+            isZone
+              ? 'border-gray-200 text-gray-600 hover:border-error hover:text-error'
+              : 'border-gray-200 hover:border-ink',
+          )}
+        >
+          {isZone ? 'Retirer la zone photo' : 'Définir comme zone photo'}
         </button>
       </div>
 

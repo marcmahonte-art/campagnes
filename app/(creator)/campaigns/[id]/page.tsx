@@ -333,10 +333,10 @@ export default function CampaignEditorPage() {
       {/* ---------------- Lien public ---------------- */}
       <section className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white p-5">
         <div>
-          <h2 className="text-[15px] font-semibold">Lien de la campagne</h2>
-          <p className="mt-1 text-[13px] text-gray-500">
+          <h2 className="text-[15px] font-semibold">Lien de participation</h2>
+          <p className="mt-1 text-[13px] leading-relaxed text-gray-500">
             {campaign.status === 'published'
-              ? 'Ce lien est actif : votre communauté peut l’ouvrir.'
+              ? 'Partagez ce lien : chacun y dépose sa photo, la place dans votre cadre et repart avec son visuel — sans compte.'
               : 'Le lien ne sera actif qu’après publication.'}
           </p>
         </div>
