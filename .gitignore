@@ -21,6 +21,9 @@ Thumbs.db
 *.log
 npm-debug.log*
 
+# Données internes de l'assistant (notes de projet, mémoire) — hors dépôt.
+.workbuddy-ai/
+
 # Assets de travail du designer (lourds, hors dépôt)
 *.ai
 docs/*.png
