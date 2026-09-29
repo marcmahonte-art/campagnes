@@ -9,6 +9,7 @@ import type {
   User,
 } from '@/lib/types';
 import { parseDescriptor } from '@/lib/descriptor';
+import { isCampaignKind } from '@/lib/campaign-kinds';
 import { supabaseBrowser } from '@/lib/supabase/client';
 import { MEDIA_BUCKET, SITE_URL } from './config';
 import type {
@@ -75,6 +76,9 @@ function rowToCampaign(row: Row): Campaign {
     slug: String(row.slug ?? ''),
     frame_id: (row.frame_id as string | null) ?? null,
     ratio: (row.ratio as Campaign['ratio']) ?? '1:1',
+    // Le défaut de la migration vaut 'photo_frame' : une campagne lue sans
+    // cette colonne est donc une campagne photo, jamais une campagne sans type.
+    kind: isCampaignKind(row.kind) ? row.kind : 'photo_frame',
     status: (row.status as Campaign['status']) ?? 'draft',
     created_at: String(row.created_at ?? new Date().toISOString()),
   };
@@ -301,6 +305,7 @@ export const supabaseBackend: Backend = {
         name: input.name,
         slug: input.slug,
         ratio: input.ratio,
+        kind: input.kind,
         status: 'draft',
       })
       .select('*')

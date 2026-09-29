@@ -1,5 +1,6 @@
 import type {
   Campaign,
+  CampaignKind,
   CampaignWithFrame,
   CreatorProfile,
   Descriptor,
@@ -28,6 +29,7 @@ export interface CreateCampaignInput {
   name: string;
   slug: string;
   ratio: Ratio;
+  kind: CampaignKind;
 }
 
 export interface UpdateProfilePatch {
@@ -76,7 +78,7 @@ export interface Backend {
   createCampaign(input: CreateCampaignInput): Promise<Result<Campaign>>;
   updateCampaign(
     campaignId: string,
-    patch: Partial<Pick<Campaign, 'name' | 'slug' | 'ratio' | 'status' | 'frame_id'>>,
+    patch: Partial<Pick<Campaign, 'name' | 'slug' | 'ratio' | 'kind' | 'status' | 'frame_id'>>,
   ): Promise<Result>;
   deleteCampaign(campaignId: string): Promise<Result>;
   listSlugs(): Promise<string[]>;

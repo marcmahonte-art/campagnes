@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { ArrowRight, Frame } from 'lucide-react';
 import { StatusBadge } from '@/components/ui/badge';
+import { kindSpec } from '@/lib/campaign-kinds';
 import { ratioSpec } from '@/lib/ratios';
 import type { CampaignWithFrame } from '@/lib/types';
 
@@ -56,9 +57,9 @@ export function CampaignCard({
           <StatusBadge status={campaign.status} />
         </div>
 
-        <div className="mt-auto flex items-center justify-between">
-          <span className="text-xs text-gray-500">
-            {spec.label} · {campaign.slug}
+        <div className="mt-auto flex items-center justify-between gap-2">
+          <span className="min-w-0 truncate text-xs text-gray-500">
+            {spec.label} · {kindSpec(campaign.kind).label}
           </span>
           <span className="flex items-center gap-1 text-[13px] font-medium text-ink transition-transform duration-200 ease-brand group-hover:translate-x-0.5">
             Ouvrir

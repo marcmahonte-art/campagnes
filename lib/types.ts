@@ -6,6 +6,18 @@ export type PlanKind = 'free' | 'creator' | 'organization';
 export type CampaignStatus = 'draft' | 'published';
 export type Ratio = '1:1' | '16:9' | '9:16';
 
+/**
+ * Comment une campagne accueille le média du participant. Choisi à la création,
+ * stocké sur la campagne : la page publique doit savoir ce qu'elle attend
+ * AVANT de lire le cadre.
+ *
+ * - `photo_frame`     la photo couvre tout le cadre (mode Cadre du descripteur)
+ * - `video_frame`     un cadre animé appliqué à une vidéo
+ * - `background_frame` la photo est posée dans une zone, le décor reste visible
+ *                      autour (mode Fond : le descripteur porte un `photo_anchor`)
+ */
+export type CampaignKind = 'photo_frame' | 'video_frame' | 'background_frame';
+
 /** Créateur. Le participant n'a jamais de compte (Phase A). */
 export interface User {
   id: string;
@@ -118,6 +130,7 @@ export interface Campaign {
   slug: string;
   frame_id: string | null;
   ratio: Ratio;
+  kind: CampaignKind;
   status: CampaignStatus;
   created_at: string;
 }

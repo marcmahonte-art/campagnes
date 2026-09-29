@@ -7,15 +7,20 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Field, Input, InputPrefix } from '@/components/ui/input';
 import { RatioPicker } from '@/components/ui/ratio-picker';
+import { KindPicker } from '@/components/ui/kind-picker';
 import { InlineError, Spinner } from '@/components/ui/feedback';
 import { backend } from '@/lib/backend';
 import { useSession } from '@/lib/backend/session';
 import { isValidSlug, slugFromName, uniqueSlug } from '@/lib/slug';
-import type { Ratio } from '@/lib/types';
+import { defaultRatioFor, kindSpec } from '@/lib/campaign-kinds';
+import type { CampaignKind, Ratio } from '@/lib/types';
 
 /**
  * Création de campagne — une seule action principale par écran (§25, règle 1).
- * Le slug est généré automatiquement mais reste modifiable.
+ *
+ * L'ordre suit les deux questions que se pose vraiment un créateur : qu'est-ce
+ * que ma communauté va y déposer (le type), puis comment c'est nommé et
+ * formaté. Le slug est généré automatiquement mais reste modifiable.
  */
 export default function NewCampaignPage() {
   const router = useRouter();
@@ -24,7 +29,9 @@ export default function NewCampaignPage() {
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
   const [slugTouched, setSlugTouched] = useState(false);
+  const [kind, setKind] = useState<CampaignKind>('photo_frame');
   const [ratio, setRatio] = useState<Ratio>('1:1');
+  const [ratioTouched, setRatioTouched] = useState(false);
   const [existingSlugs, setExistingSlugs] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -38,6 +45,13 @@ export default function NewCampaignPage() {
     if (slugTouched) return;
     setSlug(name.trim() ? slugFromName(name) : '');
   }, [name, slugTouched]);
+
+  // Le type suggère un format, jamais l'inverse : tant que le créateur n'a pas
+  // choisi de format lui-même, le changement de type réaligne le format.
+  useEffect(() => {
+    if (ratioTouched) return;
+    setRatio(defaultRatioFor(kind));
+  }, [kind, ratioTouched]);
 
   const slugValid = useMemo(() => isValidSlug(slug), [slug]);
   const slugTaken = useMemo(() => existingSlugs.includes(slug), [existingSlugs, slug]);
@@ -68,6 +82,7 @@ export default function NewCampaignPage() {
         name: name.trim(),
         slug: finalSlug,
         ratio,
+        kind,
       });
       if (result.error || !result.data) {
         setError(result.error ?? 'La création a échoué.');
@@ -86,14 +101,25 @@ export default function NewCampaignPage() {
           Nouvelle campagne
         </span>
         <h1 className="mt-3 text-[28px] font-bold leading-tight md:text-[36px]">
-          Commençons par l’essentiel.
+          Que vont-yls déposer vos participants ?
         </h1>
         <p className="mt-2 text-sm leading-relaxed text-gray-500">
-          Vous dessinerez le cadre juste après. Ces informations restent modifiables.
+          Une photo, une vidéo, ou une photo sur votre décor. Ce choix détermine le parcours
+          qui les attend — tout reste modifiable ensuite.
         </p>
       </header>
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-6">
+        <Card className="flex flex-col gap-4 p-5 md:p-6">
+          <div>
+            <h2 className="text-[15px] font-semibold">Type de campagne</h2>
+            <p className="mt-1 text-[13px] leading-relaxed text-gray-500">
+              {kindSpec(kind).detail}
+            </p>
+          </div>
+          <KindPicker value={kind} onChange={setKind} />
+        </Card>
+
         <Card className="flex flex-col gap-6 p-5 md:p-6">
           <Field label="Nom de la campagne" htmlFor="name">
             <Input
@@ -149,7 +175,13 @@ export default function NewCampaignPage() {
               Aucune résolution à choisir — Campagnes s’occupe de la technique.
             </p>
           </div>
-          <RatioPicker value={ratio} onChange={setRatio} />
+          <RatioPicker
+            value={ratio}
+            onChange={(next) => {
+              setRatioTouched(true);
+              setRatio(next);
+            }}
+          />
         </Card>
 
         <InlineError>{error}</InlineError>

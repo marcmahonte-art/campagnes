@@ -9,6 +9,7 @@ import type {
   User,
 } from '@/lib/types';
 import { createDescriptor } from '@/lib/descriptor';
+import { isCampaignKind } from '@/lib/campaign-kinds';
 import type {
   Backend,
   CreateCampaignInput,
@@ -45,6 +46,11 @@ function emptyDb(): Db {
   return { users: [], frames: [], campaigns: [] };
 }
 
+/** Les campagnes antérieures à la colonne `kind` sont des campagnes photo. */
+function withKind(campaign: Campaign): Campaign {
+  return isCampaignKind(campaign.kind) ? campaign : { ...campaign, kind: 'photo_frame' };
+}
+
 function readDb(): Db {
   if (typeof window === 'undefined') return emptyDb();
   try {
@@ -54,7 +60,9 @@ function readDb(): Db {
     return {
       users: Array.isArray(parsed.users) ? parsed.users : [],
       frames: Array.isArray(parsed.frames) ? parsed.frames : [],
-      campaigns: Array.isArray(parsed.campaigns) ? parsed.campaigns : [],
+      campaigns: Array.isArray(parsed.campaigns)
+        ? parsed.campaigns.map((c) => withKind(c))
+        : [],
     };
   } catch {
     return emptyDb();
@@ -331,6 +339,7 @@ export const localBackend: Backend = {
       slug: input.slug,
       frame_id: null,
       ratio: input.ratio,
+      kind: input.kind,
       status: 'draft',
       created_at: new Date().toISOString(),
     };
@@ -453,6 +462,16 @@ const CORNER_SVG = svgDataUrl(`
   <path d="M0 0 H430 V430 Z" fill="#000000"/>
 </svg>`);
 
+/**
+ * Zone photo du cadre « sur fond » : un simple liseré blanc. Le parcours
+ * participant pose la photo pile au-dessus et la masque dans cette fenêtre,
+ * le décor reste visible tout autour.
+ */
+const ZONE_SVG = svgDataUrl(`
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="700" viewBox="0 0 880 700">
+  <rect x="14" y="14" width="852" height="672" rx="18" fill="none" stroke="#FFFFFF" stroke-width="28"/>
+</svg>`);
+
 const VERTICAL_THUMB = svgDataUrl(`
 <svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920" viewBox="0 0 1080 1920">
   <rect width="1080" height="1920" fill="#F3F4F6"/>
@@ -570,6 +589,7 @@ export async function seedDemoAccount(): Promise<User> {
       version: 1,
       ratio: '1:1',
       background: 'transparent',
+      photo_anchor: 'demo-zone',
       layers: [
         {
           id: 'demo-corner',
@@ -582,6 +602,19 @@ export async function seedDemoAccount(): Promise<User> {
           h: 430,
           rotation: 0,
           z: 10,
+          opacity: 1,
+        },
+        {
+          id: 'demo-zone',
+          type: 'image',
+          src: ZONE_SVG,
+          label: 'zone.png',
+          x: 100,
+          y: 190,
+          w: 880,
+          h: 700,
+          rotation: 0,
+          z: 15,
           opacity: 1,
         },
         {
@@ -613,6 +646,7 @@ export async function seedDemoAccount(): Promise<User> {
     slug: 'rentree-2026-ufhb',
     frame_id: verticalFrame.id,
     ratio: '9:16',
+    kind: 'photo_frame',
     status: 'published',
     created_at: now,
   };
@@ -624,6 +658,7 @@ export async function seedDemoAccount(): Promise<User> {
     slug: 'semaine-de-la-sante',
     frame_id: squareFrame.id,
     ratio: '1:1',
+    kind: 'background_frame',
     status: 'draft',
     created_at: new Date(Date.now() - 86_400_000).toISOString(),
   };

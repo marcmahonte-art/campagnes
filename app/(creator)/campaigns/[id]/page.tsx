@@ -22,7 +22,8 @@ import { MotionPanel } from '@/components/campaign/motion-panel';
 import { DescriptorViewer } from '@/components/campaign/descriptor-viewer';
 import { backend } from '@/lib/backend';
 import { useSession } from '@/lib/backend/session';
-import { createDescriptor, parseDescriptor, withRatio } from '@/lib/descriptor';
+import { parseDescriptor, withRatio } from '@/lib/descriptor';
+import { kindSpec, seedDescriptorFor } from '@/lib/campaign-kinds';
 import { isValidSlug } from '@/lib/slug';
 import { SITE_URL } from '@/lib/backend/config';
 import type { CampaignWithFrame, Descriptor, Ratio } from '@/lib/types';
@@ -37,7 +38,9 @@ export default function CampaignEditorPage() {
 
   const [campaign, setCampaign] = useState<CampaignWithFrame | null>(null);
   const [frameId, setFrameId] = useState<string | null>(null);
-  const [descriptor, setDescriptor] = useState<Descriptor>(() => createDescriptor('1:1'));
+  const [descriptor, setDescriptor] = useState<Descriptor>(() =>
+    seedDescriptorFor('photo_frame', '1:1'),
+  );
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
   const [loading, setLoading] = useState(true);
@@ -68,7 +71,10 @@ export default function CampaignEditorPage() {
       }
 
       let id = loaded.frame_id;
-      let desc = createDescriptor(loaded.ratio);
+      // Le descripteur d'amorce est calé sur le type choisi à la création :
+      // une campagne « photo sur fond » démarre avec sa zone photo, les deux
+      // autres démarrent en cadre transparent plein.
+      let desc = seedDescriptorFor(loaded.kind, loaded.ratio);
 
       if (id) {
         const frame = await backend.getFrame(id);
@@ -306,6 +312,17 @@ export default function CampaignEditorPage() {
           <h2 className="text-[15px] font-semibold">Cadre</h2>
           <span className="text-[13px] text-gray-500">Je dépose → je positionne → c’est prêt.</span>
         </div>
+
+        {/* Rappel du mode choisi à la création : en « photo sur fond », il faut
+            désigner un calque comme zone photo, sinon la photo du participant
+            couvrira tout le cadre malgré le type de campagne. */}
+        {campaign.kind === 'background_frame' && !descriptor.photo_anchor && (
+          <p className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2.5 text-[13px] leading-relaxed text-gray-600">
+            Campagne « {kindSpec(campaign.kind).label} » : sélectionnez un élément du cadre puis
+            cliquez sur <span className="font-medium text-ink">Définir comme zone photo</span> pour
+            qu’il y ait une fenêtre à remplir.
+          </p>
+        )}
 
         <FrameEditor
           descriptor={descriptor}
