@@ -97,7 +97,7 @@ export interface Backend {
   getPublicCampaign(slug: string): Promise<GalleryItem | null>;
 
   /* --- Formule ------------------------------------------------------ */
-  /** Change la formule du compte (activation immédiate en recette). */
+  /** Change la formule du compte. En mode Supabase, l'activation passe par un contact. */
   setPlan(userId: string, plan: PlanKind): Promise<Result>;
 
   /* --- Médias ------------------------------------------------------- */

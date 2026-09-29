@@ -353,22 +353,32 @@ simple, suffixe ` FCFA`). Aucun écran ne réécrit un prix à la main.
 
 ### 7.6 Activation d'une formule
 
-Une seule fonction `security definer` subsiste : `set_own_plan(p_plan plan_kind)`. Elle
-vérifie `auth.uid()` puis met à jour la ligne de l'appelant — rien d'autre.
+Une seule fonction `security definer` subsiste : `set_user_plan(p_user_id uuid, p_plan plan_kind)`.
+Elle est réservée à `service_role` — point d'entrée du futur webhook de paiement, et levier
+d'activation manuelle de l'exploitant.
 
-> **À verrouiller avant production.** `set_own_plan` est exécutable par `authenticated`
-> pour permettre la recette sans prestataire branché. En production elle doit être
-> révoquée pour `authenticated` et réservée au webhook de paiement (`service_role`).
-> C'est écrit dans l'en-tête et dans le commentaire de la fonction.
+> **Verrouillée par la migration 0005.** La 0002 accordait `set_own_plan(p_plan plan_kind)`
+> à `authenticated`, et l'écran Paramètres exposait un bouton qui l'appelait : n'importe quel
+> compte Free pouvait donc s'activer Organisation en un clic. La 0005 supprime cette fonction
+> et la remplace par `set_user_plan`. La suppression plutôt que la révocation est délibérée :
+> l'ancienne fonction lit `auth.uid()`, donc un webhook (sans JWT) l'aurait trouvée toujours
+> en échec.
+>
+> **Conséquence assumée : plus aucun écran ne peut activer une formule payante.** Tant qu'aucun
+> prestataire n'est branché, une formule payante s'obtient par un contact — `planContactHref()`
+> dans `lib/plans.ts`, exactement comme `quoteHref()` pour la distribution. Côté application,
+> le drapeau `canSelfActivatePlan` (`lib/backend/index.ts`) n'est vrai qu'en mode démonstration,
+> sans quoi les verrous de modules seraient contournables en changeant de formule.
 
 ### 7.7 Où vit chaque règle
 
 | Règle | Fichier | Consommé par |
 |---|---|---|
 | Quels modules pour quelle formule | `lib/plans.ts` → `hasFeature()` | nav, verrous, export |
+| Plafond de calques par formule | `lib/plans.ts` → `maxLayers()` | éditeur de cadre |
 | Volumes, prix affichés, libellé du devis | `lib/distribution.ts` | page tarifs |
 | Prix faisant foi pour un devis | `distribution_offers` (Postgres) | tableau de bord Supabase |
-| Activation d'une formule | `set_own_plan` (`0002_plans_distribution.sql`) | Postgres uniquement |
+| Activation d'une formule | `set_user_plan` (`0005_restrict_plan_activation.sql`) | `service_role` uniquement |
 
 Un seul point de vérité par règle. Aucun écran ne redéfinit un droit ni un prix en local.
 

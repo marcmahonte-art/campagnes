@@ -133,6 +133,28 @@ export function nextPlan(plan: PlanId | string | null | undefined): Plan | null 
 }
 
 /* ------------------------------------------------------------------ */
+/* Limites quantitatives                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Nombre maximal de calques par cadre pour une formule sans Frame Pro.
+ *
+ * La limite découle de `frame_pro` et non d'une liste de formules : ajouter
+ * une formule demain ne demande donc aucune modification ici.
+ */
+export const FREE_MAX_LAYERS = 3;
+
+/**
+ * Plafond de calques par cadre. `null` = illimité.
+ *
+ * Un seul point de vérité : l'éditeur ne décide pas de ce qu'il autorise, il
+ * applique ce que la formule accorde.
+ */
+export function maxLayers(plan: PlanId | string | null | undefined): number | null {
+  return hasFeature(plan, 'frame_pro') ? null : FREE_MAX_LAYERS;
+}
+
+/* ------------------------------------------------------------------ */
 /* Libellés et formatage                                               */
 /* ------------------------------------------------------------------ */
 
@@ -159,6 +181,26 @@ export function formatFcfa(amount: number): string {
 
 export function formatPlanPrice(plan: Plan): string {
   return plan.priceFcfa === 0 ? '0 FCFA' : `${formatFcfa(plan.priceFcfa)} / mois`;
+}
+
+/** Adresse de contact pour activer une formule payante. */
+export const PLANS_CONTACT_EMAIL = 'bonjour@campagnes.app';
+
+/**
+ * Demande d'activation d'une formule, pré-remplie.
+ *
+ * Même principe que `quoteHref()` pour la distribution : tant qu'aucun
+ * prestataire de paiement n'est branché, une formule payante s'obtient par un
+ * contact, jamais par un bouton. Un bouton qui n'active rien serait un mensonge.
+ */
+export function planContactHref(plan: Plan): string {
+  const subject = `Activation de la formule ${plan.name}`;
+  const body =
+    'Bonjour,\n\n' +
+    `Je souhaite activer la formule ${plan.name} (${formatPlanPrice(plan)}).\n\n` +
+    "Nom de l'organisation : \n" +
+    "Nom d'utilisateur : \n\n";
+  return `mailto:${PLANS_CONTACT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
 
 /* ------------------------------------------------------------------ */

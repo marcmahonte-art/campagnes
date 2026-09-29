@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
 import type { Canvas as FabricCanvas, FabricObject } from 'fabric';
 import { ImagePlus, Loader2, Trash2, Type } from 'lucide-react';
 import { cn } from '@/lib/cn';
@@ -31,12 +32,15 @@ export function FrameEditor({
   onChange,
   onReady,
   playing = false,
+  maxLayers = null,
 }: {
   descriptor: Descriptor;
   onChange: (next: Descriptor) => void;
   onReady?: (api: { fitToView: () => void; exportThumbnail: () => string | null }) => void;
   /** Lecture de l'animation. L'édition reprend la main dès que le drapeau retombe. */
   playing?: boolean;
+  /** Plafond de calques imposé par la formule. `null` = illimité. */
+  maxLayers?: number | null;
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasElRef = useRef<HTMLCanvasElement>(null);
@@ -382,8 +386,22 @@ export function FrameEditor({
   }, []);
 
   /* ---------------- Ajout de calques ---------------- */
+
+  /**
+   * Vrai quand la formule interdit d'ajouter un calque de plus.
+   *
+   * La limite porte sur l'AJOUT, jamais sur l'existant : un cadre composé avant
+   * le verrouillage garde tous ses calques. On ne détruit pas le travail d'un
+   * créateur pour lui vendre un module.
+   */
+  const layerLimitReached = maxLayers !== null && descriptor.layers.length >= maxLayers;
+
   async function addImageFile(file: File | undefined) {
     if (!file) return;
+    if (layerLimitReached) {
+      setError(`La formule Free limite à ${maxLayers} calques par cadre.`);
+      return;
+    }
     setError(null);
     setBusy(true);
     try {
@@ -430,6 +448,10 @@ export function FrameEditor({
   }
 
   async function addText() {
+    if (layerLimitReached) {
+      setError(`La formule Free limite à ${maxLayers} calques par cadre.`);
+      return;
+    }
     const { makeTextLayer } = await import('@/lib/descriptor');
     const layer = makeTextLayer('Votre texte', descriptor.ratio, {
       size: Math.round(spec.width * 0.09),
@@ -561,12 +583,19 @@ export function FrameEditor({
       {/* ---------------- Panneau d'actions ---------------- */}
       <aside className="w-full shrink-0 lg:w-72">
         <div className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white p-4">
-          <span className="text-[13px] font-semibold text-gray-700">Ajouter</span>
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="text-[13px] font-semibold text-gray-700">Ajouter</span>
+            {maxLayers !== null && (
+              <span className="text-[12px] text-gray-500">
+                {descriptor.layers.length} / {maxLayers}
+              </span>
+            )}
+          </div>
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              disabled={busy}
+              disabled={busy || layerLimitReached}
               className="flex flex-col items-center gap-2 rounded-md border border-gray-200 py-4 text-[13px] transition-colors hover:border-ink disabled:opacity-50"
             >
               <ImagePlus className="size-5" strokeWidth={1.75} aria-hidden />
@@ -575,12 +604,25 @@ export function FrameEditor({
             <button
               type="button"
               onClick={() => void addText()}
-              className="flex flex-col items-center gap-2 rounded-md border border-gray-200 py-4 text-[13px] transition-colors hover:border-ink"
+              disabled={layerLimitReached}
+              className="flex flex-col items-center gap-2 rounded-md border border-gray-200 py-4 text-[13px] transition-colors hover:border-ink disabled:opacity-50"
             >
               <Type className="size-5" strokeWidth={1.75} aria-hidden />
               Texte
             </button>
           </div>
+
+          {/* On ne cache jamais ce qui existe : les boutons restent visibles,
+              désactivés, avec la raison et la formule qui les rouvre. */}
+          {layerLimitReached && (
+            <p className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2.5 text-[12px] leading-relaxed text-gray-600">
+              La formule Free limite à {maxLayers} calques par cadre.{' '}
+              <Link href="/tarifs" className="font-medium text-ink underline underline-offset-4">
+                Frame Pro les rend illimités
+              </Link>
+              .
+            </p>
+          )}
 
           <input
             ref={fileInputRef}

@@ -4,20 +4,21 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { DismissibleNotice, InlineError } from '@/components/ui/feedback';
 import { PlanCard } from '@/components/plans/plan-card';
-import { backend } from '@/lib/backend';
+import { backend, canSelfActivatePlan } from '@/lib/backend';
 import { useSession } from '@/lib/backend/session';
-import { PLAN_LIST, type PlanId } from '@/lib/plans';
+import { PLAN_LIST, planContactHref, planOf, type PlanId } from '@/lib/plans';
 
 /**
  * Grille des formules.
  *
  * Sur la page publique, les cartes sont purement informatives. Une fois
- * connecté, elles deviennent actionnables : l'activation est immédiate.
+ * connecté, elles deviennent actionnables.
  *
- * NOTE — à ce stade aucun prestataire de paiement n'est branché : l'activation
- * est un basculement direct, destiné à la recette. En production, seul le
- * webhook de paiement (clé service_role) pourra activer une formule payante,
- * et le bouton redirigera vers le guichet du prestataire.
+ * Deux régimes, selon `canSelfActivatePlan` :
+ *   - mode démonstration — l'activation est un basculement direct, pour la recette ;
+ *   - mode Supabase — aucune fonction d'auto-activation n'existe en base
+ *     (migration 0005). Le bouton ouvre alors une demande de contact, ce qui est
+ *     exactement le régime de la distribution : prix affichés, achat par contact.
  */
 export function PricingPlans() {
   const router = useRouter();
@@ -30,6 +31,13 @@ export function PricingPlans() {
   async function activate(plan: PlanId) {
     if (!user) {
       router.push('/signup');
+      return;
+    }
+
+    // Une formule payante ne s'obtient pas depuis le navigateur tant qu'aucun
+    // prestataire de paiement n'est branché : on ouvre une demande de contact.
+    if (!canSelfActivatePlan && plan !== 'free') {
+      window.location.href = planContactHref(planOf(plan));
       return;
     }
 
@@ -65,15 +73,23 @@ export function PricingPlans() {
             current={user?.plan === plan.id}
             pending={pending === plan.id}
             onSelect={() => void activate(plan.id)}
-            ctaLabel={user ? undefined : 'Créer un compte'}
+            ctaLabel={
+              !user
+                ? 'Créer un compte'
+                : !canSelfActivatePlan && plan.id !== 'free'
+                  ? 'Nous contacter'
+                  : undefined
+            }
           />
         ))}
       </div>
 
       <p className="text-[12px] leading-relaxed text-gray-500">
-        {user
-          ? 'Vous pouvez changer de formule à tout moment. Le changement est immédiat et sans engagement.'
-          : 'Créez un compte gratuit pour commencer. Vous pourrez monter en gamme quand vos campagnes le demanderont.'}
+        {!user
+          ? 'Créez un compte gratuit pour commencer. Vous pourrez monter en gamme quand vos campagnes le demanderont.'
+          : canSelfActivatePlan
+            ? 'Vous pouvez changer de formule à tout moment. Le changement est immédiat et sans engagement.'
+            : "Les formules payantes s'activent par notre équipe : écrivez-nous et nous les ouvrons sous 24 h."}
       </p>
     </div>
   );

@@ -17,6 +17,20 @@ export const backendMode = backend.mode;
 /** Vrai si l'app tourne sur le repli de démonstration (bandeau discret). */
 export const isDemoMode = backend.mode === 'local';
 
+/**
+ * Vrai si le compte peut changer lui-même sa formule.
+ *
+ * Uniquement en mode démonstration : sans base ni prestataire de paiement,
+ * c'est le seul moyen de parcourir les modules premium.
+ *
+ * Dès que Supabase est branché, la formule ne s'écrit plus depuis le
+ * navigateur (migration 0005). Les écrans doivent donc consulter ce drapeau
+ * au lieu de supposer qu'un bouton d'activation est légitime — sans quoi un
+ * compte Free pourrait s'ouvrir tous les modules premium en un clic, et les
+ * verrous posés ailleurs ne serviraient à rien.
+ */
+export const canSelfActivatePlan = isDemoMode;
+
 export { isSupabaseConfigured } from './config';
 export type {
   Backend,

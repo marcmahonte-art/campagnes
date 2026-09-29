@@ -24,6 +24,7 @@ import { backend } from '@/lib/backend';
 import { useSession } from '@/lib/backend/session';
 import { parseDescriptor, withRatio } from '@/lib/descriptor';
 import { kindSpec, seedDescriptorFor } from '@/lib/campaign-kinds';
+import { maxLayers } from '@/lib/plans';
 import { isValidSlug } from '@/lib/slug';
 import { SITE_URL } from '@/lib/backend/config';
 import type { CampaignWithFrame, Descriptor, Ratio } from '@/lib/types';
@@ -328,6 +329,7 @@ export default function CampaignEditorPage() {
           descriptor={descriptor}
           onChange={setDescriptor}
           playing={playing}
+          maxLayers={maxLayers(user?.plan)}
           onReady={(api) => {
             thumbnailFn.current = api.exportThumbnail;
           }}

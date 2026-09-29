@@ -4,16 +4,17 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowRight, Check, ExternalLink, Trash2 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Button, ButtonLink } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Field, Input, InputPrefix } from '@/components/ui/input';
 import { LogoUploader } from '@/components/ui/logo-upload';
 import { DismissibleNotice, InlineError, Spinner } from '@/components/ui/feedback';
 import { PlanBadge } from '@/components/plans/plan-card';
-import { backend } from '@/lib/backend';
+import { FeatureGate } from '@/components/plans/feature-gate';
+import { backend, canSelfActivatePlan } from '@/lib/backend';
 import { useSession } from '@/lib/backend/session';
 import { isValidUsername, normalizeUsername } from '@/lib/slug';
-import { FEATURE_LABELS, PLAN_LIST, planOf } from '@/lib/plans';
+import { FEATURE_LABELS, PLAN_LIST, hasFeature, planContactHref, planOf } from '@/lib/plans';
 import { formatFcfa } from '@/lib/plans';
 
 export default function SettingsPage() {
@@ -210,18 +211,31 @@ export default function SettingsPage() {
                     {plan.features.length > 4 && ` · +${plan.features.length - 4}`}
                   </p>
 
-                  <Button
-                    variant={current ? 'ghost' : plan.highlight ? 'primary' : 'secondary'}
-                    size="sm"
-                    disabled={current || planPending !== null}
-                    onClick={() => void changePlan(plan.id)}
-                  >
-                    {current
-                      ? 'Formule active'
-                      : planPending === plan.id
-                        ? 'Activation…'
-                        : `Choisir ${plan.name}`}
-                  </Button>
+                  {/* En mode Supabase, la formule ne s'écrit plus depuis le
+                      navigateur (migration 0005). Le bouton devient une
+                      demande de contact — jamais un faux bouton d'achat. */}
+                  {!canSelfActivatePlan && !current ? (
+                    <ButtonLink
+                      href={planContactHref(plan)}
+                      variant={plan.highlight ? 'primary' : 'secondary'}
+                      size="sm"
+                    >
+                      Nous contacter
+                    </ButtonLink>
+                  ) : (
+                    <Button
+                      variant={current ? 'ghost' : plan.highlight ? 'primary' : 'secondary'}
+                      size="sm"
+                      disabled={current || planPending !== null}
+                      onClick={() => void changePlan(plan.id)}
+                    >
+                      {current
+                        ? 'Formule active'
+                        : planPending === plan.id
+                          ? 'Activation…'
+                          : `Choisir ${plan.name}`}
+                    </Button>
+                  )}
                 </div>
               );
             })}
@@ -240,9 +254,9 @@ export default function SettingsPage() {
           </div>
 
           <p className="text-[12px] leading-relaxed text-gray-500">
-            Aucun prestataire de paiement n’est branché à ce stade : le changement de formule est
-            immédiat, pour la recette. En production, seules les formules gratuites basculeront
-            librement ; les autres passeront par le guichet de paiement.
+            {canSelfActivatePlan
+              ? "Aucun prestataire de paiement n'est branché à ce stade : le changement de formule est immédiat, pour la recette."
+              : "Aucun prestataire de paiement n'est branché à ce stade. L'activation d'une formule payante se fait par notre équipe : écrivez-nous et nous l'activons sous 24 h."}
           </p>
         </div>
       </Card>
@@ -275,7 +289,25 @@ export default function SettingsPage() {
             </InputPrefix>
           </Field>
 
-          <LogoUploader value={logoUrl} onChange={setLogoUrl} />
+          {hasFeature(user.plan, 'branding') ? (
+            <LogoUploader value={logoUrl} onChange={setLogoUrl} />
+          ) : (
+            <>
+              {/* On ne retire jamais ce qui existe : un logo déjà téléversé
+                  reste affiché. Seul le module est verrouillé. */}
+              {logoUrl && (
+                <p className="text-[12px] leading-relaxed text-gray-500">
+                  Votre logo actuel reste affiché sur votre page publique et sur vos campagnes.
+                </p>
+              )}
+              <FeatureGate
+                feature="branding"
+                plan={user.plan}
+                title="Logo de l’organisation"
+                description="Votre logo apparaît sur votre page publique et sur vos campagnes. Inclus dans la formule Creator."
+              />
+            </>
+          )}
 
           <div className="flex items-center justify-end gap-3">
             <SaveState state={profileState} />

@@ -434,12 +434,15 @@ export const supabaseBackend: Backend = {
   },
 
   /* --- Formule ------------------------------------------------------ */
-  // Le changement de formule est une opération serveur : la fonction SQL
-  // `set_own_plan` est le seul chemin, et elle sera réservée au webhook de
-  // paiement en production (voir l'en-tête de la migration 0002).
-  async setPlan(_userId, plan: PlanKind): Promise<Result> {
-    const { error } = await supabaseBrowser().rpc('set_own_plan', { p_plan: plan });
-    return error ? { error: message(error, 'Le changement de formule a échoué.') } : {};
+  // Depuis la migration 0005, le navigateur ne peut plus écrire `plan` du tout :
+  // `set_own_plan` est supprimée, et `set_user_plan` est réservée à `service_role`.
+  // On ne tente même pas l'appel — un échec de permission remonterait au créateur
+  // sous la forme d'un message technique incompréhensible.
+  async setPlan(_userId, _plan: PlanKind): Promise<Result> {
+    return {
+      error:
+        "L'activation d'une formule payante se fait par notre équipe. Écrivez-nous à bonjour@campagnes.app et nous l'activons sous 24 h.",
+    };
   },
 
   /* --- Médias ------------------------------------------------------- */
