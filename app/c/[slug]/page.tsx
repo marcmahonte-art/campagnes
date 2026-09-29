@@ -474,8 +474,8 @@ export default function ParticipantPage() {
 
                     {creatorWatermark && (
                       <p className="mt-4 text-xs leading-relaxed text-gray-400">
-                        Ce cadre porte le filigrane Campagnes. Son créateur peut le retirer en
-                        passant à une formule payante.
+                        Ce visuel porte le badge « Créé avec Campagnes ». Son créateur peut le
+                        retirer en passant à une formule payante.
                       </p>
                     )}
                   </div>

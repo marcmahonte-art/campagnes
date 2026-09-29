@@ -94,7 +94,8 @@ campagnes/
 │   ├── distribution.ts               # grille tarifaire FCFA + demande de devis
 │   ├── participant.ts                # composition cadre + photo, couverture, contraintes
 │   ├── motion.ts                     # Motion Engine — pur et déterministe
-│   ├── video-export.ts               # rendu hors écran : PNG + WebM, filigrane
+│   ├── video-export.ts               # rendu hors écran : PNG + WebM, badge du plan Free
+│   ├── watermark.ts                  # badge « Créé avec Campagnes » — géométrie partagée
 │   ├── descriptor.ts                 # création / lecture / validation du JSON versionné
 │   ├── ratios.ts                     # 1:1 · 16:9 · 9:16 → dimensions de travail
 │   ├── slug.ts                       # slugify + génération de slug unique
@@ -415,12 +416,21 @@ Aucune dépendance externe, aucun rendu serveur, aucun téléversement : la vid�
 dans le navigateur. Le type MIME est négocié (`vp9` → `vp8` → `webm` → `mp4`) et
 l'extension du fichier suit le type réellement obtenu.
 
-### 8.4 Le filigrane
+### 8.4 Le badge « Créé avec Campagnes »
 
-Le plan Free appose `campagnes.app` en bas à droite, taille proportionnelle au format,
-blanc à 78 % avec une ombre portée douce. Il est ajouté **après** le calcul des
-transformations et n'entre pas dans la liste des objets animés : il reste donc immobile
-pendant toute la séquence. `hasFeature(plan, 'no_watermark')` est le seul arbitre.
+Le plan Free appose un badge dans le coin inférieur droit : une pastille blanche à 94 %
+(rayon = demi-hauteur), contenant le mot « Créé avec » puis le logo Campagnes. La pastille
+n'est pas décorative — la photo du participant peut être sombre, claire ou bariolée, et un
+texte nu y disparaîtrait.
+
+Toute la géométrie vit dans `lib/watermark.ts`, en pixels **natifs** du format, et
+`addBadge()` est appelée par les trois rendus : l'export PNG, l'export vidéo **et** l'aperçu
+participant. C'est délibéré : un aperçu redessiné en HTML finirait par diverger de quelques
+pixels, et le participant ne découvrirait le badge qu'après téléchargement.
+
+Le badge est ajouté **après** le calcul des transformations et n'entre pas dans la liste des
+objets animés : il reste donc immobile pendant toute la séquence.
+`hasFeature(plan, 'no_watermark')` est le seul arbitre.
 
 ---
 
@@ -541,9 +551,9 @@ un détail d'implémentation.
 Le fichier n'est pas filtré sur son type MIME déclaré — peu fiable sur mobile — mais sur la
 capacité réelle du navigateur à le décoder.
 
-### 9.7 Le filigrane suit la formule du créateur
+### 9.7 Le badge suit la formule du créateur
 
-Le participant n'a pas de formule. Le filigrane est donc décidé par celle du créateur.
+Le participant n'a pas de formule. Le badge est donc décidé par celle du créateur.
 
 `creator_profiles` (la vue publique) n'expose **pas** `plan`, seulement un booléen dérivé
 `watermark = (plan = 'free')`. C'est exactement — et seulement — l'information dont le
@@ -551,9 +561,9 @@ parcours a besoin : exposer `plan` révélerait le niveau d'abonnement du créat
 
 Deux points d'honnêteté :
 
-- le filigrane est **affiché à l'écran, aux mêmes proportions que dans l'export**, avant
-  que le participant ne télécharge quoi que ce soit. Sans cela, il découvrirait un visuel
-  marqué après coup : l'aperçu mentirait ;
+- le badge est **dessiné dans le canvas, par la même fonction que l'export**
+  (`addBadge()` de `lib/watermark.ts`), donc visible **avant** que le participant ne
+  télécharge quoi que ce soit. Un aperçu redessiné en HTML finirait par diverger ;
 - en cas de doute (créateur inconnu), `rowToCreator()` retombe sur `watermark = true`.
   Mieux vaut un export marqué qu'un export qui contourne la formule par accident.
 

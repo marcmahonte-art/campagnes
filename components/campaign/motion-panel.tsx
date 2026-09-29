@@ -304,8 +304,8 @@ export function MotionPanel({
 
         {!hasFeature(plan, 'no_watermark') && (
           <p className="text-[12px] leading-relaxed text-gray-500">
-            La formule Free appose un filigrane discret « campagnes.app » sur les exports. Il
-            disparaît avec Creator.
+            La formule Free appose un badge discret « Créé avec Campagnes » dans le coin des
+            exports. Il disparaît avec Creator.
           </p>
         )}
       </div>

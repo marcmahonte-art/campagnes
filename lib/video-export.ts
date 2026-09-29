@@ -15,6 +15,7 @@ import { ratioSpec } from './ratios';
 import { DEFAULT_MOTION_DURATION, sampleAt, type MotionPlan } from './motion';
 import { hasFeature, type PlanId } from './plans';
 import { PARTICIPANT_PHOTO_ID, effectiveMotion, photoZone } from './descriptor';
+import { addBadge } from './watermark';
 import type { Descriptor, Layer } from './types';
 
 export interface ExportProgress {
@@ -24,7 +25,7 @@ export interface ExportProgress {
 
 export interface ExportOptions {
   descriptor: Descriptor;
-  /** Formule du compte : détermine la présence du filigrane. */
+  /** Formule du compte : détermine la présence du badge « Créé avec Campagnes ». */
   plan: PlanId | string | null;
   fps?: number;
   onProgress?: (progress: ExportProgress) => void;
@@ -33,9 +34,6 @@ export interface ExportOptions {
 }
 
 const DEFAULT_FPS = 30;
-
-/** Le filigrane est la seule différence visuelle entre un export Free et un export payant. */
-export const WATERMARK_TEXT = 'campagnes.app';
 
 interface BaseTransform {
   left: number;
@@ -220,34 +218,15 @@ function applyMotion(target: RenderTarget, plan: MotionPlan, tMs: number): void 
 }
 
 /**
- * Filigrane du plan Free. Il est posé en dernier : il reste au-dessus de tout,
- * à une taille proportionnelle au format pour rester lisible sans écraser le visuel.
+ * Badge « Créé avec Campagnes » du plan Free. Il est posé en dernier : il reste
+ * au-dessus de tout.
+ *
+ * Le dessin n'est pas refait ici : `lib/watermark.ts` le décrit une seule fois et
+ * l'aperçu participant l'appelle aussi. C'est ce qui interdit à l'écran de montrer
+ * autre chose que le fichier.
  */
 async function addWatermark(target: RenderTarget): Promise<void> {
-  const { IText, Shadow } = await import('fabric');
-  const width = target.canvas.getWidth();
-  const height = target.canvas.getHeight();
-  const size = Math.max(20, Math.round(width * 0.03));
-
-  const mark = new IText(WATERMARK_TEXT, {
-    left: Math.round(width * 0.94),
-    top: Math.round(height * 0.965),
-    originX: 'right',
-    originY: 'bottom',
-    fontFamily: 'Inter, Helvetica, sans-serif',
-    fontSize: size,
-    fontWeight: '600',
-    fill: 'rgba(255,255,255,0.78)',
-    shadow: new Shadow({
-      color: 'rgba(0,0,0,0.35)',
-      blur: size * 0.4,
-      offsetX: 0,
-      offsetY: 1,
-    }),
-    selectable: false,
-  });
-
-  target.canvas.add(mark);
+  await addBadge(target.canvas, target.canvas.getWidth(), target.canvas.getHeight());
   target.canvas.renderAll();
 }
 

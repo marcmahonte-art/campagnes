@@ -11,6 +11,7 @@ import {
   type ParticipantPhoto,
   type PhotoPlacement,
 } from '@/lib/participant';
+import { addBadge } from '@/lib/watermark';
 import type { Descriptor } from '@/lib/types';
 
 /**
@@ -215,9 +216,22 @@ export function ParticipantStage({
         }
       }
 
+      /*
+       * 3. Le badge « Créé avec Campagnes », par-dessus tout.
+       *
+       * Il est dessiné par la MÊME fonction que l'export (`lib/watermark.ts`).
+       * Un simple aperçu en HTML finirait par diverger de quelques pixels — et
+       * le participant découvrirait alors un badge mal placé après téléchargement.
+       * Inerte, il n'intercepte jamais le glissement de la photo.
+       */
+      if (watermark) {
+        await addBadge(canvas, spec.width, spec.height);
+        if (disposed) return;
+      }
+
       canvas.requestRenderAll();
 
-      /* 3. Le déplacement ne peut jamais découvrir le cadre. */
+      /* 4. Le déplacement ne peut jamais découvrir le cadre. */
       canvas.on('object:moving', (event) => {
         const object = event.target;
         if (!object || object !== photoObjectRef.current) return;
@@ -248,7 +262,8 @@ export function ParticipantStage({
     };
     // La scène se reconstruit quand la photo change : sans cela, « Changer de
     // photo » mettrait à jour l'état du parent sans que le canvas suive.
-  }, [photo, layers, zone, emit, fitToView, onReady]);
+    // Le badge en fait partie : c'est un objet du canvas, il faut le reposer.
+  }, [photo, layers, zone, watermark, spec.width, spec.height, emit, fitToView, onReady]);
 
   /* ---------------- Le parent change le placement (curseur de zoom) ---------------- */
   useEffect(() => {
@@ -286,27 +301,6 @@ export function ParticipantStage({
     >
       <div className="relative shadow-md" style={{ lineHeight: 0 }}>
         <canvas ref={canvasElRef} />
-
-        {/*
-          Le filigrane est dessiné ici à l'écran, aux mêmes proportions que dans
-          l'export. Sans cela, le participant découvrirait un visuel marqué
-          seulement après avoir téléchargé : l'aperçu mentirait.
-        */}
-        {watermark && (
-          <span
-            aria-hidden
-            className="pointer-events-none absolute select-none font-semibold"
-            style={{
-              right: Math.round(spec.width * 0.06 * zoom),
-              bottom: Math.round(spec.height * 0.035 * zoom),
-              fontSize: Math.max(10, spec.width * 0.03 * zoom),
-              color: 'rgba(255,255,255,0.78)',
-              textShadow: '0 1px 2px rgba(0,0,0,0.35)',
-            }}
-          >
-            campagnes.app
-          </span>
-        )}
       </div>
 
       <span className="sr-only">

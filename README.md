@@ -197,6 +197,7 @@ lib/
   participant.ts                 composition cadre + photo, cadrage, contraintes
   motion.ts                      Motion Engine — pur et déterministe
   video-export.ts                rendu hors écran : PNG et WebM
+  watermark.ts                   badge « Créé avec Campagnes » — géométrie partagée
   descriptor.ts                  lecture / écriture du descripteur versionné,
                                  zone photo, animation effectivement jouée
   ratios.ts                      Carré · Paysage · Vertical
@@ -289,8 +290,8 @@ comme un cadre statique.
 - **WebM** — `MediaRecorder` sur le flux du canvas, encodage dans le navigateur, aucune
   dépendance externe ni rendu serveur.
 
-Le plan **Free** appose un filigrane discret `campagnes.app` sur les exports ; il disparaît
-avec Creator. Vérifié par `hasFeature(plan, 'no_watermark')`.
+Le plan **Free** appose un badge discret « Créé avec Campagnes » dans le coin des exports ; il
+disparaît avec Creator. Vérifié par `hasFeature(plan, 'no_watermark')`.
 
 ---
 
@@ -349,9 +350,9 @@ Deux conséquences assumées :
   créateur, par l'export et par le parcours participant. C'est ce qui interdit à l'aperçu de
   mentir — et `validateDescriptor()` avertit le créateur quand sa zone sera figée.
 
-### Le filigrane suit la formule du créateur
+### Le badge suit la formule du créateur
 
-Le participant n'a pas de formule. Le filigrane est donc décidé par celle du créateur, et il
-est **affiché à l'écran avant le téléchargement**, aux mêmes proportions que dans l'export :
-l'aperçu ne ment pas. La projection publique n'expose qu'un booléen `watermark` — jamais la
-formule elle-même (voir `creator_profiles` dans `0001_init.sql`).
+Le participant n'a pas de formule. Le badge « Créé avec Campagnes » est donc décidé par celle
+du créateur, et il est **dessiné dans le canvas avant le téléchargement**, par la même fonction
+que l'export (`lib/watermark.ts`) : l'aperçu ne ment pas. La projection publique n'expose qu'un
+booléen `watermark` — jamais la formule elle-même (voir `creator_profiles` dans `0001_init.sql`).
