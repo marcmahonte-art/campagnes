@@ -13,7 +13,8 @@ import { backend } from '@/lib/backend';
 import { useSession } from '@/lib/backend/session';
 import { isValidSlug, slugFromName, uniqueSlug } from '@/lib/slug';
 import { defaultRatioFor, isCampaignKind, kindSpec } from '@/lib/campaign-kinds';
-import type { CampaignKind, Ratio } from '@/lib/types';
+import { ratioSpec } from '@/lib/ratios';
+import type { CampaignKind, GalleryItem, Ratio } from '@/lib/types';
 
 /**
  * Création de campagne — une seule action principale par écran (§25, règle 1).
@@ -41,9 +42,54 @@ export default function NewCampaignPage() {
   const [existingSlugs, setExistingSlugs] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  /** Cadre repris depuis la galerie (`?from=<slug>`), s'il y en a un. */
+  const [source, setSource] = useState<GalleryItem | null>(null);
+  const [sourceLoading, setSourceLoading] = useState(false);
 
   useEffect(() => {
     void backend.listSlugs().then(setExistingSlugs);
+  }, []);
+
+  /*
+   * Reprise d'un cadre de la galerie.
+   *
+   * Le cadre source appartient à un autre créateur : on ne le modifie jamais.
+   * On en **copie le descripteur** dans le compte du créateur, ce qui lui donne
+   * un cadre bien à lui, entièrement modifiable. Le type et le format suivent,
+   * puisqu'ils font partie de ce qui a été choisi dans la galerie.
+   */
+  useEffect(() => {
+    const fromSlug = new URLSearchParams(window.location.search).get('from');
+    if (!fromSlug) return;
+
+    let alive = true;
+    setSourceLoading(true);
+    void backend
+      .getPublicCampaign(fromSlug)
+      .then((found) => {
+        if (!alive) return;
+        if (found) {
+          setSource(found);
+          setKind(found.kind);
+          setKindFromPicker(true);
+          setRatio(found.ratio);
+          setRatioTouched(true);
+          if (!found.frame) {
+            setError(
+              'Cette campagne n’a pas encore de cadre enregistré : vous partez d’une page blanche.',
+            );
+          }
+        } else {
+          setError('Cette campagne n’est plus disponible. Vous partez d’une page blanche.');
+        }
+      })
+      .finally(() => {
+        if (alive) setSourceLoading(false);
+      });
+
+    return () => {
+      alive = false;
+    };
   }, []);
 
   /*
@@ -100,6 +146,24 @@ export default function NewCampaignPage() {
     setPending(true);
     try {
       const finalSlug = uniqueSlug(slug, existingSlugs);
+
+      /*
+       * Le cadre repris est créé **avant** la campagne : si la copie échoue, on
+       * s'arrête sans rien laisser derrière. Dans l'ordre inverse, un échec
+       * laisserait une campagne vide que le créateur n'a jamais demandée.
+       */
+      const descriptor = source?.frame?.descriptor_json ?? null;
+      let frameId: string | null = null;
+
+      if (descriptor) {
+        const frame = await backend.createFrame(user.id, name.trim(), descriptor);
+        if (frame.error || !frame.data) {
+          setError(frame.error ?? 'Le cadre repris n’a pas pu être copié.');
+          return;
+        }
+        frameId = frame.data.id;
+      }
+
       const result = await backend.createCampaign({
         ownerId: user.id,
         name: name.trim(),
@@ -111,6 +175,9 @@ export default function NewCampaignPage() {
         setError(result.error ?? 'La création a échoué.');
         return;
       }
+
+      if (frameId) await backend.updateCampaign(result.data.id, { frame_id: frameId });
+
       router.push(`/campaigns/${result.data.id}`);
     } finally {
       setPending(false);
@@ -132,6 +199,50 @@ export default function NewCampaignPage() {
             : 'Une photo, une vidéo, ou une photo sur votre décor. Ce choix détermine le parcours qui les attend — tout reste modifiable ensuite.'}
         </p>
       </header>
+
+      {sourceLoading && (
+        <p className="mb-6 flex items-center gap-2 text-[13px] text-gray-500">
+          <Spinner className="text-gray-400" />
+          Ouverture du cadre repris…
+        </p>
+      )}
+
+      {/* Ce qui a été repris, et le fait que l'original n'est pas touché :
+          sans cette phrase, on ne sait pas si on modifie la campagne d'autrui. */}
+      {source && (
+        <div className="mb-6 flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
+          <span className="flex size-14 shrink-0 items-center justify-center overflow-hidden rounded-md border border-gray-200 bg-white">
+            {source.frame?.thumbnail_url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={source.frame.thumbnail_url}
+                alt=""
+                className="max-h-full max-w-full object-contain"
+              />
+            ) : (
+              <span className="text-[11px] text-gray-400">—</span>
+            )}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-[13px] font-medium">
+              Vous partez du cadre « {source.name} »
+            </span>
+            <span className="mt-0.5 block text-[12px] leading-relaxed text-gray-500">
+              Format {ratioSpec(source.ratio).label.toLowerCase()} · une copie vous appartient,
+              l’original n’est pas modifié.
+            </span>
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="shrink-0"
+            onClick={() => setSource(null)}
+          >
+            Partir de zéro
+          </Button>
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-6">
         <Card className="flex flex-col gap-4 p-5 md:p-6">

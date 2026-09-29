@@ -93,7 +93,11 @@ function message(error: unknown, fallback: string): string {
     if (/duplicate key.*username/i.test(raw)) return 'Ce nom d’utilisateur est déjà pris.';
     if (/duplicate key.*slug/i.test(raw)) return 'Ce slug est déjà utilisé.';
     if (/Password should be at least/i.test(raw)) return 'Le mot de passe doit contenir au moins 6 caractères.';
-    if (/rate limit/i.test(raw)) return 'Trop de tentatives. Réessayez dans un instant.';
+    // Supabase plafonne fortement les envois d'emails d'authentification. Dire
+    // « trop de tentatives » laissait croire à une faute de l'utilisateur : on
+    // nomme la vraie limite et on donne la marche à suivre.
+    if (/rate limit|too many requests/i.test(raw))
+      return "Le service d'email a atteint sa limite d'envoi pour cette heure. Patientez avant de réessayer — si votre compte a déjà été confirmé, connectez-vous directement.";
     return raw;
   }
   return fallback;
@@ -144,6 +148,27 @@ export const supabaseBackend: Backend = {
     });
     if (error) return { error: message(error, "L'inscription a échoué.") };
     return { needsEmailConfirmation: !data.session };
+  },
+
+  /**
+   * Renvoie l'email de confirmation. Supabase ne révèle jamais si l'adresse
+   * existe déjà : on relaie donc toujours un succès, sinon l'écran de
+   * confirmation deviendrait un oracle pour énumérer les comptes.
+   */
+  async resendConfirmation(email): Promise<Result> {
+    const sb = supabaseBrowser();
+    const { error } = await sb.auth.resend({
+      type: 'signup',
+      email: email.trim().toLowerCase(),
+      options: { emailRedirectTo: `${SITE_URL}/auth/callback?next=/onboarding` },
+    });
+    if (error && /rate limit/i.test(error.message)) {
+      return {
+        error:
+          "L'envoi d'emails est limité par le service d'authentification. Réessayez dans une heure.",
+      };
+    }
+    return {};
   },
 
   async signInWithEmail(email, password): Promise<Result> {

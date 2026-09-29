@@ -1,26 +1,35 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import Link from 'next/link';
-import { ArrowRight, Images } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { Images, SearchX } from 'lucide-react';
 import { SiteHeader } from '@/components/site-header';
-import { ButtonLink } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { Spinner } from '@/components/ui/feedback';
+import { Button, ButtonLink } from '@/components/ui/button';
+import { CreateTemplateCard, GalleryCard } from '@/components/gallery/gallery-card';
+import { GalleryFiltersBar } from '@/components/gallery/gallery-filters';
+import { GallerySkeleton } from '@/components/gallery/gallery-skeleton';
+import { TemplateDrawer } from '@/components/gallery/template-drawer';
 import { backend } from '@/lib/backend';
-import { ratioSpec } from '@/lib/ratios';
+import { NO_FILTERS, activeFilterCount, filterGallery, type GalleryFilters } from '@/lib/gallery';
 import type { GalleryItem } from '@/lib/types';
 
 /**
  * Galerie publique — toutes les campagnes publiées, tous créateurs confondus.
  *
- * Elle sert deux choses : montrer ce que la plateforme produit, et permettre à un
- * créateur de « reprendre » une campagne existante (§ « utiliser une campagne
- * existante », ouvert à toutes les formules).
+ * Elle sert deux choses : montrer ce que la plateforme produit, et permettre à
+ * un créateur de repartir d'un cadre existant.
+ *
+ * Le filtre et le tri ne sont **pas** écrits ici : ils vivent dans
+ * `lib/gallery.ts`. Cette page ne fait que décrire ce que le visiteur a demandé
+ * et afficher le résultat, ce qui garantit que le compteur de résultats, la
+ * grille et l'état vide racontent toujours la même histoire.
  */
 export default function GaleriePage() {
+  const router = useRouter();
   const [items, setItems] = useState<GalleryItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [filters, setFilters] = useState<GalleryFilters>(NO_FILTERS);
+  const [preview, setPreview] = useState<GalleryItem | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -34,98 +43,100 @@ export default function GaleriePage() {
     };
   }, []);
 
+  const visible = useMemo(() => filterGallery(items, filters), [items, filters]);
+  const filtering = activeFilterCount(filters) > 0 || filters.query.trim().length > 0;
+  const galleryEmpty = !loading && items.length === 0;
+
   return (
     <>
       <SiteHeader />
 
-      <section className="border-b border-gray-200 bg-gray-50">
-        <div className="container-shell py-16 md:py-20">
+      {/* ---------------- En-tête de page ---------------- */}
+      <section className="border-b border-gray-200">
+        <div className="container-shell py-10 md:py-12">
           <p className="flex items-center gap-2 text-[13px] font-semibold uppercase tracking-[0.14em] text-gray-500">
             <Images className="size-4 text-purple" strokeWidth={1.75} aria-hidden />
             Galerie
           </p>
-          <h1 className="mt-3 max-w-3xl text-[32px] font-bold leading-tight md:text-[44px]">
-            Les campagnes publiées sur Campagnes.
+          <h1 className="mt-3 text-[30px] font-bold leading-tight md:text-[38px]">
+            Explorez les campagnes
           </h1>
-          <p className="mt-5 max-w-2xl text-base leading-relaxed text-gray-500">
-            Chaque vignette est un cadre réel et prêt à l’emploi : ouvrez-en une pour appliquer le
-            cadre à votre photo et repartir avec votre visuel, sans compte.
+          <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-gray-500">
+            Découvrez des templates créés par la communauté et créez le vôtre.
           </p>
         </div>
       </section>
 
-      <section className="container-shell py-16 md:py-20">
+      {/* ---------------- Filtres ---------------- */}
+      <section className="border-b border-gray-200 bg-white">
+        <div className="container-shell py-5">
+          <GalleryFiltersBar
+            filters={filters}
+            onChange={setFilters}
+            items={items}
+            resultCount={visible.length}
+          />
+        </div>
+      </section>
+
+      {/* ---------------- Résultats ---------------- */}
+      <section className="container-shell py-10 md:py-12">
+        <p aria-live="polite" className="mb-6 text-[13px] text-gray-500">
+          {loading
+            ? 'Chargement des campagnes…'
+            : `${visible.length} ${visible.length === 1 ? 'campagne' : 'campagnes'}${
+                filtering ? ' correspondante' + (visible.length === 1 ? '' : 's') : ''
+              }`}
+        </p>
+
         {loading ? (
-          <div className="flex h-48 items-center justify-center">
-            <Spinner className="size-5 text-gray-400" />
+          <GallerySkeleton />
+        ) : visible.length === 0 ? (
+          /* Deux vides très différents : une galerie sans rien, et une recherche
+             sans résultat. Les confondre ferait croire que la plateforme est
+             déserte alors qu'on a juste mal orthographié. */
+          <div className="flex flex-col items-center gap-4 rounded-lg border border-dashed border-gray-200 px-6 py-16 text-center">
+            <SearchX className="size-6 text-gray-300" strokeWidth={1.5} aria-hidden />
+            <div>
+              <p className="text-[15px] font-semibold">
+                {galleryEmpty ? 'Pas encore de template' : 'Aucun résultat'}
+              </p>
+              <p className="mt-1 text-[14px] text-gray-500">
+                {galleryEmpty
+                  ? 'Soyez la première organisation à en publier une.'
+                  : 'Essayez une autre recherche ou créez votre propre campagne.'}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              {filtering && !galleryEmpty && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setFilters(NO_FILTERS)}
+                >
+                  Effacer les filtres
+                </Button>
+              )}
+              <ButtonLink href="/campaigns/new" variant="primary" size="sm">
+                Créer un template →
+              </ButtonLink>
+            </div>
           </div>
-        ) : items.length === 0 ? (
-          <Card className="flex flex-col items-center gap-4 p-12 text-center">
-            <Images className="size-6 text-gray-300" strokeWidth={1.5} aria-hidden />
-            <p className="text-sm text-gray-500">
-              Aucune campagne publiée pour le moment. Soyez la première organisation à en publier
-              une.
-            </p>
-            <ButtonLink href="/signup" variant="primary" size="sm">
-              Créer ma campagne
-              <ArrowRight className="size-4" aria-hidden />
-            </ButtonLink>
-          </Card>
         ) : (
-          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {items.map((item) => {
-              const spec = ratioSpec(item.ratio);
-              return (
-                <Link key={item.id} href={`/c/${item.slug}`} className="block">
-                  <Card className="flex h-full flex-col overflow-hidden" interactive>
-                    <div className="flex aspect-[4/3] items-center justify-center overflow-hidden bg-gray-100 p-4">
-                      {item.frame?.thumbnail_url ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={item.frame.thumbnail_url}
-                          alt={`Aperçu de la campagne ${item.name}`}
-                          className="max-h-full max-w-full object-contain"
-                        />
-                      ) : (
-                        <span
-                          aria-hidden
-                          className="rounded-sm border-2 border-gray-300 bg-white"
-                          style={{
-                            width: item.ratio === '16:9' ? 150 : item.ratio === '9:16' ? 84 : 112,
-                            height: item.ratio === '16:9' ? 84 : item.ratio === '9:16' ? 150 : 112,
-                          }}
-                        />
-                      )}
-                    </div>
+          <div className="grid grid-cols-2 gap-x-5 gap-y-7 md:grid-cols-3 xl:grid-cols-4">
+            {/* La tuile d'ajout n'a de sens que sur la galerie complète : dans un
+                résultat de recherche, elle prendrait la place d'une réponse. */}
+            {!filtering && <CreateTemplateCard onClick={() => router.push('/campaigns/new')} />}
 
-                    <div className="flex flex-1 flex-col gap-2 p-5">
-                      <div className="flex items-start justify-between gap-3">
-                        <h2 className="text-[15px] font-semibold leading-snug">{item.name}</h2>
-                        <span className="shrink-0 rounded-pill border border-gray-200 px-2 py-0.5 text-[11px] text-gray-500">
-                          {spec.label}
-                        </span>
-                      </div>
-
-                      {item.creator ? (
-                        <span className="text-[13px] text-gray-500">
-                          {item.creator.org_name || `@${item.creator.username}`}
-                        </span>
-                      ) : (
-                        <span className="text-[13px] text-gray-400">Créateur inconnu</span>
-                      )}
-
-                      <span className="mt-auto flex items-center gap-1 pt-2 text-[13px] font-medium text-ink">
-                        Utiliser ce cadre
-                        <ArrowRight className="size-3.5" aria-hidden />
-                      </span>
-                    </div>
-                  </Card>
-                </Link>
-              );
-            })}
+            {visible.map((item) => (
+              <GalleryCard key={item.id} item={item} onOpen={setPreview} />
+            ))}
           </div>
         )}
       </section>
+
+      <TemplateDrawer item={preview} onClose={() => setPreview(null)} />
     </>
   );
 }

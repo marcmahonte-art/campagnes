@@ -2,14 +2,15 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
-import { ArrowRight, Mail } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { useEffect, useState } from 'react';
+import { ArrowRight, Mail, MailCheck } from 'lucide-react';
+import { Button, ButtonLink } from '@/components/ui/button';
 import { Field, Input } from '@/components/ui/input';
 import { InlineError, InlineInfo, Spinner } from '@/components/ui/feedback';
 import { backend, isDemoMode, isSupabaseConfigured } from '@/lib/backend';
 import { DEMO_EMAIL, DEMO_PASSWORD, seedDemoAccount } from '@/lib/backend/local';
 import { useSession } from '@/lib/backend/session';
+import { fetchAuthProviders } from '@/lib/auth-providers';
 
 type Mode = 'login' | 'signup';
 
@@ -22,7 +23,38 @@ export function AuthForm({ mode }: { mode: Mode }) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
-  const [pending, setPending] = useState<'form' | 'google' | 'demo' | null>(null);
+  const [pending, setPending] = useState<'form' | 'google' | 'demo' | 'resend' | null>(null);
+  /** Adresse en attente de confirmation ; non nulle → écran « vérifiez vos emails ». */
+  const [sentTo, setSentTo] = useState<string | null>(null);
+
+  /**
+   * Google n'est proposé que si le fournisseur est réellement activé sur le
+   * projet. Sinon le bouton éjectait le visiteur hors de l'application, sur une
+   * réponse JSON brute de Supabase, sans chemin de retour.
+   */
+  const [googleEnabled, setGoogleEnabled] = useState(false);
+
+  /**
+   * Destination après connexion, posée par le lien qui a mené ici
+   * (`/signup?next=/campaigns/new?from=…`). On n'accepte qu'un chemin interne :
+   * un `next` absolu transformerait la page de connexion en tremplin de
+   * redirection ouverte.
+   */
+  const [nextPath, setNextPath] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    void fetchAuthProviders().then((providers) => {
+      if (alive) setGoogleEnabled(providers.google);
+    });
+
+    const raw = new URLSearchParams(window.location.search).get('next');
+    if (raw && raw.startsWith('/') && !raw.startsWith('//')) setNextPath(raw);
+
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const isSignup = mode === 'signup';
 
@@ -35,6 +67,8 @@ export function AuthForm({ mode }: { mode: Mode }) {
       await seedDemoAccount();
       await refresh();
       router.push('/dashboard');
+    } catch {
+      setError("La démonstration n'a pas pu être ouverte. Rechargez la page et réessayez.");
     } finally {
       setPending(null);
     }
@@ -46,6 +80,9 @@ export function AuthForm({ mode }: { mode: Mode }) {
     setInfo(null);
     setPending('form');
 
+    // Aucun échec ne doit être silencieux : sans ce bloc, une exception laissait
+    // le bouton reprendre son état normal sans le moindre message, et le visiteur
+    // restait bloqué sur la même page sans comprendre pourquoi.
     try {
       if (isSignup) {
         const outcome = await backend.signUpWithEmail(email, password);
@@ -54,13 +91,11 @@ export function AuthForm({ mode }: { mode: Mode }) {
           return;
         }
         if (outcome.needsEmailConfirmation) {
-          setInfo(
-            'Compte créé. Confirmez votre adresse via le lien reçu par email, puis connectez-vous.',
-          );
+          setSentTo(email.trim().toLowerCase());
           return;
         }
         await refresh();
-        router.push('/onboarding');
+        router.push(nextPath ?? '/onboarding');
         return;
       }
 
@@ -71,7 +106,25 @@ export function AuthForm({ mode }: { mode: Mode }) {
       }
       const user = await backend.getSessionUser();
       await refresh();
-      router.push(user?.onboarded_at ? '/dashboard' : '/onboarding');
+      router.push(nextPath ?? (user?.onboarded_at ? '/dashboard' : '/onboarding'));
+    } catch {
+      setError('Une erreur inattendue est survenue. Réessayez dans un instant.');
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function handleResend() {
+    if (!sentTo) return;
+    setError(null);
+    setInfo(null);
+    setPending('resend');
+    try {
+      const result = await backend.resendConfirmation(sentTo);
+      if (result.error) setError(result.error);
+      else setInfo('Email renvoyé. Pensez à regarder dans vos indésirables.');
+    } catch {
+      setError("L'email n'a pas pu être renvoyé. Réessayez dans un instant.");
     } finally {
       setPending(null);
     }
@@ -83,9 +136,72 @@ export function AuthForm({ mode }: { mode: Mode }) {
     try {
       const result = await backend.signInWithGoogle();
       if (result.error) setError(result.error);
+    } catch {
+      setError('La connexion Google a échoué. Réessayez dans un instant.');
     } finally {
       setPending(null);
     }
+  }
+
+  /* ---------------- Écran « vérifiez votre boîte mail » ---------------- */
+  if (sentTo) {
+    return (
+      <div className="rounded-xl border border-gray-200 bg-white p-7 shadow-sm md:p-8">
+        <span className="flex size-11 items-center justify-center rounded-full bg-gray-100">
+          <MailCheck className="size-5 text-ink" strokeWidth={1.75} aria-hidden />
+        </span>
+
+        <h1 className="mt-5 text-[24px] font-semibold leading-snug">
+          Vérifiez votre boîte mail
+        </h1>
+        <p className="mt-2 text-sm leading-relaxed text-gray-500">
+          Un lien de confirmation vient d’être envoyé à{' '}
+          <span className="font-medium text-ink">{sentTo}</span>. Ouvrez-le pour activer votre
+          compte, puis connectez-vous.
+        </p>
+
+        <div className="mt-5 space-y-3">
+          <InlineError>{error}</InlineError>
+          <InlineInfo>{info}</InlineInfo>
+        </div>
+
+        <div className="mt-5 space-y-3">
+          <Button
+            type="button"
+            variant="primary"
+            size="lg"
+            className="w-full"
+            onClick={handleResend}
+            disabled={pending !== null}
+          >
+            {pending === 'resend' ? <Spinner /> : "Renvoyer l'email"}
+          </Button>
+
+          <ButtonLink href="/login" variant="secondary" size="lg" className="w-full">
+            J’ai confirmé, me connecter
+            <ArrowRight className="size-4" aria-hidden />
+          </ButtonLink>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => {
+            setSentTo(null);
+            setError(null);
+            setInfo(null);
+          }}
+          className="mx-auto mt-6 block text-[13px] text-gray-500 underline underline-offset-4 transition-colors hover:text-ink"
+        >
+          Utiliser une autre adresse
+        </button>
+
+        <p className="mt-4 flex items-start gap-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs leading-relaxed text-gray-500">
+          <Mail className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+          Rien reçu ? Regardez dans les indésirables. L’envoi d’emails peut être limité par le
+          service d’authentification : dans ce cas, patientez avant de redemander un envoi.
+        </p>
+      </div>
+    );
   }
 
   return (
@@ -123,7 +239,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
         </div>
       )}
 
-      {isSupabaseConfigured && (
+      {googleEnabled && (
         <>
           <Button
             type="button"
@@ -145,7 +261,10 @@ export function AuthForm({ mode }: { mode: Mode }) {
         </>
       )}
 
-      <form onSubmit={handleSubmit} className={isSupabaseConfigured ? 'space-y-4' : 'mt-6 space-y-4'}>
+      <form
+        onSubmit={handleSubmit}
+        className={googleEnabled ? 'space-y-4' : 'mt-6 space-y-4'}
+      >
         <Field label="Adresse email" htmlFor="email">
           <Input
             id="email"

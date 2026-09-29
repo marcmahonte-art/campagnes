@@ -140,7 +140,45 @@ export interface CampaignWithFrame extends Campaign {
   frame: Frame | null;
 }
 
+/**
+ * Catégories de galerie. Liste volontairement courte : une taxonomie large
+ * n'est jamais renseignée, et un filtre qui ne renvoie rien vaut moins que pas
+ * de filtre du tout.
+ */
+export type GalleryCategory =
+  | 'evenements'
+  | 'associations'
+  | 'marques'
+  | 'education'
+  | 'sport'
+  | 'communaute'
+  | 'fetes'
+  | 'autres';
+
 /** Campagne publiée telle qu'elle apparaît dans la galerie publique. */
 export interface GalleryItem extends CampaignWithFrame {
   creator: CreatorProfile | null;
+
+  /*
+   * Champs d'enrichissement, tous **optionnels**.
+   *
+   * Ils ne sont renseignés que lorsque la base les porte réellement. Un
+   * compteur absent reste absent : la galerie n'affiche jamais « ♡ 1,2 k » sur
+   * une campagne dont personne n'a jamais mesuré l'usage. Tant que les colonnes
+   * n'existent pas, l'interface se contente de ce qu'elle sait — le type de
+   * campagne, le format, le créateur et la date.
+   */
+
+  /** Classement éditorial. Absent → non classée. */
+  category?: GalleryCategory | null;
+  /** Mise en avant officielle Campagnes. */
+  isOfficial?: boolean;
+  /** Réservée aux formules payantes. */
+  isPremium?: boolean;
+  /** Aperçu vidéo dédié, quand la campagne en fournit un. */
+  previewVideo?: string | null;
+  /** Nombre d'utilisations réelles. Absent → jamais compté. */
+  usageCount?: number;
+  /** Nombre de mises en favori réelles. Absent → jamais compté. */
+  likesCount?: number;
 }

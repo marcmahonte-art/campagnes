@@ -53,6 +53,8 @@ export interface Backend {
 
   /* --- Authentification créateur ------------------------------------ */
   signUpWithEmail(email: string, password: string): Promise<SignUpOutcome>;
+  /** Renvoie l'email de confirmation d'inscription (aucun compte créé). */
+  resendConfirmation(email: string): Promise<Result>;
   signInWithEmail(email: string, password: string): Promise<Result>;
   signInWithGoogle(): Promise<Result>;
   signOut(): Promise<void>;

@@ -176,6 +176,19 @@ export const localBackend: Backend = {
     return {};
   },
 
+  /**
+   * Sans projet Supabase, aucune confirmation n'est envoyée : l'inscription est
+   * immédiate. L'écran de confirmation ne doit donc jamais s'afficher ici, et
+   * cette méthode n'est qu'un garde-fou.
+   */
+  async resendConfirmation(): Promise<Result> {
+    await delay();
+    return {
+      error:
+        "Aucun email de confirmation n'est envoyé en mode démonstration : l'inscription est immédiate.",
+    };
+  },
+
   async signInWithEmail(email, password): Promise<Result> {
     await delay();
     const normalized = email.trim().toLowerCase();
