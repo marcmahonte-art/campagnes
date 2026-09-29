@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowRight, Wand2 } from 'lucide-react';
+import { ArrowRight, Pencil, Wand2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Field, Input, InputPrefix } from '@/components/ui/input';
@@ -12,7 +12,7 @@ import { InlineError, Spinner } from '@/components/ui/feedback';
 import { backend } from '@/lib/backend';
 import { useSession } from '@/lib/backend/session';
 import { isValidSlug, slugFromName, uniqueSlug } from '@/lib/slug';
-import { defaultRatioFor, kindSpec } from '@/lib/campaign-kinds';
+import { defaultRatioFor, isCampaignKind, kindSpec } from '@/lib/campaign-kinds';
 import type { CampaignKind, Ratio } from '@/lib/types';
 
 /**
@@ -30,6 +30,12 @@ export default function NewCampaignPage() {
   const [slug, setSlug] = useState('');
   const [slugTouched, setSlugTouched] = useState(false);
   const [kind, setKind] = useState<CampaignKind>('photo_frame');
+  /**
+   * Vrai quand le type a été choisi dans le sélecteur du tableau de bord.
+   * On ne repose alors pas la question : on affiche le choix, modifiable.
+   */
+  const [kindFromPicker, setKindFromPicker] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [ratio, setRatio] = useState<Ratio>('1:1');
   const [ratioTouched, setRatioTouched] = useState(false);
   const [existingSlugs, setExistingSlugs] = useState<string[]>([]);
@@ -38,6 +44,20 @@ export default function NewCampaignPage() {
 
   useEffect(() => {
     void backend.listSlugs().then(setExistingSlugs);
+  }, []);
+
+  /*
+   * Le type arrive dans l'URL (`?kind=…`), posé par le sélecteur du tableau de
+   * bord. On le lit **après montage** plutôt qu'avec `useSearchParams` : ce
+   * dernier exigerait une frontière `Suspense` pour une page statique, et le
+   * type n'a de toute façon aucune raison d'être connu au rendu serveur.
+   */
+  useEffect(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get('kind');
+    if (isCampaignKind(fromUrl)) {
+      setKind(fromUrl);
+      setKindFromPicker(true);
+    }
   }, []);
 
   // Slug automatique tant que l'utilisateur ne l'a pas modifié lui-même.
@@ -55,6 +75,9 @@ export default function NewCampaignPage() {
 
   const slugValid = useMemo(() => isValidSlug(slug), [slug]);
   const slugTaken = useMemo(() => existingSlugs.includes(slug), [existingSlugs, slug]);
+
+  const spec = kindSpec(kind);
+  const KindIcon = spec.icon;
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -101,23 +124,56 @@ export default function NewCampaignPage() {
           Nouvelle campagne
         </span>
         <h1 className="mt-3 text-[28px] font-bold leading-tight md:text-[36px]">
-          Que vont-yls déposer vos participants ?
+          {kindFromPicker ? 'Nommez votre campagne' : 'Que vont y déposer vos participants ?'}
         </h1>
         <p className="mt-2 text-sm leading-relaxed text-gray-500">
-          Une photo, une vidéo, ou une photo sur votre décor. Ce choix détermine le parcours
-          qui les attend — tout reste modifiable ensuite.
+          {kindFromPicker
+            ? 'Un nom, une adresse, un format. Vous dessinez le cadre juste après.'
+            : 'Une photo, une vidéo, ou une photo sur votre décor. Ce choix détermine le parcours qui les attend — tout reste modifiable ensuite.'}
         </p>
       </header>
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-6">
         <Card className="flex flex-col gap-4 p-5 md:p-6">
-          <div>
-            <h2 className="text-[15px] font-semibold">Type de campagne</h2>
-            <p className="mt-1 text-[13px] leading-relaxed text-gray-500">
-              {kindSpec(kind).detail}
-            </p>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-[15px] font-semibold">Type de campagne</h2>
+              <p className="mt-1 text-[13px] leading-relaxed text-gray-500">{spec.detail}</p>
+            </div>
+            {kindFromPicker && !pickerOpen && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="shrink-0"
+                onClick={() => setPickerOpen(true)}
+              >
+                <Pencil className="size-3.5" aria-hidden />
+                Modifier
+              </Button>
+            )}
           </div>
-          <KindPicker value={kind} onChange={setKind} />
+
+          {/*
+            Le type a déjà été choisi dans le sélecteur : on le rappelle au lieu
+            de reposer la même question deux écrans de suite. « Modifier » rend
+            le choix complet — on ne cache jamais ce qui existe.
+          */}
+          {kindFromPicker && !pickerOpen ? (
+            <div className="flex items-center gap-3 rounded-md border border-gray-200 bg-gray-50 px-4 py-3.5">
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-sm bg-ink text-white">
+                <KindIcon className="size-4" strokeWidth={1.75} aria-hidden />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-[15px] font-semibold leading-tight">
+                  {spec.label}
+                </span>
+                <span className="mt-0.5 block text-[13px] text-gray-500">{spec.usage}</span>
+              </span>
+            </div>
+          ) : (
+            <KindPicker value={kind} onChange={setKind} />
+          )}
         </Card>
 
         <Card className="flex flex-col gap-6 p-5 md:p-6">

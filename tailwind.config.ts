@@ -70,10 +70,17 @@ const config: Config = {
           from: { opacity: '0', transform: 'translateY(8px)' },
           to: { opacity: '1', transform: 'translateY(0)' },
         },
+        // Sert uniquement à l'aperçu « Cadre vidéo » du sélecteur de type :
+        // montrer qu'un élément du cadre bouge, sans lire une vraie vidéo.
+        float: {
+          '0%, 100%': { transform: 'translateY(0)' },
+          '50%': { transform: 'translateY(-7%)' },
+        },
       },
       animation: {
         'gradient-drift': 'gradient-drift 12s ease-in-out infinite',
         'fade-up': 'fade-up 250ms cubic-bezier(.2,.8,.2,1) both',
+        float: 'float 2.6s cubic-bezier(.2,.8,.2,1) infinite',
       },
     },
   },

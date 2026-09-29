@@ -16,6 +16,11 @@ export interface KindSpec {
   usage: string;
   detail: string;
   icon: typeof ImageIcon;
+  /**
+   * Ce que le participant dépose, en clair. Purement indicatif : sert à lever
+   * l'ambiguïté au moment du choix, jamais à filtrer un fichier.
+   */
+  formats: string[];
 }
 
 export const KIND_SPECS: KindSpec[] = [
@@ -25,6 +30,7 @@ export const KIND_SPECS: KindSpec[] = [
     usage: 'Les participants ajoutent une photo',
     detail: 'La photo remplit tout le cadre et n’apparaît qu’à travers les zones vides du visuel.',
     icon: ImageIcon,
+    formats: ['PNG'],
   },
   {
     id: 'video_frame',
@@ -32,6 +38,7 @@ export const KIND_SPECS: KindSpec[] = [
     usage: 'Les participants ajoutent une vidéo',
     detail: 'Un cadre animé s’applique à la vidéo du participant, image par image.',
     icon: Video,
+    formats: ['MP4', 'GIF'],
   },
   {
     id: 'background_frame',
@@ -39,6 +46,7 @@ export const KIND_SPECS: KindSpec[] = [
     usage: 'Les participants ajoutent une photo',
     detail: 'La photo est posée dans une zone du décor : le fond reste visible tout autour.',
     icon: Images,
+    formats: ['Photo', 'Vidéo'],
   },
 ];
 

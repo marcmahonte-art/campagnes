@@ -2,18 +2,22 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { LayoutGrid, Plus } from 'lucide-react';
-import { ButtonLink } from '@/components/ui/button';
+import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Spinner } from '@/components/ui/feedback';
 import { CampaignCard } from '@/components/dashboard/campaign-card';
+import { CampaignTypeSelectorModal } from '@/components/campaign/type-selector-modal';
 import { backend } from '@/lib/backend';
 import { useSession } from '@/lib/backend/session';
-import type { CampaignWithFrame } from '@/lib/types';
+import type { CampaignKind, CampaignWithFrame } from '@/lib/types';
 
 export default function DashboardPage() {
+  const router = useRouter();
   const { user } = useSession();
   const [campaigns, setCampaigns] = useState<CampaignWithFrame[] | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -43,10 +47,15 @@ export default function DashboardPage() {
           </p>
         </div>
 
-        <ButtonLink href="/campaigns/new" variant="primary" size="lg" className="shrink-0">
+        <Button
+          variant="primary"
+          size="lg"
+          className="shrink-0"
+          onClick={() => setPickerOpen(true)}
+        >
           <Plus className="size-4" strokeWidth={2} aria-hidden />
           Nouvelle campagne
-        </ButtonLink>
+        </Button>
       </header>
 
       {campaigns === null ? (
@@ -54,7 +63,7 @@ export default function DashboardPage() {
           <Spinner className="size-5 text-gray-400" />
         </div>
       ) : campaigns.length === 0 ? (
-        <EmptyState />
+        <EmptyState onNew={() => setPickerOpen(true)} />
       ) : (
         <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {campaigns.map((campaign) => (
@@ -62,11 +71,25 @@ export default function DashboardPage() {
           ))}
         </div>
       )}
+
+      {/*
+        Le type choisi part dans l'URL : le formulaire suivant le lit et ne
+        repose pas la question. On ne crée rien ici — une campagne sans nom n'a
+        ni adresse publique ni intérêt, et remplirait le tableau de bord.
+      */}
+      <CampaignTypeSelectorModal
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onConfirm={(kind: CampaignKind) => {
+          setPickerOpen(false);
+          router.push(`/campaigns/new?kind=${kind}`);
+        }}
+      />
     </div>
   );
 }
 
-function EmptyState() {
+function EmptyState({ onNew }: { onNew: () => void }) {
   return (
     <Card className="flex flex-col items-center gap-4 px-6 py-16 text-center">
       <span className="flex size-12 items-center justify-center rounded-md bg-gray-50">
@@ -78,10 +101,10 @@ function EmptyState() {
           Un nom, un format, un cadre. Vous obtenez un lien à partager à votre communauté.
         </p>
       </div>
-      <ButtonLink href="/campaigns/new" variant="primary" size="lg">
+      <Button variant="primary" size="lg" onClick={onNew}>
         <Plus className="size-4" strokeWidth={2} aria-hidden />
         Nouvelle campagne
-      </ButtonLink>
+      </Button>
       <p className="text-xs text-gray-400">
         Votre page publique :{' '}
         <Link href="/dashboard" className="underline underline-offset-4">
