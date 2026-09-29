@@ -1,10 +1,17 @@
 import Link from 'next/link';
 import { cn } from '@/lib/cn';
 
+export interface LogoProps {
+  className?: string;
+  variant?: 'black' | 'white';
+  size?: 'sm' | 'md' | 'lg' | 'xl';
+  withTail?: boolean;
+  asLink?: boolean;
+}
+
 /**
- * Wordmark Campagnes — police script Satisfy (réservée au logo, §4 du design system).
- * La « terminaison dynamique » de la dernière lettre est reprise par un trait
- * dégradé sous le wordmark : c'est le seul endroit où le dégradé touche le logo.
+ * Logo Campagnes officiel avec sa terminaison dégradée signature.
+ * Utilise la version fond clair (lettres noires) ou fond sombre (lettres blanches).
  */
 export function Logo({
   className,
@@ -12,44 +19,37 @@ export function Logo({
   size = 'md',
   withTail = false,
   asLink = true,
-}: {
-  className?: string;
-  variant?: 'black' | 'white';
-  size?: 'sm' | 'md' | 'lg' | 'xl';
-  withTail?: boolean;
-  asLink?: boolean;
-}) {
+}: LogoProps) {
   const sizes = {
-    sm: 'text-[22px]',
-    md: 'text-[28px]',
-    lg: 'text-[40px]',
-    xl: 'text-[64px] md:text-[80px]',
+    sm: 'h-8 md:h-9 w-auto',
+    md: 'h-10 md:h-11 w-auto',
+    lg: 'h-14 md:h-16 w-auto',
+    xl: 'h-20 sm:h-24 md:h-28 w-auto',
   } as const;
 
+  const src = variant === 'white' ? '/logo-white.png' : '/logo-dark.png';
+
   const content = (
-    <span className={cn('inline-flex flex-col items-start leading-none', className)}>
-      <span
-        className={cn(
-          'font-script',
-          sizes[size],
-          variant === 'white' ? 'text-white' : 'text-ink',
-        )}
-      >
-        Campagnes
-      </span>
-      {withTail && (
-        <span
-          aria-hidden
-          className="bg-brand-gradient mt-1 h-[3px] w-[62%] self-end rounded-pill"
-        />
-      )}
+    <span className={cn('inline-flex items-center select-none', className)}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={src}
+        alt="Campagnes"
+        className={cn('object-contain max-w-full drop-shadow-sm', sizes[size])}
+        loading="eager"
+        decoding="async"
+      />
     </span>
   );
 
   if (!asLink) return content;
 
   return (
-    <Link href="/" aria-label="Campagnes — accueil" className="inline-flex">
+    <Link
+      href="/"
+      aria-label="Campagnes — accueil"
+      className="inline-flex items-center transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-purple rounded-md"
+    >
       {content}
     </Link>
   );

@@ -55,7 +55,7 @@ export default function PublicProfilePage() {
   if (!profile) {
     return (
       <div className="flex min-h-dvh flex-col items-center justify-center gap-5 px-4 text-center">
-        <span className="font-script text-[40px] leading-none">Campagnes</span>
+        <Logo size="lg" asLink={true} />
         <p className="text-sm text-gray-500">
           Aucun créateur ne porte le nom <span className="font-medium text-ink">@{username}</span>.
         </p>
@@ -138,7 +138,7 @@ export default function PublicProfilePage() {
 
       <footer className="border-t border-gray-200">
         <div className="container-shell flex flex-col items-start justify-between gap-3 py-8 md:flex-row md:items-center">
-          <span className="font-script text-[22px] leading-none">Campagnes</span>
+          <Logo size="sm" asLink={true} />
           <p className="text-[13px] text-gray-500">Créez. Animez. Partagez.</p>
         </div>
       </footer>

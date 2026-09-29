@@ -1,5 +1,6 @@
 import { ArrowRight, Frame, LayoutGrid, Share2, Sparkles, UserX, Zap } from 'lucide-react';
 import { SiteHeader } from '@/components/site-header';
+import { Logo } from '@/components/ui/logo';
 import { ButtonLink } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { RATIO_LIST } from '@/lib/ratios';
@@ -37,10 +38,7 @@ export default function HomePage() {
         </div>
 
         <div className="container-shell relative flex min-h-[86vh] flex-col items-center justify-center py-28 text-center">
-          <span className="font-script text-[56px] leading-none text-white md:text-[88px]">
-            Campagnes
-          </span>
-          <span aria-hidden className="bg-brand-gradient mt-3 h-[3px] w-40 rounded-pill md:w-56" />
+          <Logo variant="white" size="xl" asLink={false} className="mb-6 drop-shadow-lg" />
 
           <h1 className="mt-10 max-w-3xl text-[34px] font-bold leading-[1.1] text-white md:text-[48px]">
             Créez des campagnes visuelles que votre communauté peut utiliser en quelques secondes.
@@ -204,7 +202,7 @@ export default function HomePage() {
       <footer className="border-t border-gray-200">
         <div className="container-shell flex flex-col items-start justify-between gap-4 py-10 md:flex-row md:items-center">
           <div>
-            <span className="font-script text-[24px] leading-none">Campagnes</span>
+            <Logo variant="black" size="sm" asLink={true} />
             <p className="mt-2 text-[13px] text-gray-500">Créez. Animez. Partagez.</p>
           </div>
           <nav className="flex flex-wrap items-center gap-x-6 gap-y-2 text-[13px] text-gray-500">

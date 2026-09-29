@@ -175,7 +175,7 @@ export default function ParticipantPage() {
   if (!campaign || !frame) {
     return (
       <div className="flex min-h-dvh flex-col items-center justify-center gap-5 px-4 text-center">
-        <span className="font-script text-[40px] leading-none">Campagnes</span>
+        <Logo size="lg" asLink={true} />
         <p className="max-w-sm text-sm leading-relaxed text-gray-500">
           {campaign
             ? "Cette campagne n'a pas encore de cadre. Son créateur doit en enregistrer un avant qu'elle puisse être partagée."

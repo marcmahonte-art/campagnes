@@ -108,25 +108,47 @@ demo@campagnes.app / campagnes2026
 > Ce ne sont pas des identifiants de production : en mode démonstration, tout vit dans le
 > navigateur et n'importe qui peut lire le `localStorage`.
 
-### Passer sur Supabase (production)
+### Base de données (Supabase)
 
-1. Créer un projet sur [supabase.com](https://supabase.com).
-2. Exécuter les migrations **dans l'ordre** dans **SQL Editor** :
-   - `supabase/migrations/0001_init.sql` — tables, policies RLS, trigger d'inscription,
-     bucket `media`, vue publique `creator_profiles`.
-   - `supabase/migrations/0002_plans_distribution.sql` — formules, grille tarifaire de
-     distribution et fonction SQL de changement de formule.
-3. Activer le fournisseur **Google** dans *Authentication → Providers*.
-4. Copier `.env.example` en `.env.local` et renseigner :
+Le projet Supabase est **provisionné**. Les migrations sont appliquées et vérifiées : les
+tables, les policies RLS, le trigger d'inscription, la vue publique, le bucket `media` et la
+grille tarifaire existent réellement en base.
+
+Migrations, dans l'ordre :
+
+| Fichier | Contenu |
+|---|---|
+| `0001_init.sql` | tables `users`/`frames`/`campaigns`, policies RLS, trigger `handle_new_user`, vue `creator_profiles`, bucket `media`, realtime |
+| `0002_plans_distribution.sql` | formules `free`/`creator`/`organization`, table `distribution_offers`, fonction `set_own_plan` |
+| `0003_username_availability.sql` | fonction `username_available(text)` — contrôle de disponibilité du pseudo |
+
+> **Pourquoi la 0003.** La policy `users_select_self` n'autorise à lire que sa propre ligne :
+> une requête `select` filtrée par pseudo ne voyait donc jamais le pseudo d'un autre créateur,
+> et l'écran d'onboarding affichait « disponible » pour un pseudo déjà pris. La fonction
+> `username_available` répond par un simple booléen, sans jamais laisser lire de ligne — et
+> n'expose rien de nouveau, la vue publique publiant déjà tous les pseudos.
+
+Variables d'environnement (`.env.local`, jamais commité) :
 
 ```env
 NEXT_PUBLIC_SUPABASE_URL=https://xxxx.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGci...
-NEXT_PUBLIC_SITE_URL=http://localhost:3000
+SUPABASE_SERVICE_ROLE_KEY=eyJhbGci...   # serveur uniquement
+NEXT_PUBLIC_SITE_URL=https://campagnes-nu.vercel.app
 ```
 
+`NEXT_PUBLIC_SITE_URL` doit pointer sur le domaine réel : il compose les liens de retour de
+l'authentification (`/auth/callback`). Côté Supabase, ce domaine doit aussi figurer dans
+*Authentication → URL Configuration* (`Site URL` et `Redirect URLs`).
+
 Aucune ligne d'écran ne change : toute la couche données passe par la façade
-`lib/backend/index.ts`.
+`lib/backend/index.ts`, qui bascule sur Supabase dès que l'URL et la clé anon sont présentes.
+
+> **Email d'inscription — limite connue.** La confirmation par email est active et le service
+> d'email intégré de Supabase est plafonné à **2 envois par heure**, sans SMTP personnalisé.
+> Au-delà, l'inscription répond `429 over_email_send_rate_limit`. Deux issues : brancher un
+> SMTP (Resend, Brevo, SendGrid) dans *Authentication → SMTP Settings*, ou désactiver la
+> confirmation (*Authentication → Providers → Email → Confirm email*).
 
 > **Sécurité.** Les droits d'accès sont calculés côté application (`lib/plans.ts`) et la
 > seule écriture sensible en base est le changement de formule, isolé dans une fonction
@@ -136,8 +158,13 @@ Aucune ligne d'écran ne change : toute la couche données passe par la façade
 
 ### Déploiement Vercel
 
-Importer le dépôt, ajouter les mêmes variables d'environnement, déployer.
+Importer le dépôt, ajouter **les quatre** variables d'environnement ci-dessus, déployer.
 L'hébergement des images passe par Supabase Storage (bucket `media`).
+
+Un déploiement resté en **mode démonstration** se reconnaît à la phrase « Mode démonstration
+— les données restent dans ce navigateur », affichée en bandeau sur toutes les pages : c'est
+le signe que `NEXT_PUBLIC_SUPABASE_URL` ou la clé anon manquent côté Vercel.
+
 
 ---
 
@@ -177,6 +204,7 @@ lib/
   supabase/                      clients navigateur et serveur
 supabase/migrations/0001_init.sql
 supabase/migrations/0002_plans_distribution.sql
+supabase/migrations/0003_username_availability.sql
 middleware.ts                    /@pseudo → /u/pseudo + session
 ```
 

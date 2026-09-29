@@ -206,12 +206,18 @@ export const supabaseBackend: Backend = {
   },
 
   async isUsernameAvailable(username) {
-    const { data } = await supabaseBrowser()
-      .from('users')
-      .select('id')
-      .eq('username', username)
-      .maybeSingle();
-    return !data;
+    // On passe par la fonction `username_available` (migration 0003) et non par un
+    // `select` sur `users` : la policy `users_select_self` n'autorise à lire que sa
+    // propre ligne, donc une requête filtrée par pseudo répondrait « libre » pour
+    // tout pseudo déjà pris par quelqu'un d'autre. La fonction, elle, répond par un
+    // simple booléen sans jamais laisser lire de ligne.
+    const { data, error } = await supabaseBrowser().rpc('username_available', {
+      p_username: username,
+    });
+    // En cas d'échec, on laisse tenter : la contrainte d'unicité tranchera à
+    // l'enregistrement. Refuser un pseudo à cause d'une panne réseau serait pire.
+    if (error) return true;
+    return data === true;
   },
 
   async getCreatorProfile(username): Promise<CreatorProfile | null> {
