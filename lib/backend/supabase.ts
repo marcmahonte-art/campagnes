@@ -139,12 +139,15 @@ export const supabaseBackend: Backend = {
   },
 
   /* --- Authentification --------------------------------------------- */
-  async signUpWithEmail(email, password): Promise<SignUpOutcome> {
+  async signUpWithEmail(email, password, username): Promise<SignUpOutcome> {
     const sb = supabaseBrowser();
     const { data, error } = await sb.auth.signUp({
       email: email.trim().toLowerCase(),
       password,
-      options: { emailRedirectTo: `${SITE_URL}/auth/callback?next=/onboarding` },
+      options: {
+        emailRedirectTo: `${SITE_URL}/auth/callback?next=/onboarding`,
+        data: username ? { username: username.trim().toLowerCase() } : undefined,
+      },
     });
     if (error) return { error: message(error, "L'inscription a échoué.") };
     return { needsEmailConfirmation: !data.session };

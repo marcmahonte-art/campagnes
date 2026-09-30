@@ -135,7 +135,7 @@ export const localBackend: Backend = {
   },
 
   /* --- Authentification --------------------------------------------- */
-  async signUpWithEmail(email, password): Promise<SignUpOutcome> {
+  async signUpWithEmail(email, password, username): Promise<SignUpOutcome> {
     await delay();
     const normalized = email.trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
@@ -150,18 +150,19 @@ export const localBackend: Backend = {
       return { error: 'Un compte existe déjà avec cette adresse.' };
     }
 
-    const base = normalized.split('@')[0].replace(/[^a-z0-9]/g, '').slice(0, 20) || 'createur';
-    let username = base;
+    const rawName = (username ?? '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+    const base = rawName.length >= 3 ? rawName.slice(0, 28) : (normalized.split('@')[0].replace(/[^a-z0-9]/g, '').slice(0, 20) || 'createur');
+    let finalUsername = base;
     let n = 1;
-    while (db.users.some((u) => u.username === username)) {
+    while (db.users.some((u) => u.username === finalUsername)) {
       n += 1;
-      username = `${base}${n}`;
+      finalUsername = `${base}${n}`;
     }
 
     const user: DbUser = {
       id: uid(),
       email: normalized,
-      username,
+      username: finalUsername,
       org_name: null,
       logo_url: null,
       plan: 'free',

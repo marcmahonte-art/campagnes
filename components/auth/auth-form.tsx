@@ -14,13 +14,22 @@ import { fetchAuthProviders } from '@/lib/auth-providers';
 
 type Mode = 'login' | 'signup';
 
-/** Formulaire d'authentification créateur — email/mot de passe + Google. */
+/**
+ * Formulaire d'authentification créateur — email/mot de passe + Google.
+ *
+ * Deux modes, deux visages :
+ * - login : email + mot de passe, bouton « Se connecter » ;
+ * - signup : nom + email + mot de passe + confirmation, bouton « S'inscrire »,
+ *   validation du nom en temps réel, lien vers les conditions.
+ */
 export function AuthForm({ mode }: { mode: Mode }) {
   const router = useRouter();
   const { refresh } = useSession();
 
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [pending, setPending] = useState<'form' | 'google' | 'demo' | 'resend' | null>(null);
@@ -78,6 +87,18 @@ export function AuthForm({ mode }: { mode: Mode }) {
     event.preventDefault();
     setError(null);
     setInfo(null);
+
+    if (isSignup) {
+      if (name.trim().length < 3) {
+        setError('Votre nom doit contenir au moins 3 caractères.');
+        return;
+      }
+      if (password !== confirmPassword) {
+        setError('Les mots de passe ne correspondent pas.');
+        return;
+      }
+    }
+
     setPending('form');
 
     // Aucun échec ne doit être silencieux : sans ce bloc, une exception laissait
@@ -85,7 +106,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
     // restait bloqué sur la même page sans comprendre pourquoi.
     try {
       if (isSignup) {
-        const outcome = await backend.signUpWithEmail(email, password);
+        const outcome = await backend.signUpWithEmail(email, password, name.trim());
         if (outcome.error) {
           setError(outcome.error);
           return;
@@ -207,7 +228,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-7 shadow-sm md:p-8">
       <h1 className="text-[24px] font-semibold leading-snug">
-        {isSignup ? 'Créer votre compte créateur' : 'Se connecter'}
+        {isSignup ? 'S’inscrire' : 'Se connecter'}
       </h1>
       <p className="mt-2 text-sm leading-relaxed text-gray-500">
         {isSignup
@@ -250,7 +271,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
             disabled={pending !== null}
           >
             {pending === 'google' ? <Spinner /> : <GoogleMark />}
-            Continuer avec Google
+            {isSignup ? 'S’inscrire avec Google' : 'Continuer avec Google'}
           </Button>
 
           <div className="my-6 flex items-center gap-3">
@@ -265,6 +286,21 @@ export function AuthForm({ mode }: { mode: Mode }) {
         onSubmit={handleSubmit}
         className={googleEnabled ? 'space-y-4' : 'mt-6 space-y-4'}
       >
+        {isSignup && (
+          <Field label="Nom" htmlFor="name">
+            <Input
+              id="name"
+              type="text"
+              autoComplete="name"
+              required
+              minLength={3}
+              placeholder="Votre nom ou celui de votre organisation"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </Field>
+        )}
+
         <Field label="Adresse email" htmlFor="email">
           <Input
             id="email"
@@ -294,15 +330,44 @@ export function AuthForm({ mode }: { mode: Mode }) {
           />
         </Field>
 
+        {isSignup && (
+          <Field label="Confirmer le mot de passe" htmlFor="confirmPassword">
+            <Input
+              id="confirmPassword"
+              type="password"
+              autoComplete="new-password"
+              required
+              minLength={8}
+              placeholder="Saisissez à nouveau votre mot de passe"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+            />
+          </Field>
+        )}
+
         <InlineError>{error}</InlineError>
         <InlineInfo>{info}</InlineInfo>
+
+        {isSignup && (
+          <p className="text-[12px] leading-relaxed text-gray-500">
+            En cliquant sur « S’inscrire », vous avez lu et accepté nos{' '}
+            <Link href="/conditions" className="text-ink underline underline-offset-4">
+              Conditions
+            </Link>{' '}
+            &{' '}
+            <Link href="/confidentialite" className="text-ink underline underline-offset-4">
+              Politique de confidentialité
+            </Link>
+            .
+          </p>
+        )}
 
         <Button type="submit" variant="primary" size="lg" className="w-full" disabled={pending !== null}>
           {pending === 'form' ? (
             <Spinner />
           ) : (
             <>
-              {isSignup ? 'Créer mon compte' : 'Se connecter'}
+              {isSignup ? 'S’inscrire' : 'Se connecter'}
               <ArrowRight className="size-4" aria-hidden />
             </>
           )}
@@ -321,7 +386,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
           <>
             Pas encore de compte ?{' '}
             <Link href="/signup" className="font-medium text-ink underline underline-offset-4">
-              Créer ma campagne
+              S’inscrire
             </Link>
           </>
         )}

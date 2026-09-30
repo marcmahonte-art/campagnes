@@ -52,7 +52,7 @@ export interface Backend {
   onAuthStateChange(cb: (user: User | null) => void): () => void;
 
   /* --- Authentification créateur ------------------------------------ */
-  signUpWithEmail(email: string, password: string): Promise<SignUpOutcome>;
+  signUpWithEmail(email: string, password: string, username?: string): Promise<SignUpOutcome>;
   /** Renvoie l'email de confirmation d'inscription (aucun compte créé). */
   resendConfirmation(email: string): Promise<Result>;
   signInWithEmail(email: string, password: string): Promise<Result>;
