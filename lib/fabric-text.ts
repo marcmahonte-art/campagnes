@@ -72,12 +72,31 @@ export interface TextObjectOptions {
  * toute façon à partir du contenu, c'est pourquoi la courbure est mesurée sur
  * `text.width` et non sur la valeur du descripteur.
  */
+export async function createBrandGradient() {
+  const { Gradient } = await import('fabric');
+  return new Gradient({
+    type: 'linear',
+    gradientUnits: 'percentage',
+    coords: { x1: 0, y1: 0, x2: 1, y2: 0 },
+    colorStops: [
+      { offset: 0, color: '#7B61FF' },
+      { offset: 0.5, color: '#FF6B6B' },
+      { offset: 1, color: '#FFD93D' },
+    ],
+  });
+}
+
 export async function createTextObject(
   layer: TextLayer,
   options: TextObjectOptions = {},
 ): Promise<IText> {
   const { IText } = await import('fabric');
   const interactive = options.interactive ?? false;
+
+  let fill: unknown = layer.color;
+  if (layer.color === 'brand-gradient') {
+    fill = await createBrandGradient();
+  }
 
   const text = new IText(layer.text, {
     left: layer.x,
@@ -88,7 +107,7 @@ export async function createTextObject(
     fontSize: layer.size,
     fontWeight: layer.weight === 'bold' ? 'bold' : 'normal',
     fontStyle: layer.style === 'italic' ? 'italic' : 'normal',
-    fill: layer.color,
+    fill: fill as string,
     textAlign: layer.align,
     charSpacing: layer.letterSpacing,
     lineHeight: layer.lineHeight || DEFAULT_LINE_HEIGHT,

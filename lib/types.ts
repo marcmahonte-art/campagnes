@@ -49,7 +49,7 @@ export interface CreatorProfile {
 /* Descripteur de cadre — contrat de rejouabilité                      */
 /* ------------------------------------------------------------------ */
 
-export type LayerType = 'image' | 'text';
+export type LayerType = 'image' | 'text' | 'shape';
 export type TextAlign = 'left' | 'center' | 'right';
 
 /** Polices disponibles dans l'éditeur — toutes libres de droits (Google Fonts). */
@@ -60,7 +60,8 @@ export type FontFamily =
   | 'Poppins'
   | 'Roboto'
   | 'Lora'
-  | 'Bebas Neue';
+  | 'Bebas Neue'
+  | 'Satisfy';
 
 export type FontWeight = 'normal' | 'bold';
 
@@ -81,6 +82,10 @@ interface LayerBase {
   /** Ordre d'empilement : plus grand = plus devant. */
   z: number;
   opacity: number;
+  /** Visibilité du calque (vrai par défaut). Un calque masqué ne s'affiche pas à l'export. */
+  visible?: boolean;
+  /** Verrouillage du calque contre toute modification directe sur le canvas. */
+  locked?: boolean;
 }
 
 export interface ImageLayer extends LayerBase {
@@ -116,7 +121,46 @@ export interface TextLayer extends LayerBase {
   curve: number;
 }
 
-export type Layer = ImageLayer | TextLayer;
+/**
+ * Formes géométriques disponibles dans l'éditeur.
+ *
+ * Elles sont **dessinées**, jamais importées : une forme est décrite par des
+ * nombres, donc elle reste nette à toute résolution, se rejoue à l'identique
+ * côté participant, et ne pèse rien dans la base. Le catalogue est
+ * volontairement court — sept formes couvrent l'affiche, la pastille, le
+ * bandeau et l'encadré ; au-delà, on chercherait un outil de dessin.
+ */
+export type ShapeKind =
+  | 'circle'
+  | 'rect'
+  | 'rounded'
+  | 'triangle'
+  | 'diamond'
+  | 'star'
+  | 'line';
+
+export interface ShapeLayer extends LayerBase {
+  type: 'shape';
+  kind: ShapeKind;
+  /** Couleur de remplissage. `transparent` = forme évidée. */
+  fill: string;
+  /** Couleur du contour. `transparent` = aucun contour. */
+  stroke: string;
+  /**
+   * Épaisseur du contour, exprimée en **fraction de la plus petite dimension du
+   * cadre** (0 → 0.15). Rapporter l'épaisseur au cadre — et non au calque —
+   * garantit qu'un trait ne change pas d'aspect quand on redimensionne la forme,
+   * et qu'il reste identique après un changement de format.
+   */
+  strokeWidth: number;
+  /**
+   * Arrondi des coins, en fraction de la plus petite dimension du calque
+   * (0 → 0.5). N'a de sens que pour la forme `rounded` ; les autres l'ignorent.
+   */
+  radius: number;
+}
+
+export type Layer = ImageLayer | TextLayer | ShapeLayer;
 
 export const DESCRIPTOR_VERSION = 1;
 

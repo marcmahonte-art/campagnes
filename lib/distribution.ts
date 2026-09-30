@@ -1,11 +1,20 @@
 /**
  * Distribution — grille tarifaire.
  *
- * La diffusion est facturée à l'usage, sur devis. Aucun solde, aucun compteur :
- * le créateur indique le volume visé, nous établissons le devis.
+ * La diffusion se facture par volume, sur devis. Aucun solde, aucun paiement en
+ * ligne : le créateur annonce le volume visé, nous établissons le devis.
  *
- * Ce qui n'est PAS facturé : le partage du lien. Un lien ouvert par 10 000 personnes
- * ne coûte rien tant que personne ne participe.
+ * Ce que la grille ne couvre PAS : le décompte. Une campagne ouvre avec un
+ * quota de téléchargements, et c'est le produit qui le consomme — voir
+ * `lib/quota.ts` et la migration 0007. Les deux mécanismes sont distincts et
+ * complémentaires :
+ *
+ *   - ici, le **prix** d'un volume (ce qu'une campagne coûte à étendre)
+ *   - là-bas, le **compteur** d'une campagne (ce qu'elle a déjà consommé)
+ *
+ * Ce qui n'est PAS facturé : l'ouverture du lien. Un lien ouvert par 10 000
+ * personnes ne coûte rien tant que personne ne télécharge pas de visuel. Seule
+ * la participation compte, parce qu'elle est la seule chose mesurable.
  */
 
 export interface DistributionOffer {

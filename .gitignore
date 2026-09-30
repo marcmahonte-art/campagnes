@@ -20,6 +20,10 @@ supabase/.temp/
 .DS_Store
 Thumbs.db
 
+# Fichiers de verrou Office (~$...) : crees a l'ouverture d'un document, jamais
+# des documents.
+~$*
+
 .vercel
 *.log
 npm-debug.log*

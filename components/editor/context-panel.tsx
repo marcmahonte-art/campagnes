@@ -2,7 +2,19 @@
 
 import { useId, useState } from 'react';
 import Link from 'next/link';
-import { Check, ChevronDown, ImagePlus, Lock, Trash2, Type, Unlock } from 'lucide-react';
+import {
+  Check,
+  ChevronDown,
+  Copy,
+  Eye,
+  EyeOff,
+  ImagePlus,
+  LayoutTemplate,
+  Lock,
+  Trash2,
+  Type,
+  Unlock,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { RatioPicker } from '@/components/ui/ratio-picker';
@@ -20,6 +32,14 @@ import { kindSpec } from '@/lib/campaign-kinds';
 import { ratioSpec } from '@/lib/ratios';
 import { CURVE_MAX, CURVE_MIN } from '@/lib/descriptor';
 import { FONTS, fontSpec } from '@/lib/fonts';
+import {
+  RADIUS_MAX,
+  SHAPES,
+  STROKE_DEFAULT_COLOR,
+  STROKE_STEPS,
+  shapeSpec,
+  strokeStepLabel,
+} from '@/lib/shapes';
 import type {
   CampaignKind,
   Descriptor,
@@ -27,6 +47,8 @@ import type {
   ImageLayer,
   Layer,
   Ratio,
+  ShapeKind,
+  ShapeLayer,
   TextAlign,
   TextLayer,
   VerticalAlign,
@@ -43,7 +65,12 @@ import type {
  * lit en proportion du cadre et s'affiche en mot, pas en chiffre.
  */
 
-export type LayerPatch = Partial<TextLayer> & Partial<ImageLayer>;
+export type LayerPatch = Partial<Omit<TextLayer, 'type'>> &
+  Partial<Omit<ImageLayer, 'type'>> &
+  Partial<Omit<ShapeLayer, 'type'>> & {
+    visible?: boolean;
+    locked?: boolean;
+  };
 
 /* ------------------------------------------------------------------ */
 /* Vocabulaire                                                         */
@@ -54,6 +81,7 @@ function layerLabel(layer: Layer): string {
     const text = layer.text.trim();
     return text.length > 0 ? `« ${text.slice(0, 24)} »` : 'Texte';
   }
+  if (layer.type === 'shape') return shapeSpec(layer.kind).label;
   return layer.label?.trim() || 'Image';
 }
 
@@ -116,7 +144,9 @@ export function FramePanel({
   maxLayers,
   onAddImage,
   onAddText,
+  onAddShape,
   onChangeRatio,
+  onOpenTemplates,
   busy,
   locked,
   onToggleLock,
@@ -127,7 +157,9 @@ export function FramePanel({
   maxLayers: number | null;
   onAddImage: () => void;
   onAddText: () => void;
+  onAddShape: (kind: ShapeKind) => void;
   onChangeRatio: (ratio: Ratio) => void;
+  onOpenTemplates?: () => void;
   busy: boolean;
   /** La zone du participant est verrouillée : elle ne bouge plus par accident. */
   locked: boolean;
@@ -141,6 +173,18 @@ export function FramePanel({
     <div className="flex flex-col gap-5">
       <PanelHeading title="Mon cadre" hint={spec.detail} />
 
+      {onOpenTemplates && (
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={onOpenTemplates}
+          className="w-full flex items-center justify-center gap-2"
+        >
+          <LayoutTemplate className="size-4 text-purple" strokeWidth={1.75} aria-hidden />
+          Choisir un modèle…
+        </Button>
+      )}
+
       <div className="flex flex-col gap-2">
         <span className="text-[12px] font-medium text-gray-700">Ajouter</span>
         <div className="grid grid-cols-2 gap-2">
@@ -152,6 +196,16 @@ export function FramePanel({
             <Type className="size-4" strokeWidth={1.75} aria-hidden />
             Texte
           </Button>
+        </div>
+
+        {/*
+          Les formes sont posées ici, avec les autres ajouts : c'est le même
+          geste. On ne demande jamais de choisir une couleur ou une épaisseur
+          avant d'avoir posé la forme — on la pose, puis on la règle.
+        */}
+        <div className="flex flex-col gap-1.5 pt-1">
+          <span className="text-[11px] text-gray-500">Ou une forme</span>
+          <ShapePalette onPick={onAddShape} disabled={busy || limitReached} />
         </div>
 
         {maxLayers !== null && (
@@ -229,9 +283,13 @@ export function LayerPanel({
   otherZone,
   onPatch,
   onDelete,
+  onDuplicate,
   onOrder,
+  onAlignHorizontal,
   onAlignVertical,
   onToggleZone,
+  onToggleLock,
+  onToggleVisible,
 }: {
   layer: Layer;
   ratio: Ratio;
@@ -241,20 +299,27 @@ export function LayerPanel({
   otherZone: Layer | null;
   onPatch: (patch: LayerPatch) => void;
   onDelete: () => void;
-  onOrder: (direction: 'front' | 'back') => void;
+  onDuplicate: () => void;
+  onOrder: (direction: 'front' | 'back' | 'front-most' | 'back-most') => void;
+  onAlignHorizontal: (where: 'left' | 'center' | 'right') => void;
   /** Pose l'élément en haut, au centre ou en bas du cadre. */
   onAlignVertical: (where: VerticalAlign) => void;
   onToggleZone: () => void;
+  onToggleLock: () => void;
+  onToggleVisible: () => void;
 }) {
   const isText = layer.type === 'text';
+  const isShape = layer.type === 'shape';
+  /** Forme dont l'emprise est déjà un rectangle : la fenêtre photo lui est fidèle. */
+  const isPlainBox =
+    layer.type === 'shape' && (layer.kind === 'rect' || layer.kind === 'line');
   const spec = ratioSpec(ratio);
   const font = isText ? fontSpec(layer.font) : null;
-  const vAlign: VerticalAlign = isText ? verticalPosition(layer, ratio) : 'middle';
 
   return (
     <div className="flex flex-col gap-4">
       <PanelHeading
-        title={isText ? 'Mon texte' : 'Mon image'}
+        title={isText ? 'Mon texte' : isShape ? 'Ma forme' : 'Mon image'}
         hint={layerLabel(layer)}
       />
 
@@ -343,6 +408,70 @@ export function LayerPanel({
         </>
       )}
 
+      {/* ---------------- Réglages de la forme ---------------- */}
+      {isShape && (
+        <>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[12px] font-medium text-gray-700">Forme</span>
+            <ShapePalette value={layer.kind} onPick={(next) => onPatch({ kind: next })} />
+          </div>
+
+          <ColorRow
+            label="Couleur"
+            value={layer.fill}
+            onChange={(fill) => onPatch({ fill })}
+            // Une forme peut être évidée : c'est ce qui permet de faire un
+            // simple liseré, ou de découper une fenêtre dans un aplat.
+            allowTransparent
+          />
+
+          {/*
+            Le contour se règle d'abord en épaisseur, en mots. On ne demande pas
+            de choisir une couleur pour un contour de zéro pixel : la teinte
+            n'apparaît qu'au moment où elle sert, et se pose alors d'elle-même
+            plutôt que de laisser l'utilisateur devant une forme inchangée.
+          */}
+          <Segmented<string>
+            label="Contour"
+            value={strokeStepLabel(layer.strokeWidth)}
+            options={STROKE_STEPS.map((step) => ({ value: step.label, label: step.label }))}
+            onChange={(label) => {
+              const step = STROKE_STEPS.find((candidate) => candidate.label === label);
+              if (!step) return;
+              onPatch({
+                strokeWidth: step.value,
+                ...(step.value > 0 && layer.stroke === 'transparent'
+                  ? { stroke: STROKE_DEFAULT_COLOR }
+                  : {}),
+              });
+            }}
+          />
+
+          {layer.strokeWidth > 0 && (
+            <ColorRow
+              label="Couleur du contour"
+              value={layer.stroke === 'transparent' ? STROKE_DEFAULT_COLOR : layer.stroke}
+              onChange={(stroke) => onPatch({ stroke })}
+              // Un contour « évidé » ne veut rien dire : c'est l'épaisseur qui
+              // décide s'il existe. Le réglage est déjà au-dessus.
+              allowGradient={false}
+            />
+          )}
+
+          {shapeSpec(layer.kind).hasRadius && (
+            <RangeRow
+              label="Arrondi"
+              min={0}
+              max={RADIUS_MAX}
+              step={0.01}
+              value={layer.radius}
+              display={`${Math.round(layer.radius * 100)} %`}
+              onChange={(radius) => onPatch({ radius })}
+            />
+          )}
+        </>
+      )}
+
       {!isText && (
         <RangeRow
           label="Taille"
@@ -360,13 +489,159 @@ export function LayerPanel({
         />
       )}
 
-      {/* ---------------- Ordre ---------------- */}
-      <div className="grid grid-cols-2 gap-2">
-        <Button variant="ghost" size="sm" onClick={() => onOrder('front')}>
-          Devant
+      {/* ---------------- Alignement & Disposition ---------------- */}
+      <div className="flex flex-col gap-2.5 rounded-md border border-gray-200 bg-gray-50/70 p-3">
+        <span className="text-[12px] font-semibold text-gray-700">Alignement & Disposition</span>
+
+        {/* Alignement Horizontal */}
+        <div className="flex flex-col gap-1">
+          <span className="text-[11px] text-gray-500">Horizontal</span>
+          <div className="grid grid-cols-3 gap-1.5">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onAlignHorizontal('left')}
+              title="Aligner à gauche du cadre"
+              className="text-[11px] h-8 bg-white border border-gray-200"
+            >
+              Gauche
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onAlignHorizontal('center')}
+              title="Centrer horizontalement"
+              className="text-[11px] h-8 bg-white border border-gray-200"
+            >
+              Centre
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onAlignHorizontal('right')}
+              title="Aligner à droite du cadre"
+              className="text-[11px] h-8 bg-white border border-gray-200"
+            >
+              Droite
+            </Button>
+          </div>
+        </div>
+
+        {/* Alignement Vertical */}
+        <div className="flex flex-col gap-1">
+          <span className="text-[11px] text-gray-500">Vertical</span>
+          <div className="grid grid-cols-3 gap-1.5">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onAlignVertical('top')}
+              title="Aligner en haut du cadre"
+              className="text-[11px] h-8 bg-white border border-gray-200"
+            >
+              Haut
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onAlignVertical('middle')}
+              title="Centrer verticalement"
+              className="text-[11px] h-8 bg-white border border-gray-200"
+            >
+              Milieu
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onAlignVertical('bottom')}
+              title="Aligner en bas du cadre"
+              className="text-[11px] h-8 bg-white border border-gray-200"
+            >
+              Bas
+            </Button>
+          </div>
+        </div>
+
+        {/* Ordre de superposition */}
+        <div className="flex flex-col gap-1 pt-1 border-t border-gray-200/60">
+          <span className="text-[11px] text-gray-500">Superposition (pile)</span>
+          <div className="grid grid-cols-2 gap-1.5">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onOrder('front-most')}
+              title="Placer tout au premier plan"
+              className="text-[11px] h-8 bg-white border border-gray-200"
+            >
+              Tout devant
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onOrder('front')}
+              title="Avancer d'un cran"
+              className="text-[11px] h-8 bg-white border border-gray-200"
+            >
+              Devant
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onOrder('back')}
+              title="Reculer d'un cran"
+              className="text-[11px] h-8 bg-white border border-gray-200"
+            >
+              Derrière
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onOrder('back-most')}
+              title="Placer tout à l'arrière-plan"
+              className="text-[11px] h-8 bg-white border border-gray-200"
+            >
+              Tout derrière
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* ---------------- Actions rapides de calque ---------------- */}
+      <div className="grid grid-cols-3 gap-1.5">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onDuplicate}
+          title="Dupliquer l'élément (Ctrl+D)"
+          className="h-9 gap-1.5 text-[11px] border border-gray-200 bg-white"
+        >
+          <Copy className="size-3.5 text-gray-500" />
+          Dupliquer
         </Button>
-        <Button variant="ghost" size="sm" onClick={() => onOrder('back')}>
-          Derrière
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onToggleLock}
+          title={layer.locked ? 'Déverrouiller' : 'Verrouiller'}
+          className={cn(
+            'h-9 gap-1.5 text-[11px] border border-gray-200 bg-white',
+            layer.locked && 'border-purple text-purple font-semibold bg-purple/5',
+          )}
+        >
+          {layer.locked ? <Lock className="size-3.5" /> : <Unlock className="size-3.5 text-gray-500" />}
+          {layer.locked ? 'Verrouillé' : 'Verrouiller'}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onToggleVisible}
+          title={layer.visible === false ? 'Afficher le calque' : 'Masquer le calque'}
+          className={cn(
+            'h-9 gap-1.5 text-[11px] border border-gray-200 bg-white',
+            layer.visible === false && 'opacity-60 text-gray-400',
+          )}
+        >
+          {layer.visible === false ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5 text-gray-500" />}
+          {layer.visible === false ? 'Masqué' : 'Visible'}
         </Button>
       </div>
 
@@ -392,6 +667,18 @@ export function LayerPanel({
             ? 'Les participants placeront leur photo ici. Ce calque est masqué dans la zone et reste visible tout autour.'
             : 'La photo du participant s’affichera à l’emplacement de ce calque.'}
         </p>
+
+        {/*
+          Une fenêtre photo est toujours rectangulaire : on le dit plutôt que de
+          laisser croire que la photo épousera le dessin de la forme — un cercle
+          posé en zone donnerait un cadrage carré, et la forme disparaîtrait
+          sous la photo.
+        */}
+        {isShape && !isPlainBox && (
+          <p className="text-[11px] leading-relaxed text-gray-400">
+            La photo sera posée dans le rectangle qui entoure la forme, pas dans son dessin.
+          </p>
+        )}
 
         {!isZone && otherZone && (
           <p className="text-[11px] text-gray-400">
@@ -421,19 +708,8 @@ export function LayerPanel({
               onChange={(size) => onPatch({ size })}
             />
 
-            <Segmented<VerticalAlign>
-              label="Alignement vertical"
-              value={vAlign}
-              options={[
-                { value: 'top', label: 'Haut' },
-                { value: 'middle', label: 'Centre' },
-                { value: 'bottom', label: 'Bas' },
-              ]}
-              onChange={onAlignVertical}
-            />
-
             <RangeRow
-              label="Courbure"
+              label="Courbure du texte"
               min={CURVE_MIN}
               max={CURVE_MAX}
               step={1}
@@ -477,8 +753,57 @@ export function LayerPanel({
 
       <Button variant="destructive" size="sm" onClick={onDelete}>
         <Trash2 className="size-4" strokeWidth={1.75} aria-hidden />
-        Supprimer
+        Supprimer l'élément
       </Button>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Palette de formes                                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Les sept formes, en boutons.
+ *
+ * Chaque bouton **dessine** la forme qu'il pose : le tracé vient de
+ * `lib/shapes.ts`, la même liste qui alimente le rendu. On ne montre donc jamais
+ * une icône qui ne correspondrait pas exactement au résultat.
+ */
+function ShapePalette({
+  value,
+  onPick,
+  disabled = false,
+}: {
+  /** Forme courante, pour allumer le bouton correspondant. */
+  value?: ShapeKind;
+  onPick: (kind: ShapeKind) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="grid grid-cols-4 gap-1.5">
+      {SHAPES.map((shape) => (
+        <button
+          key={shape.value}
+          type="button"
+          title={shape.label}
+          aria-label={shape.label}
+          aria-pressed={value === shape.value}
+          disabled={disabled}
+          onClick={() => onPick(shape.value)}
+          className={cn(
+            'flex h-11 items-center justify-center rounded-md border transition-colors duration-150',
+            'disabled:pointer-events-none disabled:opacity-35',
+            value === shape.value
+              ? 'border-ink bg-ink text-white'
+              : 'border-gray-200 bg-white text-gray-600 hover:border-ink hover:text-ink',
+          )}
+        >
+          <svg viewBox="0 0 24 24" className="size-5" aria-hidden>
+            <path d={shape.preview} fill="currentColor" />
+          </svg>
+        </button>
+      ))}
     </div>
   );
 }

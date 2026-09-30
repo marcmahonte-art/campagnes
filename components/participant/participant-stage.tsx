@@ -6,6 +6,7 @@ import { cn } from '@/lib/cn';
 import { ratioSpec } from '@/lib/ratios';
 import { photoZone } from '@/lib/descriptor';
 import { createTextObject } from '@/lib/fabric-text';
+import { createShapeObject } from '@/lib/fabric-shape';
 import {
   clampPlacement,
   photoSize,
@@ -175,7 +176,16 @@ export function ParticipantStage({
       /* 2. Les calques du cadre — par-dessus, inertes. */
       for (const layer of layers) {
         try {
-          if (layer.type === 'text') {
+          if (layer.type === 'shape') {
+            // Inerte, comme le texte : seul le cadre compte, et la photo du
+            // participant doit rester le seul objet que l'on attrape.
+            // `hidden` par Fabric : un calque masqué dans l'éditeur ne doit pas
+            // apparaître après publication, sinon « masquer » ne masquerait
+            // que chez le créateur.
+            const object = await createShapeObject(layer, descriptor.ratio);
+            object.set({ visible: layer.visible !== false } as never);
+            canvas.add(object);
+          } else if (layer.type === 'text') {
             const text = await createTextObject(layer);
             canvas.add(text);
           } else {
@@ -193,7 +203,10 @@ export function ParticipantStage({
               originY: 'top',
               selectable: false,
               evented: false,
-            });
+              // Même règle que pour les formes et le texte : le masque posé
+              // dans l'éditeur doit survivre à la publication.
+              visible: layer.visible !== false,
+            } as never);
             image.scaleX = layer.w / naturalWidth;
             image.scaleY = layer.h / naturalHeight;
             canvas.add(image);

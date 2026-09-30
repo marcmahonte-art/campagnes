@@ -308,7 +308,7 @@ grille tarifaire fixe les noms définitifs. 0002 fait donc un `alter type … re
 `'pro'` → `'creator'`, `'org'` → `'organization'`. Un filet de sécurité recrée le type
 si la 0001 n'avait pas encore été appliquée.
 
-### 7.3 Pas de solde, pas de compteur, pas de journal
+### 7.3 Pas de solde, pas de paiement, pas de journal
 
 Décision produit assumée : **le produit n'affiche jamais un faux bouton d'achat.** La
 distribution se traite au cas par cas, donc il n'existe volontairement aucune de ces
@@ -316,10 +316,14 @@ colonnes ni tables :
 
 - pas de `users.credits`, pas de `campaigns.distribution_budget` ni `credits_consumed` ;
 - pas de `credit_transactions` ni d'enum `credit_reason` ;
-- pas de fonction `consume_participation` ni `purchase_credit_pack`.
+- pas de fonction `purchase_credit_pack`.
 
-Conséquence directe : rien à décompter, donc **aucune logique d'argent à faire respecter
-côté serveur**. C'est le principal gain de simplicité de cette version.
+Il n'y a donc **aucune logique d'argent à faire respecter côté serveur**. C'est le principal
+gain de simplicité de cette version : un volume s'annonce par `mailto:`, et un humain
+confirme le paiement avant que quiconque n'écrive dans la base.
+
+> Ce qui existe malgré tout, c'est un **compteur de participation** — voir §7.5. C'est
+> autre chose : il ne compte pas de l'argent, il compte des téléchargements.
 
 > Une version antérieure de la migration portait un système de crédits (1 participant =
 > 1 crédit). Il a été retiré sur décision produit. La base n'ayant jamais été
@@ -352,7 +356,6 @@ simulé, pas de redirection vers un prestataire.
 simple, suffixe ` FCFA`). Aucun écran ne réécrit un prix à la main.
 
 ### 7.6 Activation d'une formule
-
 Une seule fonction `security definer` subsiste : `set_user_plan(p_user_id uuid, p_plan plan_kind)`.
 Elle est réservée à `service_role` — point d'entrée du futur webhook de paiement, et levier
 d'activation manuelle de l'exploitant.

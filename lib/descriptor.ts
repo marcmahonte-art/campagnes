@@ -4,10 +4,12 @@ import {
   type ImageLayer,
   type Layer,
   type Ratio,
+  type ShapeLayer,
   type TextLayer,
 } from './types';
 import { isRatio, ratioSpec } from './ratios';
 import { isFontFamily } from './fonts';
+import { RADIUS_MAX, STROKE_MAX, isShapeKind, shapeSpec } from './shapes';
 import type { LayerMotion, MotionPlan, MotionPresetId } from './motion';
 
 const MOTION_PRESETS_IDS: MotionPresetId[] = [
@@ -41,6 +43,19 @@ let counter = 0;
 function newId(prefix = 'l'): string {
   counter += 1;
   return `${prefix}${Date.now().toString(36)}${counter.toString(36)}`;
+}
+
+/**
+ * Un identifiant neuf, préfixé selon la nature du calque.
+ *
+ * Le préfixe n'est pas décoratif : il rend le descripteur lisible au diagnostic
+ * — un `shp…` est une forme, un `txt…` un texte. Il vient du même générateur que
+ * les fabriques de calques, donc un clone n'obtient jamais un identifiant qui
+ * puisse entrer en collision avec un calque existant.
+ */
+export function makeLayerId(type: Layer['type'] = 'image'): string {
+  const prefix = type === 'text' ? 'txt' : type === 'shape' ? 'shp' : 'img';
+  return newId(prefix);
 }
 
 export function createDescriptor(ratio: Ratio = '1:1'): Descriptor {
@@ -193,16 +208,65 @@ export function makeTextLayer(
   };
 }
 
+/**
+ * Une forme posée au centre du cadre.
+ *
+ * La taille part de la **plus petite** dimension du cadre : un carré de 45 % du
+ * côté court tient dans un Carré comme dans un Paysage ou un Vertical, sans
+ * jamais déborder. La ligne échappe à la règle — sa hauteur est un trait, pas
+ * une boîte.
+ */
+export function makeShapeLayer(
+  kind: ShapeLayer['kind'],
+  ratio: Ratio,
+  opts: Partial<ShapeLayer> = {},
+): ShapeLayer {
+  const spec = ratioSpec(ratio);
+  const isLine = kind === 'line';
+
+  const side = Math.round(Math.min(spec.width, spec.height) * 0.45);
+  const w = opts.w ?? (isLine ? Math.round(spec.width * 0.5) : side);
+  const h = opts.h ?? (isLine ? Math.max(2, Math.round(spec.height * 0.008)) : side);
+
+  return {
+    id: opts.id ?? newId('shp'),
+    type: 'shape',
+    kind,
+    /*
+     * Toutes les formes ont une couleur, y compris la ligne — qui n'est qu'un
+     * rectangle très plat. Une forme ajoutée doit se voir immédiatement : rien
+     * n'est plus déroutant qu'un clic qui ne produit rien à l'écran.
+     */
+    fill: opts.fill ?? '#FFFFFF',
+    stroke: opts.stroke ?? 'transparent',
+    strokeWidth: opts.strokeWidth ?? 0,
+    // Le rectangle arrondi arrive arrondi : sinon la forme n'aurait aucun sens
+    // au moment précis où on la pose.
+    radius: opts.radius ?? (kind === 'rounded' ? 0.18 : 0),
+    x: opts.x ?? Math.round((spec.width - w) / 2),
+    y: opts.y ?? Math.round((spec.height - h) / 2),
+    w: Math.round(w),
+    h: Math.round(h),
+    rotation: opts.rotation ?? 0,
+    z: opts.z ?? 30,
+    opacity: opts.opacity ?? 1,
+  };
+}
+
 /* ------------------------------------------------------------------ */
 /* Lecture tolérante                                                   */
 /* ------------------------------------------------------------------ */
-
 function num(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
 function str(value: unknown, fallback: string): string {
   return typeof value === 'string' && value.length > 0 ? value : fallback;
+}
+
+/** Nombre relu puis ramené dans ses bornes : une valeur aberrante ne passe pas. */
+function clamped(value: unknown, fallback: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, num(value, fallback)));
 }
 
 /** Relit l'animation d'un cadre. Renvoie `null` si absente ou illisible. */
@@ -261,6 +325,15 @@ export function parseDescriptor(input: unknown): Descriptor {
         rotation: num(l.rotation, 0),
         z: num(l.z, (index + 1) * 10),
         opacity: num(l.opacity, 1),
+        /*
+         * Les deux drapeaux ne sont posés que s'ils **contredisent** le défaut.
+         * Un descripteur existant, écrit avant leur arrivée, n'en porte aucun :
+         * il doit continuer à se relire sans, sinon la sérialisation ajouterait
+         * `"visible": true` à chaque calque d'un cadre déjà en base — du bruit
+         * dans le diff, et deux représentations du même cadre.
+         */
+        ...(l.visible === false ? { visible: false as const } : {}),
+        ...(l.locked === true ? { locked: true as const } : {}),
       };
 
       if (l.type === 'text') {
@@ -282,6 +355,23 @@ export function parseDescriptor(input: unknown): Descriptor {
           lineHeight: num(l.lineHeight, DEFAULT_LINE_HEIGHT),
           curve: num(l.curve, 0),
         } satisfies TextLayer;
+      }
+
+      if (l.type === 'shape') {
+        // Une forme inconnue (JSON écrit à la main, version future) retombe sur
+        // un rectangle : le calque garde sa place et sa taille, il ne disparaît
+        // pas silencieusement du cadre.
+        const kind = isShapeKind(l.kind) ? l.kind : 'rect';
+        const spec = shapeSpec(kind);
+        return {
+          ...base,
+          type: 'shape',
+          kind,
+          fill: str(l.fill, '#FFFFFF'),
+          stroke: str(l.stroke, 'transparent'),
+          strokeWidth: clamped(l.strokeWidth, 0, 0, STROKE_MAX),
+          radius: spec.hasRadius ? clamped(l.radius, 0, 0, RADIUS_MAX) : 0,
+        } satisfies ShapeLayer;
       }
 
       if (l.type === 'image') {
@@ -329,10 +419,46 @@ export function serializeDescriptor(descriptor: Descriptor): string {
         .sort((a, b) => a.z - b.z)
         .map((l) => {
           if (l.type === 'image') {
-            const { id, type, src, x, y, w, h, rotation, z, opacity } = l;
-            return { id, type, src, x, y, w, h, rotation, z, opacity };
+            const { id, type, src, x, y, w, h, rotation, z, opacity, visible, locked } = l;
+            return {
+              id,
+              type,
+              src,
+              x,
+              y,
+              w,
+              h,
+              rotation,
+              z,
+              opacity,
+              ...(visible === false ? { visible: false } : {}),
+              ...(locked ? { locked: true } : {}),
+            };
           }
-          const { id, type, text, font, size, color, align, weight, style, letterSpacing, lineHeight, curve, x, y, w, h, rotation, z, opacity } = l;
+          if (l.type === 'shape') {
+            const { id, kind, fill, stroke, strokeWidth, radius, x, y, w, h, rotation, z, opacity, visible, locked } = l;
+            return {
+              id,
+              type: 'shape',
+              kind,
+              fill,
+              // Contour et arrondi au repos sont omis : une forme posée telle
+              // quelle se sérialise au plus court, et reste lisible à l'œil.
+              ...(stroke !== 'transparent' ? { stroke } : {}),
+              ...(strokeWidth !== 0 ? { strokeWidth } : {}),
+              ...(shapeSpec(kind).hasRadius && radius !== 0 ? { radius } : {}),
+              x,
+              y,
+              w,
+              h,
+              rotation,
+              z,
+              opacity,
+              ...(visible === false ? { visible: false } : {}),
+              ...(locked ? { locked: true } : {}),
+            };
+          }
+          const { id, type, text, font, size, color, align, weight, style, letterSpacing, lineHeight, curve, x, y, w, h, rotation, z, opacity, visible, locked } = l;
           return {
             id,
             type,
@@ -355,6 +481,8 @@ export function serializeDescriptor(descriptor: Descriptor): string {
             rotation,
             z,
             opacity,
+            ...(visible === false ? { visible: false } : {}),
+            ...(locked ? { locked: true } : {}),
           };
         }),
     },
@@ -490,6 +618,15 @@ export function validateDescriptor(descriptor: Descriptor): ValidationResult {
     if (layer.type === 'text' && layer.text.trim() === '') {
       warnings.push(`Le calque texte ${layer.id} est vide.`);
     }
+    if (layer.type === 'shape') {
+      const noFill = layer.fill === 'transparent' || layer.fill === '';
+      const noStroke = layer.stroke === 'transparent' || layer.stroke === '' || layer.strokeWidth <= 0;
+      if (noFill && noStroke) {
+        warnings.push(
+          `La forme ${layer.id} n'a ni remplissage ni contour : elle n'apparaîtra pas.`,
+        );
+      }
+    }
   }
 
   if (descriptor.motion) {
@@ -518,6 +655,17 @@ export function validateDescriptor(descriptor: Descriptor): ValidationResult {
         warnings.push(
           "Le calque qui délimite la zone photo est pivoté : la zone retenue est son " +
             'emprise rectangulaire, pas le calque lui-même.',
+        );
+      }
+
+      // La fenêtre du participant est un rectangle, par construction. Une forme
+      // qui n'en est pas un donnerait une photo rectangulaire, et la forme
+      // disparaîtrait dessous : mieux vaut le signaler que de le laisser
+      // découvrir après publication.
+      if (anchor.type === 'shape' && anchor.kind !== 'rect' && anchor.kind !== 'line') {
+        warnings.push(
+          `La zone photo s'appuie sur une forme « ${shapeSpec(anchor.kind).label} » : ` +
+            'la photo remplira son emprise rectangulaire, pas son dessin.',
         );
       }
 

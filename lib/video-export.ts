@@ -13,6 +13,7 @@
 
 import { ratioSpec } from './ratios';
 import { createTextObject } from './fabric-text';
+import { createShapeObject } from './fabric-shape';
 import { DEFAULT_MOTION_DURATION, sampleAt, type MotionPlan } from './motion';
 import { hasFeature, type PlanId } from './plans';
 import { PARTICIPANT_PHOTO_ID, effectiveMotion, photoZone } from './descriptor';
@@ -100,7 +101,14 @@ async function buildRenderTarget(descriptor: Descriptor): Promise<RenderTarget> 
 
   for (const layer of layers) {
     try {
-      if (layer.type === 'text') {
+      if (layer.type === 'shape') {
+        const shape = await createShapeObject(layer, descriptor.ratio);
+        // Un calque masqué ne part pas dans le fichier : c'est le même cadre
+        // que le participant voit, à l'identique.
+        shape.set({ visible: layer.visible !== false } as never);
+        canvas.add(shape);
+        objects.push(shape);
+      } else if (layer.type === 'text') {
         const text = await createTextObject(layer);
         canvas.add(text);
         objects.push(text);

@@ -38,6 +38,13 @@ export const FONTS: readonly FontSpec[] = [
     hasItalic: false,
     note: 'Bebas Neue n’existe qu’en graisse normale, sans italique.',
   },
+  {
+    value: 'Satisfy',
+    label: 'Satisfy',
+    hasBold: false,
+    hasItalic: false,
+    note: 'Satisfy est une police manuscrite expressive.',
+  },
 ];
 
 const BY_VALUE = new Map<FontFamily, FontSpec>(FONTS.map((f) => [f.value, f]));
