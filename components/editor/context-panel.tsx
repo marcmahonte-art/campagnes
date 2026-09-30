@@ -1,7 +1,8 @@
 'use client';
 
+import { useId, useState } from 'react';
 import Link from 'next/link';
-import { ImagePlus, Lock, Trash2, Type, Unlock } from 'lucide-react';
+import { Check, ChevronDown, ImagePlus, Lock, Trash2, Type, Unlock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { RatioPicker } from '@/components/ui/ratio-picker';
@@ -12,11 +13,13 @@ import {
   RangeRow,
   Segmented,
 } from '@/components/editor/controls';
+import { cn } from '@/lib/cn';
 import { kindSpec } from '@/lib/campaign-kinds';
 import { ratioSpec } from '@/lib/ratios';
 import type {
   CampaignKind,
   Descriptor,
+  FontFamily,
   ImageLayer,
   Layer,
   Ratio,
@@ -310,6 +313,18 @@ export function LayerPanel({
       <Disclosure label="Plus de réglages">
         {isText && (
           <>
+            <FontPicker
+              label="Police"
+              value={layer.font}
+              onChange={(font) => onPatch({ font })}
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <ToggleButton
+                active={layer.weight === 'bold'}
+                onClick={() => onPatch({ weight: layer.weight === 'bold' ? 'normal' : 'bold' })}
+                label="Gras"
+              />
+            </div>
             <ColorRow
               label="Couleur"
               value={layer.color}
@@ -354,5 +369,103 @@ export function LayerPanel({
         Supprimer
       </Button>
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Sélecteur de police                                                 */
+/* ------------------------------------------------------------------ */
+
+const FONT_OPTIONS: Array<{ value: FontFamily; label: string }> = [
+  { value: 'Inter', label: 'Inter' },
+  { value: 'Playfair Display', label: 'Playfair Display' },
+  { value: 'Montserrat', label: 'Montserrat' },
+  { value: 'Poppins', label: 'Poppins' },
+  { value: 'Roboto', label: 'Roboto' },
+  { value: 'Lora', label: 'Lora' },
+  { value: 'Bebas Neue', label: 'Bebas Neue' },
+];
+
+function FontPicker({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: FontFamily;
+  onChange: (value: FontFamily) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-[12px] font-medium text-gray-700">{label}</span>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-controls={id}
+        className="flex h-12 w-full items-center justify-between rounded-md border border-gray-200 bg-white px-4 text-[13px] text-ink transition-colors hover:border-gray-400"
+      >
+        <span style={{ fontFamily: value }}>{value}</span>
+        <ChevronDown className={cn('size-4 text-gray-400 transition-transform', open && 'rotate-180')} aria-hidden />
+      </button>
+
+      {open && (
+        <div
+          id={id}
+          className="flex max-h-48 flex-col gap-0.5 overflow-y-auto rounded-md border border-gray-200 bg-white p-1 shadow-sm"
+        >
+          {FONT_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => {
+                onChange(option.value);
+                setOpen(false);
+              }}
+              className={cn(
+                'flex items-center justify-between rounded-sm px-3 py-2 text-[13px] transition-colors',
+                value === option.value ? 'bg-gray-100 text-ink' : 'text-gray-600 hover:bg-gray-50',
+              )}
+            >
+              <span style={{ fontFamily: option.value }}>{option.label}</span>
+              {value === option.value && <Check className="size-4 text-purple" aria-hidden />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Bouton toggle (Gras)                                                */
+/* ------------------------------------------------------------------ */
+
+function ToggleButton({
+  active,
+  onClick,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        'flex h-10 items-center justify-center rounded-md border text-[13px] font-medium transition-colors',
+        active
+          ? 'border-ink bg-ink text-white'
+          : 'border-gray-200 bg-white text-gray-600 hover:border-gray-400',
+      )}
+    >
+      {label}
+    </button>
   );
 }

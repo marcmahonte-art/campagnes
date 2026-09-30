@@ -52,6 +52,18 @@ export interface CreatorProfile {
 export type LayerType = 'image' | 'text';
 export type TextAlign = 'left' | 'center' | 'right';
 
+/** Polices disponibles dans l'éditeur — toutes libres de droits (Google Fonts). */
+export type FontFamily =
+  | 'Inter'
+  | 'Playfair Display'
+  | 'Montserrat'
+  | 'Poppins'
+  | 'Roboto'
+  | 'Lora'
+  | 'Bebas Neue';
+
+export type FontWeight = 'normal' | 'bold';
+
 interface LayerBase {
   id: string;
   /** Coordonnées exprimées dans le repère du ratio, pas dans celui de l'écran. */
@@ -75,10 +87,12 @@ export interface ImageLayer extends LayerBase {
 export interface TextLayer extends LayerBase {
   type: 'text';
   text: string;
-  font: string;
+  font: FontFamily;
   size: number;
   color: string;
   align: TextAlign;
+  /** Graisse du texte. */
+  weight: FontWeight;
 }
 
 export type Layer = ImageLayer | TextLayer;

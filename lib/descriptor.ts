@@ -170,6 +170,7 @@ export function makeTextLayer(
     size: opts.size ?? 96,
     color: opts.color ?? '#FFFFFF',
     align: opts.align ?? 'center',
+    weight: opts.weight ?? 'normal',
     x: opts.x ?? Math.round((spec.width - w) / 2),
     y: opts.y ?? Math.round(spec.height * 0.75),
     w,
@@ -251,14 +252,29 @@ export function parseDescriptor(input: unknown): Descriptor {
       };
 
       if (l.type === 'text') {
+        const font = str(l.font, 'Inter');
+        const validFont: TextLayer['font'] =
+          [
+            'Inter',
+            'Playfair Display',
+            'Montserrat',
+            'Poppins',
+            'Roboto',
+            'Lora',
+            'Bebas Neue',
+          ].includes(font)
+            ? (font as TextLayer['font'])
+            : 'Inter';
+        const weight = l.weight === 'bold' ? 'bold' : 'normal';
         return {
           ...base,
           type: 'text',
           text: str(l.text, ''),
-          font: str(l.font, 'Inter'),
+          font: validFont,
           size: num(l.size, 96),
           color: str(l.color, '#FFFFFF'),
           align: l.align === 'left' || l.align === 'right' ? l.align : 'center',
+          weight,
         } satisfies TextLayer;
       }
 
@@ -310,8 +326,8 @@ export function serializeDescriptor(descriptor: Descriptor): string {
             const { id, type, src, x, y, w, h, rotation, z, opacity } = l;
             return { id, type, src, x, y, w, h, rotation, z, opacity };
           }
-          const { id, type, text, font, size, color, align, x, y, w, h, rotation, z, opacity } = l;
-          return { id, type, text, font, size, color, align, x, y, w, h, rotation, z, opacity };
+          const { id, type, text, font, size, color, align, weight, x, y, w, h, rotation, z, opacity } = l;
+          return { id, type, text, font, size, color, align, weight, x, y, w, h, rotation, z, opacity };
         }),
     },
     null,

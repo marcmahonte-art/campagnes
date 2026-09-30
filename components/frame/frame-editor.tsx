@@ -162,17 +162,22 @@ export function FrameEditor({
             fontSize?: number;
             fill?: unknown;
             textAlign?: string;
+            fontWeight?: string | number;
           };
           const align: TextAlign =
             t.textAlign === 'left' || t.textAlign === 'right' ? t.textAlign : 'center';
+          const font = (t.fontFamily ?? 'Inter') as TextLayer['font'];
+          const weight: TextLayer['weight'] =
+            t.fontWeight === 'bold' || t.fontWeight === 700 ? 'bold' : 'normal';
           const layer: TextLayer = {
             ...base,
             type: 'text',
             text: t.text ?? '',
-            font: t.fontFamily ?? 'Inter',
+            font,
             size: Math.round(t.fontSize ?? 96),
             color: typeof t.fill === 'string' ? t.fill : '#FFFFFF',
             align,
+            weight,
           };
           return layer;
         }
@@ -239,6 +244,7 @@ export function FrameEditor({
               fontSize: layer.size,
               fill: layer.color,
               textAlign: layer.align,
+              fontWeight: layer.weight === 'bold' ? 'bold' : 'normal',
               width: layer.w,
               originX: 'left',
               originY: 'top',
@@ -692,6 +698,7 @@ export function FrameEditor({
         if (patch.size !== undefined) active.set({ fontSize: patch.size });
         if (patch.color !== undefined) active.set({ fill: patch.color });
         if (patch.align !== undefined) active.set({ textAlign: patch.align });
+        if (patch.weight !== undefined) active.set({ fontWeight: patch.weight === 'bold' ? 'bold' : 'normal' });
         // Fabric ne recompose pas la boîte de texte de lui-même : sans
         // `initDimensions()`, le texte garderait son ancienne largeur jusqu'au
         // prochain rebuild — et le panneau semblerait ne rien faire.

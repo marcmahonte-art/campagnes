@@ -1,5 +1,14 @@
 import type { Metadata, Viewport } from 'next';
-import { Inter, Satisfy } from 'next/font/google';
+import {
+  Inter,
+  Satisfy,
+  Playfair_Display,
+  Montserrat,
+  Poppins,
+  Roboto,
+  Lora,
+  Bebas_Neue,
+} from 'next/font/google';
 import './globals.css';
 import { SessionProvider } from '@/lib/backend/session';
 import { DemoBanner } from '@/components/ui/feedback';
@@ -8,6 +17,45 @@ import { isDemoMode } from '@/lib/backend';
 const inter = Inter({
   subsets: ['latin'],
   variable: '--font-inter',
+  display: 'swap',
+});
+
+const playfair = Playfair_Display({
+  subsets: ['latin'],
+  variable: '--font-playfair',
+  display: 'swap',
+});
+
+const montserrat = Montserrat({
+  subsets: ['latin'],
+  variable: '--font-montserrat',
+  display: 'swap',
+});
+
+const poppins = Poppins({
+  subsets: ['latin'],
+  weight: ['400', '700'],
+  variable: '--font-poppins',
+  display: 'swap',
+});
+
+const roboto = Roboto({
+  subsets: ['latin'],
+  weight: ['400', '700'],
+  variable: '--font-roboto',
+  display: 'swap',
+});
+
+const lora = Lora({
+  subsets: ['latin'],
+  variable: '--font-lora',
+  display: 'swap',
+});
+
+const bebas = Bebas_Neue({
+  subsets: ['latin'],
+  weight: '400',
+  variable: '--font-bebas',
   display: 'swap',
 });
 
@@ -37,7 +85,10 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="fr" className={`${inter.variable} ${satisfy.variable}`}>
+    <html
+      lang="fr"
+      className={`${inter.variable} ${playfair.variable} ${montserrat.variable} ${poppins.variable} ${roboto.variable} ${lora.variable} ${bebas.variable} ${satisfy.variable}`}
+    >
       <body className="min-h-dvh bg-white text-ink">
         <SessionProvider>
           {isDemoMode && <DemoBanner />}
