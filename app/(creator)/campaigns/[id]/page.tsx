@@ -23,6 +23,15 @@ import { backend } from '@/lib/backend';
 import { useSession } from '@/lib/backend/session';
 import { parseDescriptor } from '@/lib/descriptor';
 import { kindSpec, seedDescriptorFor } from '@/lib/campaign-kinds';
+import {
+  DEFAULT_TIER,
+  QUOTE_THRESHOLD,
+  TOPUP_TIERS,
+  formatFcfaTier,
+  remaining,
+  shouldInviteToTopup,
+  topupHref,
+} from '@/lib/quota';
 import { maxLayers } from '@/lib/plans';
 import { isValidSlug } from '@/lib/slug';
 import { SITE_URL } from '@/lib/backend/config';
@@ -176,6 +185,12 @@ export default function CampaignEditorPage() {
 
   /* ---------------- Actions ---------------- */
   const publicUrl = useMemo(() => `${SITE_URL}/c/${campaign?.slug ?? ''}`, [campaign?.slug]);
+
+  /** Le lien public ne répond plus : le quota de participants est consommé. */
+  const blocked = campaign
+    ? campaign.participants_used >= campaign.participants_granted
+    : false;
+  const quota = campaign?.participants_granted ?? 0;
 
   async function togglePublish() {
     if (!campaign) return;
@@ -342,6 +357,91 @@ export default function CampaignEditorPage() {
       {/* ---------------- Descripteur ---------------- */}
       <DescriptorViewer descriptor={descriptor} />
 
+      {/* ---------------- Quota de participants ---------------- */}
+      <section className="flex flex-col gap-4 rounded-lg border border-gray-200 bg-white p-5">
+        <div className="flex items-baseline justify-between gap-3">
+          <h2 className="text-[15px] font-semibold">Participants</h2>
+          {campaign.participants_used > 0 && (
+            <span className="text-[13px] text-gray-500">
+              {campaign.participants_used} téléchargement
+              {campaign.participants_used > 1 ? 's' : ''}
+            </span>
+          )}
+        </div>
+
+        <QuotaMeter used={campaign.participants_used} quota={campaign.participants_granted} />
+
+        {blocked || shouldInviteToTopup(campaign.participants_used, campaign.participants_granted) ? (
+          <div className="flex flex-col gap-4 rounded-md border border-gray-200 bg-gray-50 p-4">
+            <p className="text-[13px] leading-relaxed text-gray-600">
+              {blocked ? (
+                <>
+                  <span className="font-semibold text-ink">Votre lien est bloqué.</span> Les{' '}
+                  {quota} téléchargements offerts ont été consommés : plus personne ne peut
+                  télécharger votre visuel. Prolongez-le pour le rouvrir.
+                </>
+              ) : (
+                <>
+                  Il vous reste{' '}
+                  {remaining(campaign.participants_used, campaign.participants_granted)}{' '}
+                  téléchargement
+                  {remaining(campaign.participants_used, campaign.participants_granted) > 1
+                    ? 's'
+                    : ''}{' '}
+                  offert
+                  {remaining(campaign.participants_used, campaign.participants_granted) > 1
+                    ? 's'
+                    : ''}
+                  . Ensuite votre lien se bloquera.
+                </>
+              )}
+            </p>
+
+            {/*
+              Les paliers reprennent la grille de `/tarifs` : mêmes volumes,
+              mêmes prix. Un créateur qui a lu               l'une reconnaît l'autre — il n'y a pas deux grilles concurrentes.
+            */}
+            <div className="grid gap-2 sm:grid-cols-2">
+              {TOPUP_TIERS.map((tier) => (
+                <a
+                  key={tier.downloads}
+                  href={topupHref({
+                    campaignName: campaign.name,
+                    campaignSlug: campaign.slug,
+                    used: campaign.participants_used,
+                    quota: campaign.participants_granted,
+                    tier,
+                  })}
+                  className={
+                    tier === DEFAULT_TIER
+                      ? 'flex items-center justify-between gap-3 rounded-md border border-transparent bg-ink px-3 py-2.5 text-[13px] font-medium text-white transition-opacity hover:opacity-90'
+                      : 'flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-white px-3 py-2.5 text-[13px] transition-colors hover:border-ink'
+                  }
+                >
+                  <span className="font-medium">
+                    +{new Intl.NumberFormat('fr-FR').format(tier.downloads)}
+                  </span>
+                  <span className={tier === DEFAULT_TIER ? 'text-white/80' : 'text-gray-500'}>
+                    {formatFcfaTier(tier.priceFcfa)}
+                  </span>
+                </a>
+              ))}
+            </div>
+
+            <p className="text-[12px] leading-relaxed text-gray-500">
+              L’extension s’obtient par demande de devis — aucun paiement en ligne pour l’instant.
+              Au-delà de {new Intl.NumberFormat('fr-FR').format(QUOTE_THRESHOLD)} téléchargements,
+              c’est traité directement au devis.
+            </p>
+          </div>
+        ) : (
+          <p className="text-[12px] leading-relaxed text-gray-500">
+            Chaque téléchargement de votre visuel est compté. À {campaign.participants_granted}, le
+            lien se bloque et vous pourrez le prolonger sur devis.
+          </p>
+        )}
+      </section>
+
       {/* ---------------- Lien public ---------------- */}
       <section className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white p-5">
         <div>
@@ -403,6 +503,52 @@ export default function CampaignEditorPage() {
           )}
         </div>
       </section>
+    </div>
+  );
+}
+
+/**
+ * Jauge du quota de participants.
+ *
+ * La barre ne change pas de forme selon l'avancement : seule la couleur porte
+ * l'information, pour qu'un créateur qui regarde une campagne à 9/10 comprenne
+ * en un coup d'œil ce qu'il lui reste à faire.
+ */
+function QuotaMeter({ used, quota }: { used: number; quota: number }) {
+  const safeQuota = Math.max(1, quota);
+  const ratio = Math.min(1, used / safeQuota);
+  const left = remaining(used, quota);
+  const pct = Math.round(ratio * 100);
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-baseline justify-between text-[13px]">
+        <span className="font-medium tabular-nums">
+          {used} / {quota}
+        </span>
+        <span className="text-gray-500">
+          {left > 0 ? `${left} restant${left > 1 ? 's' : ''}` : 'Quota atteint'}
+        </span>
+      </div>
+      <div
+        role="progressbar"
+        aria-valuenow={used}
+        aria-valuemin={0}
+        aria-valuemax={quota}
+        aria-label="Téléchargements consommés"
+        className="h-1.5 w-full overflow-hidden rounded-pill bg-gray-100"
+      >
+        <div
+          className={
+            left === 0
+              ? 'h-full rounded-pill bg-error'
+              : left <= 3
+                ? 'h-full rounded-pill bg-yellow'
+                : 'bg-brand-gradient h-full rounded-pill'
+          }
+          style={{ width: `${Math.max(pct, used > 0 ? 3 : 0)}%` }}
+        />
+      </div>
     </div>
   );
 }

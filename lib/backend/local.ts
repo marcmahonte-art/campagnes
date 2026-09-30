@@ -10,6 +10,7 @@ import type {
 } from '@/lib/types';
 import { createDescriptor } from '@/lib/descriptor';
 import { isCampaignKind } from '@/lib/campaign-kinds';
+import { FREE_DOWNLOADS, toQuota } from '@/lib/quota';
 import type {
   Backend,
   CreateCampaignInput,
@@ -46,9 +47,25 @@ function emptyDb(): Db {
   return { users: [], frames: [], campaigns: [] };
 }
 
-/** Les campagnes antérieures à la colonne `kind` sont des campagnes photo. */
-function withKind(campaign: Campaign): Campaign {
-  return isCampaignKind(campaign.kind) ? campaign : { ...campaign, kind: 'photo_frame' };
+/**
+ * Complète une campagne lue depuis le localStorage.
+ *
+ * Le navigateur peut contenir des campagnes écrites avant `kind` (0004) et
+ * avant le quota (0005). On ne rejette rien : on remplit les champs manquants
+ * avec les mêmes valeurs par défaut que la base, pour que le mode local et le
+ * mode Supabase se comportent identiquement.
+ */
+function normalize(campaign: Campaign): Campaign {
+  return {
+    ...campaign,
+    kind: isCampaignKind(campaign.kind) ? campaign.kind : 'photo_frame',
+    participants_used: Number.isFinite(campaign.participants_used)
+      ? campaign.participants_used
+      : 0,
+    participants_granted: Number.isFinite(campaign.participants_granted)
+      ? campaign.participants_granted
+      : FREE_DOWNLOADS,
+  };
 }
 
 function readDb(): Db {
@@ -60,9 +77,7 @@ function readDb(): Db {
     return {
       users: Array.isArray(parsed.users) ? parsed.users : [],
       frames: Array.isArray(parsed.frames) ? parsed.frames : [],
-      campaigns: Array.isArray(parsed.campaigns)
-        ? parsed.campaigns.map((c) => withKind(c))
-        : [],
+      campaigns: Array.isArray(parsed.campaigns) ? parsed.campaigns.map(normalize) : [],
     };
   } catch {
     return emptyDb();
@@ -355,6 +370,11 @@ export const localBackend: Backend = {
       ratio: input.ratio,
       kind: input.kind,
       status: 'draft',
+      participants_used: 0,
+      // Toute campagne naît avec le quota offert. Aucune logique de création
+      // n'est nécessaire : c'est la valeur par défaut de la migration 0005,
+      // et le mode local la reproduit exactement.
+      participants_granted: FREE_DOWNLOADS,
       created_at: new Date().toISOString(),
     };
     db.campaigns.push(campaign);
@@ -382,6 +402,63 @@ export const localBackend: Backend = {
 
   async listSlugs() {
     return readDb().campaigns.map((c) => c.slug);
+  },
+
+  /* --- Quota de téléchargements --------------------------------------- */
+  /**
+   * Même contrat que l'implémentation Supabase, y compris l'atomicité : ici elle
+   * est gratuite puisque tout est dans un seul onglet. Le refus est renvoyé
+   * dans `data`, jamais dans `error` — l'écran de blocage dépend de cette
+   * distinction.
+   */
+  async claimParticipation(campaignId) {
+    const db = readDb();
+    const index = db.campaigns.findIndex((c) => c.id === campaignId);
+    if (index === -1) return { error: 'Campagne introuvable.' };
+
+    const campaign = db.campaigns[index];
+    // Une campagne non publiée ou sans cadre n'a rien à réserver.
+    if (campaign.status !== 'published' || !campaign.frame_id) {
+      return { data: { granted: false, used: campaign.participants_used, quota: campaign.participants_granted } };
+    }
+
+    if (campaign.participants_used >= campaign.participants_granted) {
+      return {
+        data: {
+          granted: false,
+          used: campaign.participants_used,
+          quota: campaign.participants_granted,
+        },
+      };
+    }
+
+    db.campaigns[index] = { ...campaign, participants_used: campaign.participants_used + 1 };
+    writeDb(db);
+    return {
+      data: {
+        granted: true,
+        used: db.campaigns[index].participants_used,
+        quota: db.campaigns[index].participants_granted,
+      },
+    };
+  },
+
+  async getCampaignQuota(campaignId) {
+    const campaign = readDb().campaigns.find((c) => c.id === campaignId);
+    if (!campaign) return null;
+    return toQuota(campaign.participants_used, campaign.participants_granted);
+  },
+
+  async grantParticipation(campaignId, downloads) {
+    const db = readDb();
+    const index = db.campaigns.findIndex((c) => c.id === campaignId);
+    if (index === -1) return { error: 'Campagne introuvable.' };
+    db.campaigns[index] = {
+      ...db.campaigns[index],
+      participants_granted: db.campaigns[index].participants_granted + downloads,
+    };
+    writeDb(db);
+    return {};
   },
 
   /* --- Galerie publique --------------------------------------------- */
@@ -566,6 +643,10 @@ export async function seedDemoAccount(): Promise<User> {
           color: '#FFFFFF',
           align: 'center',
           weight: 'normal',
+          style: 'normal',
+          letterSpacing: 0,
+          lineHeight: 1.16,
+          curve: 0,
           x: 90,
           y: 1640,
           w: 900,
@@ -583,6 +664,10 @@ export async function seedDemoAccount(): Promise<User> {
           color: '#9CA3AF',
           align: 'center',
           weight: 'normal',
+          style: 'normal',
+          letterSpacing: 0,
+          lineHeight: 1.16,
+          curve: 0,
           x: 90,
           y: 1790,
           w: 900,
@@ -642,6 +727,10 @@ export async function seedDemoAccount(): Promise<User> {
           color: '#000000',
           align: 'center',
           weight: 'normal',
+          style: 'normal',
+          letterSpacing: 0,
+          lineHeight: 1.16,
+          curve: 0,
           x: 90,
           y: 900,
           w: 900,
@@ -665,6 +754,10 @@ export async function seedDemoAccount(): Promise<User> {
     ratio: '9:16',
     kind: 'photo_frame',
     status: 'published',
+    // Le quota offert, avec quelques participations déjà consommées : la démo doit
+    // montrer l'encart de compteur dans un état réaliste, pas toujours à zéro.
+    participants_used: 4,
+    participants_granted: FREE_DOWNLOADS,
     created_at: now,
   };
 
@@ -677,6 +770,8 @@ export async function seedDemoAccount(): Promise<User> {
     ratio: '1:1',
     kind: 'background_frame',
     status: 'draft',
+    participants_used: 0,
+    participants_granted: FREE_DOWNLOADS,
     created_at: new Date(Date.now() - 86_400_000).toISOString(),
   };
 

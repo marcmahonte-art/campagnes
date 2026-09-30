@@ -10,6 +10,7 @@ import type {
 } from '@/lib/types';
 import { parseDescriptor } from '@/lib/descriptor';
 import { isCampaignKind } from '@/lib/campaign-kinds';
+import { FREE_DOWNLOADS, toClaim, toQuota } from '@/lib/quota';
 import { supabaseBrowser } from '@/lib/supabase/client';
 import { MEDIA_BUCKET, SITE_URL } from './config';
 import type {
@@ -80,8 +81,19 @@ function rowToCampaign(row: Row): Campaign {
     // cette colonne est donc une campagne photo, jamais une campagne sans type.
     kind: isCampaignKind(row.kind) ? row.kind : 'photo_frame',
     status: (row.status as Campaign['status']) ?? 'draft',
+    // Le défaut reprend celui de la migration 0005 : une campagne lue sans ces
+    // colonnes n'est pas une campagne sans quota, c'est une campagne à 10
+    // téléchargements, dont aucun n'a encore été consommé.
+    participants_used: numOr(row.participants_used, 0),
+    participants_granted: numOr(row.participants_granted, FREE_DOWNLOADS),
     created_at: String(row.created_at ?? new Date().toISOString()),
   };
+}
+
+/** Nombre lisible, avec repli. `NaN` n'est jamais un compteur. */
+function numOr(value: unknown, fallback: number): number {
+  const n = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(n) ? n : fallback;
 }
 
 /** Message d'erreur lisible — jamais de stack technique montrée à l'utilisateur. */
@@ -355,6 +367,61 @@ export const supabaseBackend: Backend = {
   async listSlugs() {
     const { data } = await supabaseBrowser().from('campaigns').select('slug');
     return (data as { slug: string }[] | null)?.map((r) => r.slug) ?? [];
+  },
+
+  /* --- Quota de téléchargements --------------------------------------- */
+  /**
+   * Réservation atomique : c'est la fonction SQL qui prend le verrou de ligne.
+   * Ne pas la remplacer par un « lire puis incrémenter » côté client : deux
+   * participants qui téléchargent au même instant consommeraient deux fois la
+   * dernière place.
+   *
+   * Elle est ouverte à `anon` : c'est tout le principe du parcours participant,
+   * aucun compte, aucune inscription. Elle n'incrémente que d'une unité.
+   */
+  async claimParticipation(campaignId) {
+    const { data, error } = await supabaseBrowser().rpc('claim_participation', {
+      p_campaign_id: campaignId,
+    });
+    if (error) return { error: message(error, 'La réservation a échoué.') };
+    // La fonction renvoie une ligne ; PostgREST peut la livrer en tableau.
+    return { data: toClaim(data) };
+  },
+
+  async getCampaignQuota(campaignId) {
+    const { data } = await supabaseBrowser()
+      .from('campaign_quota')
+      .select('participants_used, participants_granted, open')
+      .eq('id', campaignId)
+      .maybeSingle();
+    if (!data) return null;
+    return toQuota(
+      numOr((data as Record<string, unknown>).participants_used, 0),
+      numOr((data as Record<string, unknown>).participants_granted, FREE_DOWNLOADS),
+    );
+  },
+
+  async grantParticipation(campaignId, downloads) {
+    // Écriture d'un volume déjà payé et validé hors du produit. On lit d'abord
+    // pour additionner : le `granted` n'est jamais recalculé ailleurs.
+    const { data, error } = await supabaseBrowser()
+      .from('campaigns')
+      .select('participants_granted')
+      .eq('id', campaignId)
+      .maybeSingle();
+    if (error) return { error: message(error, 'La lecture a échoué.') };
+    if (!data) return { error: 'Campagne introuvable.' };
+
+    const current = numOr(
+      (data as Record<string, unknown>).participants_granted,
+      FREE_DOWNLOADS,
+    );
+    const { error: writeError } = await supabaseBrowser()
+      .from('campaigns')
+      .update({ participants_granted: current + downloads })
+      .eq('id', campaignId);
+    if (writeError) return { error: message(writeError, "L'extension a échoué.") };
+    return {};
   },
 
   /* --- Galerie publique --------------------------------------------- */

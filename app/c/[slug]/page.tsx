@@ -41,7 +41,8 @@ import {
   type ParticipantPhoto,
   type PhotoPlacement,
 } from '@/lib/participant';
-import type { GalleryItem } from '@/lib/types';
+import { blockedMessage, remaining } from '@/lib/quota';
+import type { CampaignQuota, GalleryItem } from '@/lib/types';
 
 /**
  * Page participant — `/c/[slug]`. C'est le seul écran que voit la communauté du
@@ -67,6 +68,12 @@ export default function ParticipantPage() {
   const [exporting, setExporting] = useState<'png' | 'video' | null>(null);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Quota de la campagne, lu dès le chargement. `null` tant qu'il n'est pas
+   * connu — on ne suppose jamais qu'il est ouvert, sinon un participant verrait
+   * le bouton de téléchargement avant de savoir qu'il est bloqué.
+   */
+  const [quota, setQuota] = useState<CampaignQuota | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -85,6 +92,18 @@ export default function ParticipantPage() {
       alive = false;
     };
   }, [slug]);
+
+  /* ---------------- Quota ---------------- */
+  useEffect(() => {
+    if (!campaign) return;
+    let alive = true;
+    void backend.getCampaignQuota(campaign.id).then((found) => {
+      if (alive) setQuota(found);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [campaign]);
 
   const frame = campaign?.frame?.descriptor_json ?? null;
   const ratio = frame?.ratio ?? campaign?.ratio ?? '1:1';
@@ -115,6 +134,13 @@ export default function ParticipantPage() {
 
   const animated = Boolean(frame?.motion);
 
+  /**
+   * Le quota est-il épuisé ? `null` = pas encore lu, donc on ne suppose jamais
+   * que le lien est ouvert.
+   */
+  const blocked = quota !== null && !quota.open;
+  const left = quota ? remaining(quota.used, quota.quota) : null;
+
   /* ---------------- Choix de la photo ---------------- */
   const choosePhoto = useCallback(
     async (file: File | undefined) => {
@@ -142,6 +168,26 @@ export default function ParticipantPage() {
       setExporting(kind);
       setProgress(0);
       try {
+        /*
+         * Le quota est réservé **avant** le rendu, jamais après : un export
+         * coûteux que personne ne pourrait pas récupérer ne doit pas consommer
+         * une place. La réservation est atomique côté base, donc deux
+         * participants simultanés ne peuvent pas prendre deux fois la
+         * dernière place.
+         */
+        const claim = await backend.claimParticipation(campaign.id);
+        if (claim.error) throw new Error(claim.error);
+        // La fonction renvoie toujours une ligne, mais le type ne le peut pas
+        // garantir : on ne rend jamais un export sur une réservation incertaine.
+        const result = claim.data;
+        if (!result) throw new Error("La réservation n'a pas abouti. Réessayez dans un instant.");
+
+        setQuota({ used: result.used, quota: result.quota, open: result.granted });
+
+        if (!result.granted) {
+          throw new Error(blockedMessage(campaign.name));
+        }
+
         if (kind === 'png') {
           const dataUrl = await exportPng({ descriptor: composed, plan: exportPlan });
           downloadBlob(dataUrlToBlob(dataUrl), exportFilename(campaign.name, 'png'));
@@ -426,7 +472,7 @@ export default function ParticipantPage() {
                         variant="primary"
                         size="md"
                         onClick={() => void runExport('png')}
-                        disabled={exporting !== null}
+                        disabled={exporting !== null || blocked || quota === null}
                       >
                         {exporting === 'png' ? (
                           <>
@@ -446,7 +492,7 @@ export default function ParticipantPage() {
                           variant="ghost"
                           size="md"
                           onClick={() => void runExport('video')}
-                          disabled={exporting !== null}
+                          disabled={exporting !== null || blocked || quota === null}
                         >
                           {exporting === 'video' ? (
                             <>
@@ -501,10 +547,45 @@ export default function ParticipantPage() {
                   </ol>
                   <p className="mt-4 border-t border-gray-200 pt-4 text-xs leading-relaxed text-gray-400">
                     Votre photo est traitée dans votre navigateur. Elle n’est jamais envoyée à nos
-                    serveurs, et rien n’est conservé.
+                    serveurs, et rien n’est conservé. Seul votre téléchargement est compté, afin que
+                    le créateur sache quand sa campagne est épuisée.
                   </p>
                 </Card>
               )}
+
+            {/*
+              Écran de blocage — apparaît quand les 10 téléchargements offerts
+              sont consommés. Il remplace les boutons d'export, pas l'écran
+              entier : le participant garde la vue de son visuel, et comprend
+              que la limite est atteinte plutôt que de croire à une panne.
+            */}
+            {blocked && (
+              <div
+                role="status"
+                className="mt-6 flex flex-col items-start gap-3 rounded-lg border border-gray-200 bg-gray-50 p-5"
+              >
+                <span className="text-[13px] font-semibold text-ink">
+                  Cette campagne a atteint sa limite
+                </span>
+                <p className="text-[13px] leading-relaxed text-gray-600">
+                  {campaign.name} a été utilisée{' '}
+                  {new Intl.NumberFormat('fr-FR').format(quota.used)} fois. Son creator peut la
+                  prolonger — son visuel n’est pas perdu, revenez plus tard.
+                </p>
+                <p className="text-xs leading-relaxed text-gray-400">
+                  Vous pouvez continuer à composer votre visuel : seul le téléchargement est
+                  momentanément indisponible.
+                </p>
+              </div>
+            )}
+
+            {/* Compteur restant, une fois connu et tant que le lien reste ouvert. */}
+            {!blocked && left !== null && left <= 3 && (
+              <p className="mt-5 text-center text-xs text-gray-400">
+                Il reste {left} téléchargement{left > 1 ? 's' : ''} gratuit{left > 1 ? 's' : ''}{' '}
+                sur cette campagne.
+              </p>
+            )}
 
             <InlineError>{error}</InlineError>
           </div>

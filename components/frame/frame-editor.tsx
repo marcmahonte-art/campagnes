@@ -17,10 +17,19 @@ import { FramePanel, LayerPanel, type LayerPatch } from '@/components/editor/con
 import { ToolButton } from '@/components/editor/controls';
 import { cn } from '@/lib/cn';
 import { ratioSpec } from '@/lib/ratios';
-import { effectiveMotion } from '@/lib/descriptor';
+import { DEFAULT_LINE_HEIGHT, effectiveMotion } from '@/lib/descriptor';
+import { applyCurve, createTextObject } from '@/lib/fabric-text';
 import { sampleAt } from '@/lib/motion';
 import { backend } from '@/lib/backend';
-import type { CampaignKind, Descriptor, ImageLayer, Layer, TextAlign, TextLayer } from '@/lib/types';
+import type {
+  CampaignKind,
+  Descriptor,
+  ImageLayer,
+  Layer,
+  TextAlign,
+  TextLayer,
+  VerticalAlign,
+} from '@/lib/types';
 import type { PlanId } from '@/lib/plans';
 
 /* ------------------------------------------------------------------ */
@@ -31,6 +40,8 @@ type TaggedObject = FabricObject & {
   layerId?: string;
   layerKind?: 'image' | 'text';
   layerSrc?: string;
+  /** Courbure appliquée au texte — Fabric ne la porte pas lui-même. */
+  layerCurve?: number;
 };
 
 /** Seuil d'aimantation vers le centre, en fraction de la dimension du cadre. */
@@ -163,12 +174,16 @@ export function FrameEditor({
             fill?: unknown;
             textAlign?: string;
             fontWeight?: string | number;
+            fontStyle?: string;
+            charSpacing?: number;
+            lineHeight?: number;
           };
           const align: TextAlign =
             t.textAlign === 'left' || t.textAlign === 'right' ? t.textAlign : 'center';
           const font = (t.fontFamily ?? 'Inter') as TextLayer['font'];
           const weight: TextLayer['weight'] =
             t.fontWeight === 'bold' || t.fontWeight === 700 ? 'bold' : 'normal';
+          const style: TextLayer['style'] = t.fontStyle === 'italic' ? 'italic' : 'normal';
           const layer: TextLayer = {
             ...base,
             type: 'text',
@@ -178,6 +193,10 @@ export function FrameEditor({
             color: typeof t.fill === 'string' ? t.fill : '#FFFFFF',
             align,
             weight,
+            style,
+            letterSpacing: Math.round(t.charSpacing ?? 0),
+            lineHeight: Number((t.lineHeight ?? DEFAULT_LINE_HEIGHT).toFixed(2)),
+            curve: (obj as TaggedObject).layerCurve ?? 0,
           };
           return layer;
         }
@@ -226,7 +245,7 @@ export function FrameEditor({
     async (source: Descriptor) => {
       const canvas = canvasRef.current;
       if (!canvas) return;
-      const { FabricImage, IText } = await import('fabric');
+      const { FabricImage } = await import('fabric');
 
       building.current = true;
       canvas.clear();
@@ -235,24 +254,11 @@ export function FrameEditor({
       for (const layer of [...source.layers].sort((a, b) => a.z - b.z)) {
         try {
           if (layer.type === 'text') {
-            const text = new IText(layer.text, {
-              left: layer.x,
-              top: layer.y,
-              angle: layer.rotation,
-              opacity: layer.opacity,
-              fontFamily: layer.font,
-              fontSize: layer.size,
-              fill: layer.color,
-              textAlign: layer.align,
-              fontWeight: layer.weight === 'bold' ? 'bold' : 'normal',
-              width: layer.w,
-              originX: 'left',
-              originY: 'top',
-              editable: true,
-            });
+            const text = await createTextObject(layer, { interactive: true });
             const tagged = text as TaggedObject;
             tagged.layerId = layer.id;
             tagged.layerKind = 'text';
+            tagged.layerCurve = layer.curve;
             canvas.add(text);
           } else {
             if (!layer.src) continue;
@@ -669,7 +675,7 @@ export function FrameEditor({
 
   /* ---------------- Actions sur l'élément sélectionné ---------------- */
   const patchSelected = useCallback(
-    (patch: LayerPatch) => {
+    async (patch: LayerPatch) => {
       const canvas = canvasRef.current;
       const active = canvas?.getActiveObject() as
         | (FabricObject & {
@@ -682,6 +688,8 @@ export function FrameEditor({
         | undefined;
       if (!canvas || !active) return;
 
+      if (patch.x !== undefined) active.set({ left: patch.x });
+      if (patch.y !== undefined) active.set({ top: patch.y });
       if (patch.opacity !== undefined) active.set({ opacity: patch.opacity });
       if (patch.rotation !== undefined) active.set({ angle: patch.rotation });
       if (patch.w !== undefined || patch.h !== undefined) {
@@ -698,7 +706,18 @@ export function FrameEditor({
         if (patch.size !== undefined) active.set({ fontSize: patch.size });
         if (patch.color !== undefined) active.set({ fill: patch.color });
         if (patch.align !== undefined) active.set({ textAlign: patch.align });
-        if (patch.weight !== undefined) active.set({ fontWeight: patch.weight === 'bold' ? 'bold' : 'normal' });
+        if (patch.weight !== undefined)
+          active.set({ fontWeight: patch.weight === 'bold' ? 'bold' : 'normal' });
+        if (patch.style !== undefined)
+          active.set({ fontStyle: patch.style === 'italic' ? 'italic' : 'normal' });
+        if (patch.letterSpacing !== undefined) active.set({ charSpacing: patch.letterSpacing });
+        if (patch.lineHeight !== undefined) active.set({ lineHeight: patch.lineHeight });
+        // La courbure ne se pose pas par `set()` : il faut reconstruire le
+        // chemin, puis remesurer la boîte.
+        if (patch.curve !== undefined) {
+          await applyCurve(active as unknown as import('fabric').IText, patch.curve);
+          (active as TaggedObject).layerCurve = patch.curve;
+        }
         // Fabric ne recompose pas la boîte de texte de lui-même : sans
         // `initDimensions()`, le texte garderait son ancienne largeur jusqu'au
         // prochain rebuild — et le panneau semblerait ne rien faire.
@@ -741,6 +760,35 @@ export function FrameEditor({
   const zoneLayer = descriptor.layers.find((l) => l.id === descriptor.photo_anchor) ?? null;
 
   /**
+   * Alignement vertical dans le cadre.
+   *
+   * Ce n'est pas un réglage stocké mais un déplacement : le descripteur ne garde
+   * que la position. Rien ne peut donc devenir incohérent si l'utilisateur
+   * déplace ensuite l'élément à la main.
+   */
+  const alignVertical = useCallback(
+    (where: VerticalAlign) => {
+      const canvas = canvasRef.current;
+      const active = canvas?.getActiveObject();
+      if (!canvas || !active) return;
+      const s = specRef.current;
+      const h = active.getScaledHeight();
+      const margin = Math.round(s.height * 0.06);
+      const top =
+        where === 'top'
+          ? margin
+          : where === 'bottom'
+            ? Math.max(margin, Math.round(s.height - h - margin))
+            : Math.round((s.height - h) / 2);
+      active.set({ top });
+      active.setCoords();
+      canvas.requestRenderAll();
+      emitFromCanvas({ coalesce: true });
+    },
+    [emitFromCanvas],
+  );
+
+  /**
    * Désigne — ou retire — la zone du participant. Une seule à la fois : le
    * descripteur ne porte qu'une ancre, donc désigner un calque remplace le
    * précédent.
@@ -777,6 +825,7 @@ export function FrameEditor({
       onPatch={patchSelected}
       onDelete={deleteSelected}
       onOrder={moveSelected}
+      onAlignVertical={alignVertical}
       onToggleZone={() =>
         setPhotoZone(descriptor.photo_anchor === selectedLayer.id ? null : selectedLayer.id)
       }

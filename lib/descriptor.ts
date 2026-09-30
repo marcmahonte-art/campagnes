@@ -7,6 +7,7 @@ import {
   type TextLayer,
 } from './types';
 import { isRatio, ratioSpec } from './ratios';
+import { isFontFamily } from './fonts';
 import type { LayerMotion, MotionPlan, MotionPresetId } from './motion';
 
 const MOTION_PRESETS_IDS: MotionPresetId[] = [
@@ -19,6 +20,13 @@ const MOTION_PRESETS_IDS: MotionPresetId[] = [
   'elegant',
   'energique',
 ];
+
+/** Interligne par défaut — c'est aussi celle de Fabric. */
+export const DEFAULT_LINE_HEIGHT = 1.16;
+
+/** Bornes de la courbure, partagées par le panneau et le rendu. */
+export const CURVE_MIN = -100;
+export const CURVE_MAX = 100;
 
 /**
  * Le descripteur est le contrat entre le créateur et le futur rendu participant.
@@ -171,6 +179,10 @@ export function makeTextLayer(
     color: opts.color ?? '#FFFFFF',
     align: opts.align ?? 'center',
     weight: opts.weight ?? 'normal',
+    style: opts.style ?? 'normal',
+    letterSpacing: opts.letterSpacing ?? 0,
+    lineHeight: opts.lineHeight ?? DEFAULT_LINE_HEIGHT,
+    curve: opts.curve ?? 0,
     x: opts.x ?? Math.round((spec.width - w) / 2),
     y: opts.y ?? Math.round(spec.height * 0.75),
     w,
@@ -253,19 +265,9 @@ export function parseDescriptor(input: unknown): Descriptor {
 
       if (l.type === 'text') {
         const font = str(l.font, 'Inter');
-        const validFont: TextLayer['font'] =
-          [
-            'Inter',
-            'Playfair Display',
-            'Montserrat',
-            'Poppins',
-            'Roboto',
-            'Lora',
-            'Bebas Neue',
-          ].includes(font)
-            ? (font as TextLayer['font'])
-            : 'Inter';
+        const validFont: TextLayer['font'] = isFontFamily(font) ? font : 'Inter';
         const weight = l.weight === 'bold' ? 'bold' : 'normal';
+        const style: TextLayer['style'] = l.style === 'italic' ? 'italic' : 'normal';
         return {
           ...base,
           type: 'text',
@@ -275,6 +277,10 @@ export function parseDescriptor(input: unknown): Descriptor {
           color: str(l.color, '#FFFFFF'),
           align: l.align === 'left' || l.align === 'right' ? l.align : 'center',
           weight,
+          style,
+          letterSpacing: num(l.letterSpacing, 0),
+          lineHeight: num(l.lineHeight, DEFAULT_LINE_HEIGHT),
+          curve: num(l.curve, 0),
         } satisfies TextLayer;
       }
 
@@ -326,8 +332,30 @@ export function serializeDescriptor(descriptor: Descriptor): string {
             const { id, type, src, x, y, w, h, rotation, z, opacity } = l;
             return { id, type, src, x, y, w, h, rotation, z, opacity };
           }
-          const { id, type, text, font, size, color, align, weight, x, y, w, h, rotation, z, opacity } = l;
-          return { id, type, text, font, size, color, align, weight, x, y, w, h, rotation, z, opacity };
+          const { id, type, text, font, size, color, align, weight, style, letterSpacing, lineHeight, curve, x, y, w, h, rotation, z, opacity } = l;
+          return {
+            id,
+            type,
+            text,
+            font,
+            size,
+            color,
+            align,
+            weight,
+            // Les réglages restés au défaut sont omis : un texte qui n'a jamais
+            // été retouché se sérialise exactement comme avant leur introduction.
+            ...(style !== 'normal' ? { style } : {}),
+            ...(letterSpacing !== 0 ? { letterSpacing } : {}),
+            ...(lineHeight !== DEFAULT_LINE_HEIGHT ? { lineHeight } : {}),
+            ...(curve !== 0 ? { curve } : {}),
+            x,
+            y,
+            w,
+            h,
+            rotation,
+            z,
+            opacity,
+          };
         }),
     },
     null,

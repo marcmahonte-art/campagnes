@@ -9,13 +9,17 @@ import { RatioPicker } from '@/components/ui/ratio-picker';
 import {
   ColorRow,
   Disclosure,
+  NumberRow,
   PanelHeading,
   RangeRow,
   Segmented,
+  StepperRow,
 } from '@/components/editor/controls';
 import { cn } from '@/lib/cn';
 import { kindSpec } from '@/lib/campaign-kinds';
 import { ratioSpec } from '@/lib/ratios';
+import { CURVE_MAX, CURVE_MIN } from '@/lib/descriptor';
+import { FONTS, fontSpec } from '@/lib/fonts';
 import type {
   CampaignKind,
   Descriptor,
@@ -25,6 +29,7 @@ import type {
   Ratio,
   TextAlign,
   TextLayer,
+  VerticalAlign,
 } from '@/lib/types';
 
 /**
@@ -64,6 +69,41 @@ function sizeWord(percent: number): string {
   if (percent <= 65) return 'Moyen';
   if (percent <= 85) return 'Grand';
   return 'Très grand';
+}
+
+/** Marge haute et basse de l'alignement vertical, en proportion du cadre. */
+const V_MARGIN = 0.06;
+
+/**
+ * Position verticale la plus proche d'un préréglage.
+ *
+ * L'alignement vertical n'est pas un réglage stocké — c'est un déplacement. On
+ * se contente donc de reconnaître le préréglage vers lequel l'élément se trouve,
+ * pour allumer le bon bouton.
+ */
+function verticalPosition(layer: Layer, ratio: Ratio): VerticalAlign {
+  const spec = ratioSpec(ratio);
+  const margin = Math.round(spec.height * V_MARGIN);
+  const top = margin;
+  const middle = Math.round((spec.height - layer.h) / 2);
+  const bottom = Math.max(margin, Math.round(spec.height - layer.h - margin));
+  const distance = (v: number) => Math.abs(layer.y - v);
+  const best = Math.min(distance(top), distance(middle), distance(bottom));
+  if (best === distance(top)) return 'top';
+  if (best === distance(middle)) return 'middle';
+  return 'bottom';
+}
+
+/** La courbure se lit en mot ; la valeur chiffrée reste dans le curseur. */
+function curveWord(curve: number): string {
+  if (curve === 0) return 'Droit';
+  return curve > 0 ? `Vers le haut · ${curve}` : `Vers le bas · ${curve}`;
+}
+
+/** L'espacement des lettres se lit en mot, jamais en millièmes de cadratin. */
+function spacingWord(value: number): string {
+  if (value === 0) return 'Normal';
+  return value < 0 ? 'Serré' : 'Large';
 }
 
 /* ------------------------------------------------------------------ */
@@ -190,6 +230,7 @@ export function LayerPanel({
   onPatch,
   onDelete,
   onOrder,
+  onAlignVertical,
   onToggleZone,
 }: {
   layer: Layer;
@@ -201,10 +242,14 @@ export function LayerPanel({
   onPatch: (patch: LayerPatch) => void;
   onDelete: () => void;
   onOrder: (direction: 'front' | 'back') => void;
+  /** Pose l'élément en haut, au centre ou en bas du cadre. */
+  onAlignVertical: (where: VerticalAlign) => void;
   onToggleZone: () => void;
 }) {
   const isText = layer.type === 'text';
   const spec = ratioSpec(ratio);
+  const font = isText ? fontSpec(layer.font) : null;
+  const vAlign: VerticalAlign = isText ? verticalPosition(layer, ratio) : 'middle';
 
   return (
     <div className="flex flex-col gap-4">
@@ -215,35 +260,90 @@ export function LayerPanel({
 
       {/* ---------------- Contenu du texte ---------------- */}
       {isText && (
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor="layer-text" className="text-[12px] font-medium text-gray-700">
-            Votre texte
-          </label>
-          <Input
-            id="layer-text"
-            value={layer.text}
-            onChange={(e) => onPatch({ text: e.target.value })}
-            placeholder="Votre message"
+        <>
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="layer-text" className="text-[12px] font-medium text-gray-700">
+              Votre texte
+            </label>
+            <Input
+              id="layer-text"
+              value={layer.text}
+              onChange={(e) => onPatch({ text: e.target.value })}
+              placeholder="Votre message"
+            />
+          </div>
+
+          <FontPicker
+            label="Police"
+            value={layer.font}
+            onChange={(next) => onPatch({ font: next })}
           />
-        </div>
+
+          {/*
+            Taille. Un texte ne se redimensionne pas comme une image : on change
+            son corps, pas sa boîte — redimensionner la boîte d'un texte recompose
+            la mise en page à chaque geste et fait « sauter » l'élément.
+          */}
+          <StepperRow
+            label="Taille"
+            min={16}
+            max={400}
+            step={4}
+            value={layer.size}
+            display={sizeWord(Math.round((layer.size / 400) * 100))}
+            onChange={(size) => onPatch({ size })}
+          />
+
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[12px] font-medium text-gray-700">Style</span>
+            <div className="grid grid-cols-2 gap-2">
+              <ToggleButton
+                label="Gras"
+                active={layer.weight === 'bold'}
+                disabled={!font?.hasBold}
+                title={font?.hasBold ? undefined : font?.note}
+                onClick={() => onPatch({ weight: layer.weight === 'bold' ? 'normal' : 'bold' })}
+              />
+              <ToggleButton
+                label="Italique"
+                active={layer.style === 'italic'}
+                disabled={!font?.hasItalic}
+                title={font?.hasItalic ? undefined : font?.note}
+                onClick={() => onPatch({ style: layer.style === 'italic' ? 'normal' : 'italic' })}
+              />
+            </div>
+            {/* On ne laisse jamais croire qu'une variante existe : la police le dit. */}
+            {font?.note && (
+              <p className="text-[11px] leading-relaxed text-gray-400">{font.note}</p>
+            )}
+          </div>
+
+          <Segmented<TextAlign>
+            label="Alignement"
+            value={layer.align}
+            options={[
+              { value: 'left', label: 'Gauche' },
+              { value: 'center', label: 'Centre' },
+              { value: 'right', label: 'Droite' },
+            ]}
+            onChange={(align) => onPatch({ align })}
+          />
+
+          <ColorRow label="Couleur" value={layer.color} onChange={(color) => onPatch({ color })} />
+
+          <RangeRow
+            label="Opacité"
+            min={0.05}
+            max={1}
+            step={0.05}
+            value={layer.opacity}
+            display={`${Math.round(layer.opacity * 100)} %`}
+            onChange={(opacity) => onPatch({ opacity })}
+          />
+        </>
       )}
 
-      {/*
-        Taille. Un texte ne se redimensionne pas comme une image : on change
-        son corps, pas sa boîte — redimensionner la boîte d'un texte recompose
-        la mise en page à chaque geste et fait « sauter » l'élément.
-      */}
-      {isText ? (
-        <RangeRow
-          label="Taille du texte"
-          min={16}
-          max={400}
-          step={2}
-          value={layer.size}
-          display={sizeWord(Math.round((layer.size / 400) * 100))}
-          onChange={(size) => onPatch({ size })}
-        />
-      ) : (
+      {!isText && (
         <RangeRow
           label="Taille"
           min={5}
@@ -313,45 +413,56 @@ export function LayerPanel({
       <Disclosure label="Plus de réglages">
         {isText && (
           <>
-            <FontPicker
-              label="Police"
-              value={layer.font}
-              onChange={(font) => onPatch({ font })}
+            <NumberRow
+              label="Taille exacte"
+              value={layer.size}
+              min={16}
+              max={400}
+              onChange={(size) => onPatch({ size })}
             />
-            <div className="grid grid-cols-2 gap-2">
-              <ToggleButton
-                active={layer.weight === 'bold'}
-                onClick={() => onPatch({ weight: layer.weight === 'bold' ? 'normal' : 'bold' })}
-                label="Gras"
-              />
-            </div>
-            <ColorRow
-              label="Couleur"
-              value={layer.color}
-              onChange={(color) => onPatch({ color })}
-            />
-            <Segmented<TextAlign>
-              label="Alignement"
-              value={layer.align}
+
+            <Segmented<VerticalAlign>
+              label="Alignement vertical"
+              value={vAlign}
               options={[
-                { value: 'left', label: 'Gauche' },
-                { value: 'center', label: 'Centre' },
-                { value: 'right', label: 'Droite' },
+                { value: 'top', label: 'Haut' },
+                { value: 'middle', label: 'Centre' },
+                { value: 'bottom', label: 'Bas' },
               ]}
-              onChange={(align) => onPatch({ align })}
+              onChange={onAlignVertical}
+            />
+
+            <RangeRow
+              label="Courbure"
+              min={CURVE_MIN}
+              max={CURVE_MAX}
+              step={1}
+              value={layer.curve}
+              display={curveWord(layer.curve)}
+              onChange={(curve) => onPatch({ curve })}
+            />
+
+            <RangeRow
+              label="Espacement des lettres"
+              min={-50}
+              max={400}
+              step={5}
+              value={layer.letterSpacing}
+              display={spacingWord(layer.letterSpacing)}
+              onChange={(letterSpacing) => onPatch({ letterSpacing })}
+            />
+
+            <RangeRow
+              label="Interligne"
+              min={0.8}
+              max={2.5}
+              step={0.05}
+              value={layer.lineHeight}
+              display={layer.lineHeight.toFixed(2)}
+              onChange={(lineHeight) => onPatch({ lineHeight })}
             />
           </>
         )}
-
-        <RangeRow
-          label="Opacité"
-          min={0.05}
-          max={1}
-          step={0.05}
-          value={layer.opacity}
-          display={`${Math.round(layer.opacity * 100)} %`}
-          onChange={(opacity) => onPatch({ opacity })}
-        />
 
         <RangeRow
           label="Rotation"
@@ -375,16 +486,6 @@ export function LayerPanel({
 /* ------------------------------------------------------------------ */
 /* Sélecteur de police                                                 */
 /* ------------------------------------------------------------------ */
-
-const FONT_OPTIONS: Array<{ value: FontFamily; label: string }> = [
-  { value: 'Inter', label: 'Inter' },
-  { value: 'Playfair Display', label: 'Playfair Display' },
-  { value: 'Montserrat', label: 'Montserrat' },
-  { value: 'Poppins', label: 'Poppins' },
-  { value: 'Roboto', label: 'Roboto' },
-  { value: 'Lora', label: 'Lora' },
-  { value: 'Bebas Neue', label: 'Bebas Neue' },
-];
 
 function FontPicker({
   label,
@@ -417,7 +518,7 @@ function FontPicker({
           id={id}
           className="flex max-h-48 flex-col gap-0.5 overflow-y-auto rounded-md border border-gray-200 bg-white p-1 shadow-sm"
         >
-          {FONT_OPTIONS.map((option) => (
+          {FONTS.map((option) => (
             <button
               key={option.value}
               type="button"
@@ -448,18 +549,26 @@ function ToggleButton({
   active,
   onClick,
   label,
+  disabled = false,
+  title,
 }: {
   active: boolean;
   onClick: () => void;
   label: string;
+  /** Vrai quand la police ne possède pas la variante : on le dit, on ne ment pas. */
+  disabled?: boolean;
+  title?: string;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
+      title={title}
       aria-pressed={active}
       className={cn(
         'flex h-10 items-center justify-center rounded-md border text-[13px] font-medium transition-colors',
+        'disabled:pointer-events-none disabled:opacity-35',
         active
           ? 'border-ink bg-ink text-white'
           : 'border-gray-200 bg-white text-gray-600 hover:border-gray-400',

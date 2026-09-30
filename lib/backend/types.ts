@@ -1,11 +1,13 @@
 import type {
   Campaign,
   CampaignKind,
+  CampaignQuota,
   CampaignWithFrame,
   CreatorProfile,
   Descriptor,
   Frame,
   GalleryItem,
+  ParticipationClaim,
   PlanKind,
   Ratio,
   User,
@@ -84,6 +86,38 @@ export interface Backend {
   ): Promise<Result>;
   deleteCampaign(campaignId: string): Promise<Result>;
   listSlugs(): Promise<string[]>;
+
+  /* --- Quota de téléchargements --------------------------------------- */
+  /**
+   * Réserve un téléchargement pour un participant.
+   *
+   * Appelé au clic sur « Télécharger » : c'est le seul instant mesurable du
+   * parcours participant. Un partage ne l'est pas — le participant peut copier
+   * le lien sans que la plateforme le voie.
+   *
+   * `granted: false` signifie « quota atteint », **pas** « erreur ». Une panne
+   * est renvoyée dans `Result.error`. L'écran de blocage dépend de cette
+   * distinction : sans elle, il afficherait un message d'erreur technique au
+   * moment où la campagne a simplement atteint sa limite.
+   */
+  claimParticipation(campaignId: string): Promise<Result<ParticipationClaim>>;
+
+  /**
+   * Quota lisible sans être le propriétaire — pour l'écran de blocage.
+   *
+   * N'expose ni nom, ni slug, ni propriétaire : le participant doit voir que
+   * la limite est atteinte, pas qui est le créateur.
+   */
+  getCampaignQuota(campaignId: string): Promise<CampaignQuota | null>;
+
+  /**
+   * Prolonge une campagne de `downloads` téléchargements.
+   *
+   * Aucun paiement automatique n'existe : l'extension se demande par contact.
+   * Cette fonction écrit donc un volume **déjà payé et validé hors du produit**,
+   * et n'est appelée que depuis l'outil d'administration.
+   */
+  grantParticipation(campaignId: string, downloads: number): Promise<Result>;
 
   /* --- Galerie publique --------------------------------------------- */
   /** Toutes les campagnes publiées, tous créateurs confondus (§13). */

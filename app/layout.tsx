@@ -14,20 +14,29 @@ import { SessionProvider } from '@/lib/backend/session';
 import { DemoBanner } from '@/components/ui/feedback';
 import { isDemoMode } from '@/lib/backend';
 
+/*
+ * Polices de l'éditeur. Chaque police déclare les variantes qu'elle possède
+ * réellement (voir `lib/fonts.ts`) : sans `style: ['normal', 'italic']`, le
+ * bouton Italique ne produirait qu'un faux italique fabriqué par le navigateur.
+ */
+
 const inter = Inter({
   subsets: ['latin'],
+  style: ['normal', 'italic'],
   variable: '--font-inter',
   display: 'swap',
 });
 
 const playfair = Playfair_Display({
   subsets: ['latin'],
+  style: ['normal', 'italic'],
   variable: '--font-playfair',
   display: 'swap',
 });
 
 const montserrat = Montserrat({
   subsets: ['latin'],
+  style: ['normal', 'italic'],
   variable: '--font-montserrat',
   display: 'swap',
 });
@@ -35,6 +44,7 @@ const montserrat = Montserrat({
 const poppins = Poppins({
   subsets: ['latin'],
   weight: ['400', '700'],
+  style: ['normal', 'italic'],
   variable: '--font-poppins',
   display: 'swap',
 });
@@ -42,16 +52,19 @@ const poppins = Poppins({
 const roboto = Roboto({
   subsets: ['latin'],
   weight: ['400', '700'],
+  style: ['normal', 'italic'],
   variable: '--font-roboto',
   display: 'swap',
 });
 
 const lora = Lora({
   subsets: ['latin'],
+  style: ['normal', 'italic'],
   variable: '--font-lora',
   display: 'swap',
 });
 
+// Bebas Neue n'existe qu'en graisse 400, sans italique : rien à charger de plus.
 const bebas = Bebas_Neue({
   subsets: ['latin'],
   weight: '400',

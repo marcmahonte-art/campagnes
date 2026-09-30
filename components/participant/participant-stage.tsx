@@ -5,6 +5,7 @@ import type { Canvas as FabricCanvas, FabricObject } from 'fabric';
 import { cn } from '@/lib/cn';
 import { ratioSpec } from '@/lib/ratios';
 import { photoZone } from '@/lib/descriptor';
+import { createTextObject } from '@/lib/fabric-text';
 import {
   clampPlacement,
   photoSize,
@@ -108,7 +109,7 @@ export function ParticipantStage({
     let canvas: FabricCanvas | null = null;
 
     void (async () => {
-      const { Canvas, FabricImage, IText, Rect } = await import('fabric');
+      const { Canvas, FabricImage, Rect } = await import('fabric');
       if (disposed || !canvasElRef.current) return;
 
       canvas = new Canvas(canvasElRef.current, {
@@ -175,21 +176,7 @@ export function ParticipantStage({
       for (const layer of layers) {
         try {
           if (layer.type === 'text') {
-            const text = new IText(layer.text, {
-              left: layer.x,
-              top: layer.y,
-              angle: layer.rotation,
-              opacity: layer.opacity,
-              fontFamily: layer.font,
-              fontSize: layer.size,
-              fill: layer.color,
-              textAlign: layer.align,
-              width: layer.w,
-              originX: 'left',
-              originY: 'top',
-              selectable: false,
-              evented: false,
-            });
+            const text = await createTextObject(layer);
             canvas.add(text);
           } else {
             if (!layer.src) continue;

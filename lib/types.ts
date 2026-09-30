@@ -64,6 +64,12 @@ export type FontFamily =
 
 export type FontWeight = 'normal' | 'bold';
 
+/** Italique. Toutes les polices ne possèdent pas la variante (voir `lib/fonts.ts`). */
+export type FontStyle = 'normal' | 'italic';
+
+/** Où poser un texte dans la hauteur du cadre. */
+export type VerticalAlign = 'top' | 'middle' | 'bottom';
+
 interface LayerBase {
   id: string;
   /** Coordonnées exprimées dans le repère du ratio, pas dans celui de l'écran. */
@@ -93,6 +99,21 @@ export interface TextLayer extends LayerBase {
   align: TextAlign;
   /** Graisse du texte. */
   weight: FontWeight;
+  /** Italique. */
+  style: FontStyle;
+  /**
+   * Espacement des lettres, en millièmes de cadratin (convention Fabric
+   * `charSpacing` : 1000 = un cadratin). 0 = espacement naturel.
+   */
+  letterSpacing: number;
+  /** Multiplicateur d'interligne. 1.16 est la valeur par défaut de Fabric. */
+  lineHeight: number;
+  /**
+   * Courbure du texte : -100 (arc vers le bas) → 0 (droit) → +100 (arc vers le
+   * haut). Rendue par un chemin d'arc natif de Fabric : le texte reste du texte,
+   * jamais une image aplatie.
+   */
+  curve: number;
 }
 
 export type Layer = ImageLayer | TextLayer;
@@ -146,6 +167,10 @@ export interface Campaign {
   ratio: Ratio;
   kind: CampaignKind;
   status: CampaignStatus;
+  /** Téléchargements consommés par les participants. */
+  participants_used: number;
+  /** Téléchargements autorisés : 10 à la création, puis +100 / 500 / 1 000 / 5 000 par extension. */
+  participants_granted: number;
   created_at: string;
 }
 
@@ -195,4 +220,36 @@ export interface GalleryItem extends CampaignWithFrame {
   usageCount?: number;
   /** Nombre de mises en favori réelles. Absent → jamais compté. */
   likesCount?: number;
+}
+
+/* ------------------------------------------------------------------ */
+/* Quota de téléchargements — 0007                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Résultat d'une réservation de téléchargement par un participant.
+ *
+ * `granted: false` signifie que le quota est atteint — **pas** qu'il y a une
+ * panne. Les deux cas doivent rester distinguables jusqu'à l'écran : c'est
+ * pour cela que la fonction SQL renvoie `granted: false` au lieu de lever une
+ * exception, qu'un client PostgREST ne pourrait pas interpréter.
+ */
+export interface ParticipationClaim {
+  granted: boolean;
+  used: number;
+  quota: number;
+}
+
+/**
+ * État du quota tel qu'un participant peut le lire.
+ *
+ * La vue `campaign_quota` n'expose ni nom, ni slug, ni propriétaire : le
+ * participant doit voir que la limite est atteinte, pas savoir qui est le
+ * créateur ni où sont ses autres campagnes.
+ */
+export interface CampaignQuota {
+  used: number;
+  quota: number;
+  /** Vrai tant qu'un téléchargement reste possible. */
+  open: boolean;
 }

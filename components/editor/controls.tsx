@@ -176,6 +176,114 @@ export function RangeRow({
   );
 }
 
+/**
+ * Réglage pas à pas — « − valeur + ».
+ *
+ * Choisi pour la taille du texte : le geste est plus sûr qu'un curseur quand on
+ * veut ajuster finement, et il ne demande jamais de taper un chiffre.
+ */
+export function StepperRow({
+  label,
+  value,
+  min,
+  max,
+  step,
+  onChange,
+  display,
+  disabled = false,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  onChange: (value: number) => void;
+  display: string;
+  disabled?: boolean;
+}) {
+  const clamp = (v: number) => Math.min(max, Math.max(min, v));
+  const button =
+    'flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-gray-200 bg-white text-[16px] leading-none text-gray-600 transition-colors hover:border-ink hover:text-ink disabled:opacity-35 disabled:pointer-events-none';
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-[12px] font-medium text-gray-700">{label}</span>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          className={button}
+          disabled={disabled || value <= min}
+          aria-label={`Diminuer : ${label}`}
+          onClick={() => onChange(clamp(value - step))}
+        >
+          −
+        </button>
+        <span className="min-w-0 flex-1 truncate text-center text-[13px] font-medium tabular-nums text-ink">
+          {display}
+        </span>
+        <button
+          type="button"
+          className={button}
+          disabled={disabled || value >= max}
+          aria-label={`Augmenter : ${label}`}
+          onClick={() => onChange(clamp(value + step))}
+        >
+          +
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Saisie numérique exacte — réservée au niveau avancé.
+ *
+ * Le niveau simple parle en mots (« Moyen ») ; c'est ici, derrière « Plus de
+ * réglages », qu'on retrouve la valeur technique quand on en a vraiment besoin.
+ */
+export function NumberRow({
+  label,
+  value,
+  min,
+  max,
+  step = 1,
+  suffix,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  suffix?: string;
+  onChange: (value: number) => void;
+}) {
+  const id = useId();
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label htmlFor={id} className="text-[12px] font-medium text-gray-700">
+        {label}
+      </label>
+      <div className="flex items-center gap-2">
+        <input
+          id={id}
+          type="number"
+          value={value}
+          min={min}
+          max={max}
+          step={step}
+          onChange={(e) => {
+            const next = Number(e.target.value);
+            if (Number.isFinite(next)) onChange(Math.min(max, Math.max(min, next)));
+          }}
+          className="h-9 w-24 rounded-md border border-gray-200 bg-white px-3 text-[13px] tabular-nums text-ink transition-colors focus:border-purple focus:outline-none focus:ring-2 focus:ring-purple/20"
+        />
+        {suffix && <span className="text-[12px] text-gray-500">{suffix}</span>}
+      </div>
+    </div>
+  );
+}
+
 export function ColorRow({
   label,
   value,
