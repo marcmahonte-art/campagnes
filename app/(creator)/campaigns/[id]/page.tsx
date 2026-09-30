@@ -14,15 +14,14 @@ import {
 } from 'lucide-react';
 import { Button, ButtonLink } from '@/components/ui/button';
 import { Field, Input, InputPrefix } from '@/components/ui/input';
-import { RatioPicker } from '@/components/ui/ratio-picker';
 import { StatusBadge } from '@/components/ui/badge';
 import { InlineError, Spinner } from '@/components/ui/feedback';
 import { FrameEditor } from '@/components/frame/frame-editor';
-import { MotionPanel } from '@/components/campaign/motion-panel';
+import { useHistory } from '@/components/editor/use-history';
 import { DescriptorViewer } from '@/components/campaign/descriptor-viewer';
 import { backend } from '@/lib/backend';
 import { useSession } from '@/lib/backend/session';
-import { parseDescriptor, withRatio } from '@/lib/descriptor';
+import { parseDescriptor } from '@/lib/descriptor';
 import { kindSpec, seedDescriptorFor } from '@/lib/campaign-kinds';
 import { maxLayers } from '@/lib/plans';
 import { isValidSlug } from '@/lib/slug';
@@ -39,9 +38,14 @@ export default function CampaignEditorPage() {
 
   const [campaign, setCampaign] = useState<CampaignWithFrame | null>(null);
   const [frameId, setFrameId] = useState<string | null>(null);
-  const [descriptor, setDescriptor] = useState<Descriptor>(() =>
-    seedDescriptorFor('photo_frame', '1:1'),
-  );
+  /**
+   * Le descripteur vit dans un historique : « annuler » restaure un cadre, il ne
+   * déplace pas des pixels à l'envers. La reconstruction du canvas suit, portée
+   * par le seul descripteur.
+   */
+  const history = useHistory<Descriptor>(seedDescriptorFor('photo_frame', '1:1'));
+  const descriptor = history.value;
+  const setDescriptor = history.set;
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
   const [loading, setLoading] = useState(true);
@@ -49,7 +53,8 @@ export default function CampaignEditorPage() {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [playing, setPlaying] = useState(false);
+  /** Aperçu : masque les outils d'édition et joue l'animation du cadre. */
+  const [preview, setPreview] = useState(false);
 
   /** Tant que le chargement initial n'est pas terminé, l'autosave est désactivé. */
   const initialized = useRef(false);
@@ -92,7 +97,9 @@ export default function CampaignEditorPage() {
       if (!alive) return;
       setCampaign({ ...loaded, frame_id: id });
       setFrameId(id);
-      setDescriptor(desc);
+      // `reset` et non `set` : le cadre chargé n'est pas une modification, il
+      // n'a rien à annuler derrière lui.
+      history.reset(desc);
       setName(loaded.name);
       setSlug(loaded.slug);
       setLoading(false);
@@ -169,10 +176,6 @@ export default function CampaignEditorPage() {
 
   /* ---------------- Actions ---------------- */
   const publicUrl = useMemo(() => `${SITE_URL}/c/${campaign?.slug ?? ''}`, [campaign?.slug]);
-
-  function changeRatio(ratio: Ratio) {
-    setDescriptor((prev) => withRatio(prev, ratio));
-  }
 
   async function togglePublish() {
     if (!campaign) return;
@@ -296,21 +299,12 @@ export default function CampaignEditorPage() {
         </Field>
       </div>
 
-      {/* ---------------- Format ---------------- */}
-      <section className="flex flex-col gap-4 rounded-lg border border-gray-200 bg-white p-5">
-        <div>
-          <h2 className="text-[15px] font-semibold">Format</h2>
-          <p className="mt-1 text-[13px] text-gray-500">
-            Le cadre est automatiquement redimensionné dans le nouveau repère.
-          </p>
-        </div>
-        <RatioPicker value={descriptor.ratio} onChange={changeRatio} />
-      </section>
-
-      {/* ---------------- Frame Engine ---------------- */}
+      {/* ---------------- Éditeur ---------------- */}
       <section className="flex flex-col gap-4">
-        <div className="flex items-baseline justify-between">
-          <h2 className="text-[15px] font-semibold">Cadre</h2>
+        <div className="flex items-baseline justify-between gap-3">
+          <h2 className="text-[15px] font-semibold">
+            Cadre — {kindSpec(campaign.kind).label}
+          </h2>
           <span className="text-[13px] text-gray-500">Je dépose → je positionne → c’est prêt.</span>
         </div>
 
@@ -319,32 +313,31 @@ export default function CampaignEditorPage() {
             couvrira tout le cadre malgré le type de campagne. */}
         {campaign.kind === 'background_frame' && !descriptor.photo_anchor && (
           <p className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2.5 text-[13px] leading-relaxed text-gray-600">
-            Campagne « {kindSpec(campaign.kind).label} » : sélectionnez un élément du cadre puis
-            cliquez sur <span className="font-medium text-ink">Définir comme zone photo</span> pour
-            qu’il y ait une fenêtre à remplir.
+            Sélectionnez un élément du cadre puis cliquez sur{' '}
+            <span className="font-medium text-ink">Définir comme zone</span> pour qu’il y ait une
+            fenêtre à remplir.
           </p>
         )}
 
         <FrameEditor
           descriptor={descriptor}
           onChange={setDescriptor}
-          playing={playing}
+          kind={campaign.kind}
+          preview={preview}
+          onPreviewChange={setPreview}
+          playing={preview && !!descriptor.motion}
           maxLayers={maxLayers(user?.plan)}
+          plan={user?.plan ?? 'free'}
+          campaignName={name}
+          canUndo={history.canUndo}
+          canRedo={history.canRedo}
+          onUndo={history.undo}
+          onRedo={history.redo}
           onReady={(api) => {
             thumbnailFn.current = api.exportThumbnail;
           }}
         />
       </section>
-
-      {/* ---------------- Animation (Motion Engine) ---------------- */}
-      <MotionPanel
-        descriptor={descriptor}
-        onChange={setDescriptor}
-        playing={playing}
-        onPlayingChange={setPlaying}
-        plan={user?.plan ?? 'free'}
-        campaignName={name}
-      />
 
       {/* ---------------- Descripteur ---------------- */}
       <DescriptorViewer descriptor={descriptor} />

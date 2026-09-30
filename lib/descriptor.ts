@@ -15,6 +15,7 @@ const MOTION_PRESETS_IDS: MotionPresetId[] = [
   'flottement',
   'mouvement',
   'pulsation',
+  'zoom',
   'elegant',
   'energique',
 ];

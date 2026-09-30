@@ -14,12 +14,34 @@
  * rend rejouable à l'identique, comme le reste du cadre.
  */
 
+/**
+ * Les cinq mouvements simples de l'éditeur.
+ *
+ * Sous-ensemble volontaire de `MOTION_PRESETS` : l'éditeur ne montre jamais les
+ * sept d'un coup, et encore moins les réglages du moteur. Le libellé est celui
+ * de l'éditeur (« Glissement »), distinct de celui du catalogue (« Mouvement »)
+ * — deux contextes, une seule source : l'identifiant.
+ */
+export interface SimpleMotion {
+  id: MotionPresetId;
+  label: string;
+}
+
+export const SIMPLE_MOTIONS: SimpleMotion[] = [
+  { id: 'apparition', label: 'Apparition' },
+  { id: 'zoom', label: 'Zoom' },
+  { id: 'mouvement', label: 'Glissement' },
+  { id: 'flottement', label: 'Flottement' },
+  { id: 'energique', label: 'Dynamique' },
+];
+
 export type MotionPresetId =
   | 'auto'
   | 'apparition'
   | 'flottement'
   | 'mouvement'
   | 'pulsation'
+  | 'zoom'
   | 'elegant'
   | 'energique';
 
@@ -36,6 +58,7 @@ export const MOTION_PRESETS: MotionPreset[] = [
   { id: 'flottement', label: 'Flottement', description: 'Léger balancement continu.' },
   { id: 'mouvement', label: 'Mouvement', description: 'Glissement latéral lent.' },
   { id: 'pulsation', label: 'Pulsation', description: 'Respiration, battement discret.' },
+  { id: 'zoom', label: 'Zoom', description: 'Le cadre se rapproche puis se stabilise.' },
   { id: 'elegant', label: 'Élégant', description: 'Amplitudes faibles, rythme lent.' },
   { id: 'energique', label: 'Énergique', description: 'Amplitudes fortes, rythme rapide.' },
 ];
@@ -76,6 +99,8 @@ const BASE: Record<Exclude<MotionPresetId, 'auto'>, LayerMotion> = {
   flottement: { fadeIn: 0.2, floatY: 0.03, floatX: 0.006, pulse: 0, rotate: 0, cycles: 1 },
   mouvement: { fadeIn: 0.2, floatY: 0, floatX: 0.035, pulse: 0, rotate: 0, cycles: 1 },
   pulsation: { fadeIn: 0.15, floatY: 0, floatX: 0, pulse: 0.035, rotate: 0, cycles: 2 },
+  // Un seul cycle, amplitude forte : le calque grandit, revient, se stabilise.
+  zoom: { fadeIn: 0.35, floatY: 0, floatX: 0, pulse: 0.1, rotate: 0, cycles: 1 },
   elegant: { fadeIn: 0.4, floatY: 0.018, floatX: 0, pulse: 0.012, rotate: 0.6, cycles: 1 },
   energique: { fadeIn: 0.12, floatY: 0.05, floatX: 0.02, pulse: 0.07, rotate: 2.4, cycles: 3 },
 };
@@ -85,6 +110,7 @@ const STAGGER: Record<Exclude<MotionPresetId, 'auto'>, number> = {
   flottement: 0.05,
   mouvement: 0.06,
   pulsation: 0.03,
+  zoom: 0.04,
   elegant: 0.07,
   energique: 0.02,
 };

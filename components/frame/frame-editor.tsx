@@ -1,15 +1,27 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import Link from 'next/link';
 import type { Canvas as FabricCanvas, FabricObject } from 'fabric';
-import { ImagePlus, Loader2, Trash2, Type } from 'lucide-react';
+import {
+  Eye,
+  Frame as FrameIcon,
+  Loader2,
+  Redo2,
+  Sparkles,
+  Undo2,
+} from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Drawer } from '@/components/ui/drawer';
+import { AnimationPanel } from '@/components/editor/animation-panel';
+import { FramePanel, LayerPanel, type LayerPatch } from '@/components/editor/context-panel';
+import { ToolButton } from '@/components/editor/controls';
 import { cn } from '@/lib/cn';
 import { ratioSpec } from '@/lib/ratios';
-import { effectiveMotion, parseDescriptor } from '@/lib/descriptor';
+import { effectiveMotion } from '@/lib/descriptor';
 import { sampleAt } from '@/lib/motion';
 import { backend } from '@/lib/backend';
-import type { Descriptor, ImageLayer, Layer, TextAlign, TextLayer } from '@/lib/types';
+import type { CampaignKind, Descriptor, ImageLayer, Layer, TextAlign, TextLayer } from '@/lib/types';
+import type { PlanId } from '@/lib/plans';
 
 /* ------------------------------------------------------------------ */
 /* Pont descripteur ⇄ objets Fabric                                    */
@@ -21,26 +33,70 @@ type TaggedObject = FabricObject & {
   layerSrc?: string;
 };
 
+/** Seuil d'aimantation vers le centre, en fraction de la dimension du cadre. */
+const CENTER_SNAP = 0.015;
+
+type Tab = 'cadre' | 'animation';
+
 /**
- * Le canvas travaille dans le repère NATIF du ratio (1080×1920, …) et n'est
- * réduit à l'écran que par `setZoom`. Les coordonnées du descripteur sont donc
- * indépendantes de la taille d'affichage : c'est ce qui rend le cadre rejouable
- * à l'identique sur un autre écran, et demain côté participant.
+ * Vrai sur mobile — là où le panneau devient une feuille du bas.
+ *
+ * Sans cette discrimination, un clic sur le rail d'un grand écran ouvrirait
+ * aussi la feuille : le même bouton pilote deux présentations, et seule la
+ * largeur réelle de la fenêtre dit laquelle est à l'écran.
+ */
+function isCompactViewport(): boolean {
+  return typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches;
+}
+
+/**
+ * Éditeur de cadre.
+ *
+ * Trois principes tiennent tout l'édifice :
+ *
+ * 1. **Le canvas travaille dans le repère NATIF du ratio** (1080×1920, …) et
+ *    n'est réduit à l'écran que par `setZoom`. Les coordonnées du descripteur
+ *    sont donc indépendantes de la taille d'affichage : c'est ce qui rend le
+ *    cadre rejouable à l'identique sur un autre écran, et côté participant.
+ * 2. **Un seul panneau à la fois**, et son contenu dépend de la sélection.
+ *    Jamais toutes les options en même temps, jamais de coordonnées chiffrées.
+ * 3. **L'aperçu masque les outils.** Ce qu'on voit en aperçu est ce que le
+ *    participant verra — les poignées de Fabric ne font pas partie du cadre.
  */
 export function FrameEditor({
   descriptor,
   onChange,
   onReady,
+  kind,
+  preview = false,
+  onPreviewChange,
   playing = false,
   maxLayers = null,
+  plan,
+  campaignName,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
 }: {
   descriptor: Descriptor;
-  onChange: (next: Descriptor) => void;
+  onChange: (next: Descriptor, opts?: { coalesce?: boolean }) => void;
   onReady?: (api: { fitToView: () => void; exportThumbnail: () => string | null }) => void;
-  /** Lecture de l'animation. L'édition reprend la main dès que le drapeau retombe. */
+  /** Type de campagne : décide de ce que l'éditeur propose, sans rien redemander. */
+  kind: CampaignKind;
+  /** Aperçu : masque les outils d'édition. */
+  preview?: boolean;
+  onPreviewChange?: (preview: boolean) => void;
+  /** Lecture de l'animation. */
   playing?: boolean;
-  /** Plafond de calques imposé par la formule. `null` = illimité. */
+  /** Plafond d'éléments imposé par la formule. `null` = illimité. */
   maxLayers?: number | null;
+  plan: PlanId | string | null;
+  campaignName: string;
+  canUndo?: boolean;
+  canRedo?: boolean;
+  onUndo?: () => void;
+  onRedo?: () => void;
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasElRef = useRef<HTMLCanvasElement>(null);
@@ -49,8 +105,21 @@ export function FrameEditor({
 
   /** Dernier JSON émis par l'éditeur : évite de se recharger soi-même. */
   const lastEmitted = useRef<string>('');
+  /**
+   * Vrai pendant la reconstruction de la scène.
+   *
+   * Sans ce drapeau, `canvas.clear()` et chaque `add()` de la reconstruction
+   * émettraient un descripteur **partiel** — un cadre à un calque, puis deux —
+   * et l'autosave enregistrerait le cadre amputé. La reconstruction n'est pas
+   * une modification : elle n'émet rien.
+   */
+  const building = useRef(false);
   const descriptorRef = useRef(descriptor);
   descriptorRef.current = descriptor;
+
+  const spec = useMemo(() => ratioSpec(descriptor.ratio), [descriptor.ratio]);
+  const specRef = useRef(spec);
+  specRef.current = spec;
 
   /** Transformations d'origine, mémorisées pendant la lecture de l'animation. */
   const baseTransforms = useRef<
@@ -58,61 +127,94 @@ export function FrameEditor({
   >(new Map());
 
   const [zoom, setZoom] = useState(0.3);
+  const [tab, setTab] = useState<Tab>('cadre');
+  const [sheet, setSheet] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const spec = useMemo(() => ratioSpec(descriptor.ratio), [descriptor.ratio]);
+  const [guides, setGuides] = useState<{ v: boolean; h: boolean }>({ v: false, h: false });
+  const [locked, setLocked] = useState(true);
 
   /* ---------------- Émission vers le parent ---------------- */
-  const emitFromCanvas = useCallback(() => {
+  const emitFromCanvas = useCallback(
+    (opts?: { coalesce?: boolean }) => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+
+      const objects = canvas.getObjects() as TaggedObject[];
+      const layers: Layer[] = objects.map((obj, index) => {
+        const base = {
+          id: obj.layerId ?? `l${index}`,
+          x: Math.round(obj.left ?? 0),
+          y: Math.round(obj.top ?? 0),
+          w: Math.round(obj.getScaledWidth()),
+          h: Math.round(obj.getScaledHeight()),
+          rotation: Math.round(obj.angle ?? 0),
+          z: (index + 1) * 10,
+          opacity: Number((obj.opacity ?? 1).toFixed(2)),
+        };
+
+        if (obj.layerKind === 'text') {
+          const t = obj as FabricObject & {
+            text?: string;
+            fontFamily?: string;
+            fontSize?: number;
+            fill?: unknown;
+            textAlign?: string;
+          };
+          const align: TextAlign =
+            t.textAlign === 'left' || t.textAlign === 'right' ? t.textAlign : 'center';
+          const layer: TextLayer = {
+            ...base,
+            type: 'text',
+            text: t.text ?? '',
+            font: t.fontFamily ?? 'Inter',
+            size: Math.round(t.fontSize ?? 96),
+            color: typeof t.fill === 'string' ? t.fill : '#FFFFFF',
+            align,
+          };
+          return layer;
+        }
+
+        const layer: ImageLayer = { ...base, type: 'image', src: obj.layerSrc ?? '' };
+        return layer;
+      });
+
+      const next: Descriptor = { ...descriptorRef.current, layers };
+      lastEmitted.current = JSON.stringify(next);
+      onChange(next, opts);
+    },
+    [onChange],
+  );
+
+  /**
+   * Verrou de la zone du participant.
+   *
+   * La zone est verrouillée **par défaut** : c'est la structure du cadre, la
+   * déplacer par inadvertance casserait le parcours participant. Le
+   * déverrouillage est donc volontairement caché derrière un `•••`, et reste
+   * accessible depuis le panneau du cadre — donc même quand la zone, verrouillée,
+   * ne peut plus être sélectionnée.
+   */
+  const applyLocks = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    const anchor = descriptorRef.current.photo_anchor;
+    const interactive = !preview;
 
-    const objects = canvas.getObjects() as TaggedObject[];
-    const layers: Layer[] = objects.map((obj, index) => {
-      const base = {
-        id: obj.layerId ?? `l${index}`,
-        x: Math.round(obj.left ?? 0),
-        y: Math.round(obj.top ?? 0),
-        w: Math.round(obj.getScaledWidth()),
-        h: Math.round(obj.getScaledHeight()),
-        rotation: Math.round(obj.angle ?? 0),
-        z: (index + 1) * 10,
-        opacity: Number((obj.opacity ?? 1).toFixed(2)),
-      };
-
-      if (obj.layerKind === 'text') {
-        const t = obj as FabricObject & {
-          text?: string;
-          fontFamily?: string;
-          fontSize?: number;
-          fill?: unknown;
-          textAlign?: string;
-        };
-        const align: TextAlign =
-          t.textAlign === 'left' || t.textAlign === 'right' ? t.textAlign : 'center';
-        const layer: TextLayer = {
-          ...base,
-          type: 'text',
-          text: t.text ?? '',
-          font: t.fontFamily ?? 'Inter',
-          size: Math.round(t.fontSize ?? 96),
-          color: typeof t.fill === 'string' ? t.fill : '#FFFFFF',
-          align,
-        };
-        return layer;
-      }
-
-      const layer: ImageLayer = { ...base, type: 'image', src: obj.layerSrc ?? '' };
-      return layer;
-    });
-
-    const next: Descriptor = { ...descriptorRef.current, layers };
-    lastEmitted.current = JSON.stringify(next);
-    onChange(next);
-  }, [onChange]);
+    for (const obj of canvas.getObjects()) {
+      const isZone = (obj as TaggedObject).layerId === anchor;
+      const lock = locked && isZone;
+      obj.set({
+        selectable: interactive && !lock,
+        evented: interactive && !lock,
+        hasControls: interactive && !lock,
+        hoverCursor: interactive && !lock ? 'move' : 'default',
+      });
+    }
+    canvas.requestRenderAll();
+  }, [locked, preview]);
 
   /* ---------------- Construction des objets ---------------- */
   const buildObjects = useCallback(
@@ -121,6 +223,7 @@ export function FrameEditor({
       if (!canvas) return;
       const { FabricImage, IText } = await import('fabric');
 
+      building.current = true;
       canvas.clear();
       canvas.backgroundColor = 'transparent';
 
@@ -167,11 +270,12 @@ export function FrameEditor({
             canvas.add(img);
           }
         } catch {
-          setError("Un calque n'a pas pu être affiché.");
+          setError("Un élément n'a pas pu être affiché.");
         }
       }
 
       canvas.requestRenderAll();
+      building.current = false;
       lastEmitted.current = JSON.stringify(source);
     },
     [],
@@ -186,13 +290,17 @@ export function FrameEditor({
     const available = stage.clientWidth;
     if (available <= 0) return;
 
-    const maxHeight = window.innerWidth < 768 ? 360 : 520;
-    const z = Math.min(available / spec.width, maxHeight / spec.height);
+    // La scène est l'élément dominant : elle prend la hauteur disponible.
+    const maxHeight = window.innerWidth < 768 ? 320 : 520;
+    const z = Math.min(available / specRef.current.width, maxHeight / specRef.current.height);
     setZoom(z);
-    canvas.setDimensions({ width: Math.round(spec.width * z), height: Math.round(spec.height * z) });
+    canvas.setDimensions({
+      width: Math.round(specRef.current.width * z),
+      height: Math.round(specRef.current.height * z),
+    });
     canvas.setZoom(z);
     canvas.requestRenderAll();
-  }, [spec.height, spec.width]);
+  }, []);
 
   /* ---------------- Montage ---------------- */
   useEffect(() => {
@@ -217,18 +325,57 @@ export function FrameEditor({
       canvas.on('selection:updated', () => {
         setSelectedId(((canvas?.getActiveObject() as TaggedObject | undefined)?.layerId) ?? null);
       });
-      canvas.on('selection:cleared', () => setSelectedId(null));
+      canvas.on('selection:cleared', () => {
+        setSelectedId(null);
+        setGuides({ v: false, h: false });
+      });
 
-      canvas.on('object:modified', emitFromCanvas);
+      /* ---- Aimantation centrale : les seules lignes du produit ---- */
+      canvas.on('object:moving', (event) => {
+        const object = event.target;
+        if (!object) return;
+
+        const s = specRef.current;
+        const center = object.getCenterPoint();
+        const toleranceX = s.width * CENTER_SNAP;
+        const toleranceY = s.height * CENTER_SNAP;
+        const targetX = s.width / 2;
+        const targetY = s.height / 2;
+
+        let v = false;
+        let h = false;
+        if (Math.abs(center.x - targetX) < toleranceX) v = true;
+        if (Math.abs(center.y - targetY) < toleranceY) h = true;
+
+        if (v) object.set({ left: (object.left ?? 0) + (targetX - center.x) });
+        if (h) object.set({ top: (object.top ?? 0) + (targetY - center.y) });
+        if (v || h) object.setCoords();
+
+        setGuides((previous) =>
+          previous.v === v && previous.h === h ? previous : { v, h },
+        );
+      });
+
+      canvas.on('object:modified', () => {
+        setGuides({ v: false, h: false });
+        emitFromCanvas();
+      });
       canvas.on('object:added', () => {
-        // Les calques ajoutés par l'utilisateur sont émis ; ceux du chargement
-        // initial le sont explicitement après construction.
+        // Seuls les éléments ajoutés par l'utilisateur sont émis : ceux de la
+        // reconstruction sont couverts par `lastEmitted`, et les émettre un par
+        // un produirait un descripteur partiel.
+        if (building.current) return;
         if (canvas?.getObjects().length) emitFromCanvas();
       });
-      canvas.on('object:removed', emitFromCanvas);
-      canvas.on('text:changed', emitFromCanvas);
+      canvas.on('object:removed', () => {
+        if (building.current) return;
+        emitFromCanvas();
+      });
+      // Une frappe ne doit pas créer une entrée d'historique : on regroupe.
+      canvas.on('text:changed', () => emitFromCanvas({ coalesce: true }));
 
       await buildObjects(descriptorRef.current);
+      applyLocks();
       fitToView();
 
       onReady?.({
@@ -254,13 +401,43 @@ export function FrameEditor({
   useEffect(() => {
     if (!canvasRef.current) return;
     const incoming = JSON.stringify(descriptor);
-    if (incoming === lastEmitted.current) return;
+    if (incoming === lastEmitted.current) {
+      // Même descripteur : seul le verrouillage a pu changer (annulation,
+      // changement de zone). On le réapplique sans reconstruire la scène.
+      applyLocks();
+      return;
+    }
     void buildObjects(descriptor).then(() => {
       setSelectedId(null);
+      setGuides({ v: false, h: false });
       canvasRef.current?.discardActiveObject();
+      applyLocks();
       canvasRef.current?.requestRenderAll();
     });
-  }, [descriptor, buildObjects]);
+  }, [descriptor, buildObjects, applyLocks]);
+
+  /* ---------------- Verrouillage ---------------- */
+  useEffect(() => {
+    applyLocks();
+    if (locked && descriptorRef.current.photo_anchor === selectedId) {
+      canvasRef.current?.discardActiveObject();
+      setSelectedId(null);
+    }
+  }, [locked, applyLocks, selectedId]);
+
+  /* ---------------- Aperçu : plus aucune poignée ---------------- */
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    if (preview) {
+      canvas.discardActiveObject();
+      setSelectedId(null);
+      setGuides({ v: false, h: false });
+    }
+    canvas.selection = !preview;
+    applyLocks();
+    canvas.requestRenderAll();
+  }, [preview, applyLocks]);
 
   /* ---------------- Redimensionnement de la fenêtre ---------------- */
   useEffect(() => {
@@ -272,9 +449,9 @@ export function FrameEditor({
   /* ---------------- Lecture de l'animation ---------------- */
   /**
    * Pendant la lecture, on anime les objets du canvas d'édition avec exactement
-   * le même `sampleAt()` que l'export, et le même plan effectif (`effectiveMotion`).
-   * À l'arrêt, chaque objet retrouve sa transformation d'origine : la lecture ne
-   * modifie jamais le descripteur.
+   * le même `sampleAt()` que l'export, et le même plan effectif
+   * (`effectiveMotion`). À l'arrêt, chaque objet retrouve sa transformation
+   * d'origine : la lecture ne modifie jamais le descripteur.
    */
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -297,7 +474,6 @@ export function FrameEditor({
           object.setCoords();
         }
         baseTransforms.current.clear();
-        canvas.selection = true;
         canvas.requestRenderAll();
       }
       return;
@@ -317,9 +493,6 @@ export function FrameEditor({
         },
       ]),
     );
-
-    canvas.discardActiveObject();
-    canvas.selection = false;
 
     const sortedLayers = [...descriptor.layers].sort((a, b) => a.z - b.z);
     const start = performance.now();
@@ -361,12 +534,31 @@ export function FrameEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playing, descriptor.motion, descriptor.photo_anchor, spec.width, spec.height]);
 
-  /* ---------------- Suppression au clavier ---------------- */
+  /* ---------------- Raccourcis clavier ---------------- */
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
-      if (target && ['INPUT', 'TEXTAREA'].includes(target.tagName)) return;
+      const typing = !!target && ['INPUT', 'TEXTAREA'].includes(target.tagName);
+
+      // Annuler / rétablir : même au-dessus du canvas, jamais pendant une saisie.
+      const mod = event.ctrlKey || event.metaKey;
+      if (mod && event.key.toLowerCase() === 'z') {
+        if (typing) return;
+        event.preventDefault();
+        if (event.shiftKey) onRedo?.();
+        else onUndo?.();
+        return;
+      }
+      if (mod && event.key.toLowerCase() === 'y') {
+        if (typing) return;
+        event.preventDefault();
+        onRedo?.();
+        return;
+      }
+
+      if (typing) return;
       if (event.key !== 'Delete' && event.key !== 'Backspace') return;
+      if (preview) return;
 
       const canvas = canvasRef.current;
       const active = canvas?.getActiveObject();
@@ -383,15 +575,15 @@ export function FrameEditor({
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
+  }, [onUndo, onRedo, preview]);
 
-  /* ---------------- Ajout de calques ---------------- */
+  /* ---------------- Ajout d'éléments ---------------- */
 
   /**
-   * Vrai quand la formule interdit d'ajouter un calque de plus.
+   * Vrai quand la formule interdit d'ajouter un élément de plus.
    *
    * La limite porte sur l'AJOUT, jamais sur l'existant : un cadre composé avant
-   * le verrouillage garde tous ses calques. On ne détruit pas le travail d'un
+   * le verrouillage garde tous ses éléments. On ne détruit pas le travail d'un
    * créateur pour lui vendre un module.
    */
   const layerLimitReached = maxLayers !== null && descriptor.layers.length >= maxLayers;
@@ -399,7 +591,7 @@ export function FrameEditor({
   async function addImageFile(file: File | undefined) {
     if (!file) return;
     if (layerLimitReached) {
-      setError(`La formule Free limite à ${maxLayers} calques par cadre.`);
+      setError(`La formule Free limite à ${maxLayers} éléments par cadre.`);
       return;
     }
     setError(null);
@@ -412,7 +604,7 @@ export function FrameEditor({
       }
       const src = uploaded.data;
 
-      // Dimensions naturelles pour centrer le calque sans le déformer.
+      // Dimensions naturelles pour centrer l'élément sans le déformer.
       const dims = await new Promise<{ w: number; h: number }>((resolve) => {
         const probe = new window.Image();
         probe.onload = () => resolve({ w: probe.naturalWidth, h: probe.naturalHeight });
@@ -437,11 +629,15 @@ export function FrameEditor({
         x: Math.round((spec.width - w) / 2),
         y: Math.round((spec.height - h) / 2),
         z: descriptor.layers.length * 10 + 10,
+        label: file.name,
       });
 
-      await buildObjects({ ...descriptor, layers: [...descriptor.layers, layer] });
+      const next = { ...descriptor, layers: [...descriptor.layers, layer] };
+      await buildObjects(next);
+      applyLocks();
       setSelectedId(layer.id);
-      onChange({ ...descriptor, layers: [...descriptor.layers, layer] });
+      setTab('cadre');
+      onChange(next);
     } finally {
       setBusy(false);
     }
@@ -449,7 +645,7 @@ export function FrameEditor({
 
   async function addText() {
     if (layerLimitReached) {
-      setError(`La formule Free limite à ${maxLayers} calques par cadre.`);
+      setError(`La formule Free limite à ${maxLayers} éléments par cadre.`);
       return;
     }
     const { makeTextLayer } = await import('@/lib/descriptor');
@@ -459,16 +655,19 @@ export function FrameEditor({
     });
     const next = { ...descriptor, layers: [...descriptor.layers, layer] };
     await buildObjects(next);
+    applyLocks();
     setSelectedId(layer.id);
+    setTab('cadre');
     onChange(next);
   }
 
-  /* ---------------- Actions sur le calque sélectionné ---------------- */
+  /* ---------------- Actions sur l'élément sélectionné ---------------- */
   const patchSelected = useCallback(
-    (patch: Partial<TextLayer> & Partial<ImageLayer>) => {
+    (patch: LayerPatch) => {
       const canvas = canvasRef.current;
       const active = canvas?.getActiveObject() as
         | (FabricObject & {
+            text?: string;
             fontFamily?: string;
             fontSize?: number;
             fill?: unknown;
@@ -479,16 +678,31 @@ export function FrameEditor({
 
       if (patch.opacity !== undefined) active.set({ opacity: patch.opacity });
       if (patch.rotation !== undefined) active.set({ angle: patch.rotation });
-      if (patch.type === 'text' || (active as TaggedObject).layerKind === 'text') {
+      if (patch.w !== undefined || patch.h !== undefined) {
+        const targetW = patch.w ?? active.getScaledWidth();
+        const targetH = patch.h ?? active.getScaledHeight();
+        const naturalW = active.width ?? targetW;
+        const naturalH = active.height ?? targetH;
+        if (naturalW > 0) active.set({ scaleX: targetW / naturalW });
+        if (naturalH > 0) active.set({ scaleY: targetH / naturalH });
+      }
+      if ((active as TaggedObject).layerKind === 'text') {
+        if (patch.text !== undefined) active.set({ text: patch.text });
         if (patch.font !== undefined) active.set({ fontFamily: patch.font });
         if (patch.size !== undefined) active.set({ fontSize: patch.size });
         if (patch.color !== undefined) active.set({ fill: patch.color });
         if (patch.align !== undefined) active.set({ textAlign: patch.align });
+        // Fabric ne recompose pas la boîte de texte de lui-même : sans
+        // `initDimensions()`, le texte garderait son ancienne largeur jusqu'au
+        // prochain rebuild — et le panneau semblerait ne rien faire.
+        (active as unknown as { initDimensions?: () => void }).initDimensions?.();
       }
 
       active.setCoords();
       canvas.requestRenderAll();
-      emitFromCanvas();
+      // Les réglages arrivent par gestes continus (curseur, frappe) : on
+      // regroupe, sinon « annuler » reviendrait pixel par pixel.
+      emitFromCanvas({ coalesce: true });
     },
     [emitFromCanvas],
   );
@@ -503,22 +717,26 @@ export function FrameEditor({
     setSelectedId(null);
   }, []);
 
-  const moveSelected = useCallback((direction: 'front' | 'back') => {
-    const canvas = canvasRef.current;
-    const active = canvas?.getActiveObject();
-    if (!canvas || !active) return;
-    if (direction === 'front') canvas.bringObjectToFront(active);
-    else canvas.sendObjectToBack(active);
-    canvas.requestRenderAll();
-    emitFromCanvas();
-  }, [emitFromCanvas]);
+  const moveSelected = useCallback(
+    (direction: 'front' | 'back') => {
+      const canvas = canvasRef.current;
+      const active = canvas?.getActiveObject();
+      if (!canvas || !active) return;
+      if (direction === 'front') canvas.bringObjectToFront(active);
+      else canvas.sendObjectToBack(active);
+      canvas.requestRenderAll();
+      emitFromCanvas();
+    },
+    [emitFromCanvas],
+  );
 
   const selectedLayer = descriptor.layers.find((l) => l.id === selectedId) ?? null;
   const zoneLayer = descriptor.layers.find((l) => l.id === descriptor.photo_anchor) ?? null;
 
   /**
-   * Désigne — ou retire — la zone photo. Une seule à la fois : le descripteur ne
-   * porte qu'une ancre, donc désigner un calque remplace le précédent.
+   * Désigne — ou retire — la zone du participant. Une seule à la fois : le
+   * descripteur ne porte qu'une ancre, donc désigner un calque remplace le
+   * précédent.
    */
   const setPhotoZone = useCallback(
     (layerId: string | null) => {
@@ -527,100 +745,203 @@ export function FrameEditor({
     [descriptor, onChange],
   );
 
+  function changeRatio(ratio: Descriptor['ratio']) {
+    onChange({ ...descriptor, ratio });
+  }
+
+  /* ---------------- Panneau contextuel ---------------- */
+  const panel = tab === 'animation' ? (
+    <AnimationPanel
+      descriptor={descriptor}
+      onChange={(next) => onChange(next)}
+      playing={playing}
+      onPlayingChange={(value) => {
+        onPreviewChange?.(value);
+      }}
+      plan={plan}
+      campaignName={campaignName}
+    />
+  ) : selectedLayer ? (
+    <LayerPanel
+      layer={selectedLayer}
+      ratio={descriptor.ratio}
+      isZone={descriptor.photo_anchor === selectedLayer.id}
+      otherZone={zoneLayer && zoneLayer.id !== selectedLayer.id ? zoneLayer : null}
+      onPatch={patchSelected}
+      onDelete={deleteSelected}
+      onOrder={moveSelected}
+      onToggleZone={() =>
+        setPhotoZone(descriptor.photo_anchor === selectedLayer.id ? null : selectedLayer.id)
+      }
+    />
+  ) : (
+    <FramePanel
+      descriptor={descriptor}
+      kind={kind}
+      maxLayers={maxLayers}
+      onAddImage={() => fileInputRef.current?.click()}
+      onAddText={() => void addText()}
+      onChangeRatio={changeRatio}
+      busy={busy}
+      locked={locked}
+      onToggleLock={() => setLocked((v) => !v)}
+    />
+  );
+
+  /* ---------------- Barre d'outils ---------------- */
+  const toolbar = (
+    <>
+      <ToolButton
+        compact
+        icon={<FrameIcon className="size-[18px]" strokeWidth={1.75} />}
+        label="Mon cadre"
+        active={tab === 'cadre'}
+        onClick={() => {
+          setTab('cadre');
+          if (isCompactViewport()) setSheet(true);
+        }}
+      />
+      <ToolButton
+        compact
+        icon={<Sparkles className="size-[18px]" strokeWidth={1.75} />}
+        label="Animation"
+        active={tab === 'animation'}
+        onClick={() => {
+          setTab('animation');
+          if (isCompactViewport()) setSheet(true);
+        }}
+      />
+    </>
+  );
+
+  const historyButtons = (
+    <>
+      <ToolButton
+        compact
+        icon={<Undo2 className="size-[18px]" strokeWidth={1.75} />}
+        label="Annuler"
+        disabled={!canUndo}
+        onClick={() => onUndo?.()}
+      />
+      <ToolButton
+        compact
+        icon={<Redo2 className="size-[18px]" strokeWidth={1.75} />}
+        label="Rétablir"
+        disabled={!canRedo}
+        onClick={() => onRedo?.()}
+      />
+    </>
+  );
+
   return (
-    <div className="flex flex-col gap-5 lg:flex-row">
-      {/* ---------------- Scène ---------------- */}
-      <div className="min-w-0 flex-1">
-        <div
-          ref={stageRef}
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDragging(true);
-          }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={(e) => {
-            e.preventDefault();
-            setDragging(false);
-            void addImageFile(e.dataTransfer.files?.[0]);
-          }}
-          className={cn(
-            'relative flex min-h-[300px] items-center justify-center overflow-hidden rounded-lg border bg-gray-100 p-4 transition-colors',
-            dragging ? 'border-purple bg-purple/5' : 'border-gray-200',
-          )}
+    <div className="flex flex-col gap-4">
+      {/* ---------------- Barre supérieure ---------------- */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1">{historyButtons}</div>
+
+        <Button
+          variant={preview ? 'secondary' : 'ghost'}
+          size="sm"
+          onClick={() => onPreviewChange?.(!preview)}
         >
-          {/* Damier discret : matérialise la transparence du cadre. */}
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-0 opacity-[0.5]"
-            style={{
-              backgroundImage:
-                'linear-gradient(45deg, #e5e7eb 25%, transparent 25%, transparent 75%, #e5e7eb 75%), linear-gradient(45deg, #e5e7eb 25%, transparent 25%, transparent 75%, #e5e7eb 75%)',
-              backgroundSize: '16px 16px',
-              backgroundPosition: '0 0, 8px 8px',
-            }}
-          />
-          <div className="relative shadow-md" style={{ lineHeight: 0 }}>
-            <canvas ref={canvasElRef} />
-          </div>
-
-          {busy && (
-            <div className="absolute inset-0 flex items-center justify-center bg-white/70">
-              <Loader2 className="size-5 animate-spin text-gray-500" aria-hidden />
-            </div>
-          )}
-        </div>
-
-        <p className="mt-3 text-center text-xs text-gray-500">
-          Glissez une image, déplacez-la, redimensionnez-la. Supprimez avec la touche
-          <kbd className="mx-1 rounded border border-gray-200 bg-white px-1.5 py-0.5 font-mono text-[10px]">
-            Suppr
-          </kbd>
-        </p>
-
-        {error && <p className="mt-2 text-center text-xs text-error">{error}</p>}
+          <Eye className="size-4" strokeWidth={1.75} aria-hidden />
+          {preview ? 'Reprendre l’édition' : 'Aperçu'}
+        </Button>
       </div>
 
-      {/* ---------------- Panneau d'actions ---------------- */}
-      <aside className="w-full shrink-0 lg:w-72">
-        <div className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white p-4">
-          <div className="flex items-baseline justify-between gap-2">
-            <span className="text-[13px] font-semibold text-gray-700">Ajouter</span>
-            {maxLayers !== null && (
-              <span className="text-[12px] text-gray-500">
-                {descriptor.layers.length} / {maxLayers}
-              </span>
+      <div className="flex flex-col gap-4 md:flex-row md:gap-5">
+        {/* ---------------- Rail (tablette et bureau) ---------------- */}
+        {!preview && (
+          <nav
+            aria-label="Outils de l’éditeur"
+            className="hidden shrink-0 flex-col gap-1 md:flex"
+          >
+            {toolbar}
+            <span className="my-1 h-px bg-gray-200" />
+            {historyButtons}
+          </nav>
+        )}
+
+        {/* ---------------- Scène ---------------- */}
+        <div className="min-w-0 flex-1">
+          <div
+            ref={stageRef}
+            onDragOver={(e) => {
+              e.preventDefault();
+              if (!preview) setDragging(true);
+            }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDragging(false);
+              if (!preview) void addImageFile(e.dataTransfer.files?.[0]);
+            }}
+            className={cn(
+              'relative flex min-h-[300px] items-center justify-center overflow-hidden rounded-lg border bg-gray-100 p-4 transition-colors md:min-h-[380px]',
+              dragging ? 'border-purple bg-purple/5' : 'border-gray-200',
+            )}
+          >
+            {/* Damier discret : matérialise la transparence du cadre. */}
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-0 opacity-[0.5]"
+              style={{
+                backgroundImage:
+                  'linear-gradient(45deg, #e5e7eb 25%, transparent 25%, transparent 75%, #e5e7eb 75%), linear-gradient(45deg, #e5e7eb 25%, transparent 25%, transparent 75%, #e5e7eb 75%)',
+                backgroundSize: '16px 16px',
+                backgroundPosition: '0 0, 8px 8px',
+              }}
+            />
+
+            <div className="relative shadow-md" style={{ lineHeight: 0 }}>
+              <canvas ref={canvasElRef} role="img" aria-label="Cadre en cours d’édition" />
+
+              {/*
+                Guides de centrage. Dessinés en surimpression, jamais sur le
+                canvas : ils ne doivent pas se retrouver dans un export.
+              */}
+              {guides.v && !preview && (
+                <span
+                  aria-hidden
+                  className="pointer-events-none absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-purple"
+                />
+              )}
+              {guides.h && !preview && (
+                <span
+                  aria-hidden
+                  className="pointer-events-none absolute left-0 top-1/2 h-px w-full -translate-y-1/2 bg-purple"
+                />
+              )}
+            </div>
+
+            {dragging && !preview && (
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-white/70">
+                <span className="rounded-pill bg-ink px-4 py-2 text-[13px] font-medium text-white">
+                  Déposez votre image
+                </span>
+              </div>
+            )}
+
+            {busy && (
+              <div className="absolute inset-0 flex items-center justify-center bg-white/70">
+                <Loader2 className="size-5 animate-spin text-gray-500" aria-hidden />
+              </div>
             )}
           </div>
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={busy || layerLimitReached}
-              className="flex flex-col items-center gap-2 rounded-md border border-gray-200 py-4 text-[13px] transition-colors hover:border-ink disabled:opacity-50"
-            >
-              <ImagePlus className="size-5" strokeWidth={1.75} aria-hidden />
-              Image
-            </button>
-            <button
-              type="button"
-              onClick={() => void addText()}
-              disabled={layerLimitReached}
-              className="flex flex-col items-center gap-2 rounded-md border border-gray-200 py-4 text-[13px] transition-colors hover:border-ink disabled:opacity-50"
-            >
-              <Type className="size-5" strokeWidth={1.75} aria-hidden />
-              Texte
-            </button>
-          </div>
 
-          {/* On ne cache jamais ce qui existe : les boutons restent visibles,
-              désactivés, avec la raison et la formule qui les rouvre. */}
-          {layerLimitReached && (
-            <p className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2.5 text-[12px] leading-relaxed text-gray-600">
-              La formule Free limite à {maxLayers} calques par cadre.{' '}
-              <Link href="/tarifs" className="font-medium text-ink underline underline-offset-4">
-                Frame Pro les rend illimités
-              </Link>
-              .
+          {!preview && (
+            <p className="mt-3 text-center text-[12px] leading-relaxed text-gray-500">
+              Glissez une image sur la scène, déplacez-la, redimensionnez-la. Le centre s’aligne
+              tout seul. Supprimez avec la touche{' '}
+              <kbd className="mx-1 rounded border border-gray-200 bg-white px-1.5 py-0.5 font-mono text-[10px]">
+                Suppr
+              </kbd>
+            </p>
+          )}
+
+          {error && (
+            <p role="alert" className="mt-2 text-center text-[12px] text-error">
+              {error}
             </p>
           )}
 
@@ -631,249 +952,33 @@ export function FrameEditor({
             className="hidden"
             onChange={(e) => void addImageFile(e.target.files?.[0])}
           />
-
-          <div className="h-px bg-gray-200" />
-
-          {selectedLayer ? (
-            <LayerInspector
-              layer={selectedLayer}
-              onPatch={patchSelected}
-              onDelete={deleteSelected}
-              onOrder={moveSelected}
-              isZone={descriptor.photo_anchor === selectedLayer.id}
-              otherZone={zoneLayer && zoneLayer.id !== selectedLayer.id ? zoneLayer : null}
-              onToggleZone={() =>
-                setPhotoZone(
-                  descriptor.photo_anchor === selectedLayer.id ? null : selectedLayer.id,
-                )
-              }
-            />
-          ) : (
-            <p className="py-4 text-center text-[13px] leading-relaxed text-gray-500">
-              Sélectionnez un élément sur le cadre pour le modifier.
-            </p>
-          )}
         </div>
 
-        <p className="mt-3 px-1 text-xs text-gray-400">
-          Repère du cadre : {spec.width} × {spec.height} · zoom {Math.round(zoom * 100)} %
-        </p>
-      </aside>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Inspecteur — replié derrière ••• pour ne pas exposer un panneau      */
-/* de configuration complexe (§13 et règle UX n°2).                    */
-/* ------------------------------------------------------------------ */
-
-/** Comment nommer un calque à l'écran, sans jamais montrer d'identifiant technique. */
-function layerLabel(layer: Layer): string {
-  if (layer.type === 'text') {
-    const text = layer.text.trim();
-    return text.length > 0 ? `« ${text.slice(0, 24)} »` : 'Texte';
-  }
-  return layer.label?.trim() || 'Image';
-}
-
-function LayerInspector({
-  layer,
-  onPatch,
-  onDelete,
-  onOrder,
-  isZone,
-  otherZone,
-  onToggleZone,
-}: {
-  layer: Layer;
-  onPatch: (patch: Partial<TextLayer> & Partial<ImageLayer>) => void;
-  onDelete: () => void;
-  onOrder: (direction: 'front' | 'back') => void;
-  /** Ce calque est-il celui qui délimite la zone photo du parcours participant ? */
-  isZone: boolean;
-  /** Le calque qui délimite déjà la zone, s'il s'agit d'un autre. */
-  otherZone: Layer | null;
-  onToggleZone: () => void;
-}) {
-  const [advanced, setAdvanced] = useState(false);
-  const isText = layer.type === 'text';
-
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <span className="text-[13px] font-semibold text-gray-700">
-          {isText ? 'Calque texte' : 'Calque image'}
-        </span>
-        <button
-          type="button"
-          onClick={() => setAdvanced((v) => !v)}
-          aria-expanded={advanced}
-          className="rounded-sm px-2 py-1 text-xs text-gray-500 transition-colors hover:text-ink"
-        >
-          •••
-        </button>
-      </div>
-
-      <div className="grid grid-cols-2 gap-2">
-        <button
-          type="button"
-          onClick={() => onOrder('front')}
-          className="rounded-md border border-gray-200 py-2 text-[13px] transition-colors hover:border-ink"
-        >
-          Devant
-        </button>
-        <button
-          type="button"
-          onClick={() => onOrder('back')}
-          className="rounded-md border border-gray-200 py-2 text-[13px] transition-colors hover:border-ink"
-        >
-          Derrière
-        </button>
-      </div>
-
-      {/*
-        Zone photo — la seule décision de « rôle » que le créateur prend sur un
-        calque. Elle reste donc au même niveau que Devant / Derrière, sans
-        ouvrir de panneau : un bouton, une phrase, et l'état se lit d'un coup.
-      */}
-      <div
-        className={cn(
-          'rounded-md border p-3 transition-colors',
-          isZone ? 'border-ink bg-gray-50' : 'border-gray-200',
+        {/* ---------------- Panneau contextuel (tablette et bureau) ---------------- */}
+        {!preview && (
+          <aside className="hidden w-72 shrink-0 md:block xl:w-80">
+            <div className="rounded-lg border border-gray-200 bg-white p-4">{panel}</div>
+          </aside>
         )}
-      >
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-xs font-medium text-gray-700">Zone photo</span>
-          {isZone && (
-            <span className="rounded-pill bg-ink px-2 py-0.5 text-[10px] font-medium text-white">
-              Active
-            </span>
-          )}
-        </div>
-
-        <p className="mt-1.5 text-[11px] leading-relaxed text-gray-500">
-          {isZone
-            ? "Les participants placeront leur photo ici. Ce calque est masqué dans la zone et reste visible tout autour."
-            : "La photo du participant s’affichera à l’emplacement de ce calque."}
-        </p>
-
-        {!isZone && otherZone && (
-          <p className="mt-1.5 text-[11px] text-gray-400">
-            Remplace la zone actuelle : {layerLabel(otherZone)}.
-          </p>
-        )}
-
-        <button
-          type="button"
-          onClick={onToggleZone}
-          className={cn(
-            'mt-2.5 w-full rounded-md border py-2 text-[12px] transition-colors',
-            isZone
-              ? 'border-gray-200 text-gray-600 hover:border-error hover:text-error'
-              : 'border-gray-200 hover:border-ink',
-          )}
-        >
-          {isZone ? 'Retirer la zone photo' : 'Définir comme zone photo'}
-        </button>
       </div>
 
-      <button
-        type="button"
-        onClick={onDelete}
-        className="flex items-center justify-center gap-2 rounded-md border border-error/30 py-2 text-[13px] text-error transition-colors hover:bg-error hover:text-white"
-      >
-        <Trash2 className="size-3.5" strokeWidth={1.75} aria-hidden />
-        Supprimer
-      </button>
-
-      {advanced && (
-        <div className="flex flex-col gap-4 rounded-md border border-gray-200 bg-gray-50 p-3">
-          {isText && (
-            <>
-              <label className="flex flex-col gap-1.5">
-                <span className="text-xs font-medium text-gray-700">Taille</span>
-                <input
-                  type="range"
-                  min={16}
-                  max={400}
-                  step={2}
-                  value={layer.size}
-                  onChange={(e) => onPatch({ size: Number(e.target.value) })}
-                  className="accent-purple"
-                />
-              </label>
-
-              <label className="flex flex-col gap-1.5">
-                <span className="text-xs font-medium text-gray-700">Couleur</span>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="color"
-                    value={layer.color}
-                    onChange={(e) => onPatch({ color: e.target.value })}
-                    className="h-8 w-12 cursor-pointer rounded-sm border border-gray-200 bg-white"
-                  />
-                  <span className="font-mono text-xs text-gray-500">{layer.color}</span>
-                </div>
-              </label>
-
-              <div className="flex flex-col gap-1.5">
-                <span className="text-xs font-medium text-gray-700">Alignement</span>
-                <div className="grid grid-cols-3 gap-1.5">
-                  {(['left', 'center', 'right'] as TextAlign[]).map((align) => (
-                    <button
-                      key={align}
-                      type="button"
-                      onClick={() => onPatch({ align })}
-                      aria-pressed={layer.align === align}
-                      className={cn(
-                        'rounded-sm border py-1.5 text-xs transition-colors',
-                        layer.align === align
-                          ? 'border-ink bg-ink text-white'
-                          : 'border-gray-200 bg-white hover:border-ink',
-                      )}
-                    >
-                      {align === 'left' ? 'Gauche' : align === 'center' ? 'Centre' : 'Droite'}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </>
-          )}
-
-          <label className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium text-gray-700">
-              Opacité — {Math.round(layer.opacity * 100)} %
-            </span>
-            <input
-              type="range"
-              min={0.05}
-              max={1}
-              step={0.05}
-              value={layer.opacity}
-              onChange={(e) => onPatch({ opacity: Number(e.target.value) })}
-              className="accent-purple"
-            />
-          </label>
-
-          <label className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium text-gray-700">
-              Rotation — {layer.rotation}°
-            </span>
-            <input
-              type="range"
-              min={-180}
-              max={180}
-              step={1}
-              value={layer.rotation}
-              onChange={(e) => onPatch({ rotation: Number(e.target.value) })}
-              className="accent-purple"
-            />
-          </label>
+      {/* ---------------- Barre du bas (mobile) ---------------- */}
+      {!preview && (
+        <div className="sticky bottom-0 z-20 flex items-center justify-around gap-1 rounded-lg border border-gray-200 bg-white/95 px-2 py-2 backdrop-blur md:hidden">
+          {toolbar}
+          {historyButtons}
         </div>
       )}
+
+      {/* ---------------- Feuille du bas (mobile) ---------------- */}
+      <Drawer
+        open={sheet && !preview}
+        onClose={() => setSheet(false)}
+        side="bottom"
+        title={tab === 'animation' ? 'Animation' : 'Mon cadre'}
+      >
+        {panel}
+      </Drawer>
     </div>
   );
 }
-
-export { parseDescriptor };
