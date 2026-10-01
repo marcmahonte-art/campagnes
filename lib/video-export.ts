@@ -14,6 +14,7 @@
 import { ratioSpec } from './ratios';
 import { createTextObject } from './fabric-text';
 import { createShapeObject } from './fabric-shape';
+import { createImageObject } from './fabric-image';
 import { DEFAULT_MOTION_DURATION, sampleAt, type MotionPlan } from './motion';
 import { hasFeature, type PlanId } from './plans';
 import { PARTICIPANT_PHOTO_ID, effectiveMotion, photoZone } from './descriptor';
@@ -65,7 +66,7 @@ interface RenderTarget {
 }
 
 async function buildRenderTarget(descriptor: Descriptor): Promise<RenderTarget> {
-  const { StaticCanvas, FabricImage, Rect } = await import('fabric');
+  const { StaticCanvas } = await import('fabric');
   const spec = ratioSpec(descriptor.ratio);
 
   /**
@@ -109,37 +110,25 @@ async function buildRenderTarget(descriptor: Descriptor): Promise<RenderTarget> 
         canvas.add(shape);
         objects.push(shape);
       } else if (layer.type === 'text') {
-        const text = await createTextObject(layer);
+        const text = await createTextObject(layer, { visible: layer.visible !== false });
         canvas.add(text);
         objects.push(text);
       } else {
         if (!layer.src) continue;
-        const image = await FabricImage.fromURL(layer.src, { crossOrigin: 'anonymous' });
-        const naturalWidth = image.width || layer.w;
-        const naturalHeight = image.height || layer.h;
-        image.set({
-          left: layer.x,
-          top: layer.y,
-          angle: layer.rotation,
-          opacity: layer.opacity,
-          originX: 'left',
-          originY: 'top',
+        /*
+         * La construction de l'objet image passe par la fabrique partagée avec
+         * l'aperçu participant (`lib/fabric-image.ts`). C'est elle qui applique le
+         * filtre du participant et qui honore `visible` — deux réglages qui,
+         * écrits ici à la main, finiraient par ne plus correspondre à l'écran.
+         *
+         * Seule la photo du participant est découpée à la zone : les images du
+         * créateur ne l'ont jamais été, et les découper changerait des cadres
+         * déjà publiés.
+         */
+        const image = await createImageObject(layer, {
+          clip: clipPhoto && layer.id === PARTICIPANT_PHOTO_ID ? zone : null,
+          visible: layer.visible !== false,
         });
-        image.scaleX = layer.w / naturalWidth;
-        image.scaleY = layer.h / naturalHeight;
-
-        if (clipPhoto && layer.id === PARTICIPANT_PHOTO_ID) {
-          image.clipPath = new Rect({
-            left: zone.x,
-            top: zone.y,
-            width: zone.w,
-            height: zone.h,
-            originX: 'left',
-            originY: 'top',
-            absolutePositioned: true,
-          });
-        }
-
         canvas.add(image);
         objects.push(image);
       }

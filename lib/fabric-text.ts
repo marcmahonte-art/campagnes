@@ -63,6 +63,45 @@ export interface TextObjectOptions {
    * Participant et export : l'objet est inerte.
    */
   interactive?: boolean;
+  /**
+   * Budget de largeur, en unités du ratio. Le corps est réduit tant que le texte
+   * ne tient pas dedans.
+   *
+   * À ne pas confondre avec `width` du calque : `IText` se dimensionne sur son
+   * contenu et **ignore** la largeur qu'on lui donne — c'est `Textbox` qui
+   * l'honore. Pour un texte écrit librement par un participant, `width` n'est
+   * donc pas une boîte mais un plafond, et sans ce plafond un texte long
+   * sortirait du cadre sans que personne ne s'en aperçoive avant le
+   * téléchargement.
+   */
+  fitWidth?: number;
+  /**
+   * Masque posé dans l'éditeur. Faux = le calque ne s'affiche pas.
+   *
+   * Le drapeau est traité ici, et non par les appelants, parce qu'il ne l'était
+   * pas partout : un texte masqué restait visible dans l'aperçu participant et
+   * dans les exports, alors que l'éditeur le cachait. Un réglage doit vouloir
+   * dire la même chose dans tous les écrans.
+   */
+  visible?: boolean;
+}
+
+/**
+ * Réduit le corps jusqu'à ce que le texte tienne dans `maxWidth`.
+ *
+ * La largeur d'un texte est quasi proportionnelle à son corps : une ou deux
+ * passes suffisent à converger, et une troisième ne changerait plus rien. On
+ * borne à trois par sécurité, jamais pour la précision.
+ */
+function fitTextToWidth(text: IText, maxWidth: number): void {
+  for (let pass = 0; pass < 3 && text.width > maxWidth; pass += 1) {
+    const factor = maxWidth / text.width;
+    text.set({ fontSize: Math.max(8, Math.floor(text.fontSize * factor)) });
+    // `set('fontSize')` ne recompose pas la boîte : sans cet appel, `width`
+    // resterait celle de l'ancien corps et la boucle ne convergerait jamais.
+    text.initDimensions();
+  }
+  text.setCoords();
 }
 
 /**
@@ -86,17 +125,24 @@ export async function createBrandGradient() {
   });
 }
 
+/**
+ * Traduit la couleur d'un calque en remplissage Fabric.
+ *
+ * Exporté parce que l'aperçu participant change la couleur d'un texte **déjà
+ * construit**, sans le reconstruire : sans ce point unique, la correspondance
+ * « `brand-gradient` → dégradé de marque » existerait en deux exemplaires, et
+ * l'aperçu finirait par ne plus montrer la même couleur que le fichier.
+ */
+export async function resolveTextFill(color: string): Promise<unknown> {
+  return color === 'brand-gradient' ? createBrandGradient() : color;
+}
+
 export async function createTextObject(
   layer: TextLayer,
   options: TextObjectOptions = {},
 ): Promise<IText> {
   const { IText } = await import('fabric');
   const interactive = options.interactive ?? false;
-
-  let fill: unknown = layer.color;
-  if (layer.color === 'brand-gradient') {
-    fill = await createBrandGradient();
-  }
 
   const text = new IText(layer.text, {
     left: layer.x,
@@ -107,7 +153,7 @@ export async function createTextObject(
     fontSize: layer.size,
     fontWeight: layer.weight === 'bold' ? 'bold' : 'normal',
     fontStyle: layer.style === 'italic' ? 'italic' : 'normal',
-    fill: fill as string,
+    fill: (await resolveTextFill(layer.color)) as string,
     textAlign: layer.align,
     charSpacing: layer.letterSpacing,
     lineHeight: layer.lineHeight || DEFAULT_LINE_HEIGHT,
@@ -119,9 +165,40 @@ export async function createTextObject(
     evented: interactive,
   });
 
+  if (options.visible !== undefined) {
+    text.set({ visible: options.visible } as never);
+  }
+
+  // Le plafond de largeur passe avant la courbure : la courbe se mesure sur la
+  // largeur du texte, elle doit donc lire un corps déjà ajusté.
+  if (options.fitWidth && options.fitWidth > 0) {
+    fitTextToWidth(text, options.fitWidth);
+  }
+
   if (layer.curve) {
     await applyCurve(text, layer.curve);
   }
 
   return text;
+}
+
+/**
+ * Change le contenu d'un texte **déjà construit**, sans le reconstruire.
+ *
+ * L'aperçu participant met à jour le texte à chaque frappe. Reconstruire l'objet
+ * à chaque lettre ferait perdre la position, la sélection et la fluidité ; on
+ * modifie donc le texte en place — mais en réappliquant le budget de largeur,
+ * sinon un texte qui s'allonge finirait par dépasser le cadre.
+ */
+export function setTextContent(text: IText, content: string, fitWidth?: number): void {
+  // `set('text')` ne recompose pas la boîte : sans `initDimensions()`, Fabric
+  // garde l'emprise de l'ancien contenu et les poignées se détachent du texte.
+  text.set({ text: content });
+  text.initDimensions();
+
+  if (fitWidth && fitWidth > 0) {
+    fitTextToWidth(text, fitWidth);
+  }
+
+  text.setCoords();
 }

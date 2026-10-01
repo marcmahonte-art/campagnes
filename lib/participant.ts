@@ -5,10 +5,15 @@
  * positionne, et repart avec son visuel. Toute la mécanique tient dans une idée
  * simple : **la photo du participant est un calque comme un autre**.
  *
- * Le descripteur du cadre n'est jamais modifié — on y glisse une couche image à
- * la bonne place, et le rendu emprunte ensuite exactement le même chemin que
- * côté créateur (`exportPng` / `exportVideo`) : l'aperçu et le fichier
+ * Le descripteur du cadre n'est jamais modifié — on y glisse les calques du
+ * participant à la bonne place, et le rendu emprunte ensuite exactement le même
+ * chemin que côté créateur (`exportPng` / `exportVideo`) : l'aperçu et le fichier
  * téléchargé ne peuvent donc pas diverger.
+ *
+ * Le participant peut déposer **deux** calques : sa photo, et un texte qu'il
+ * écrit lui-même. Les deux voyagent dans le descripteur, donc les deux sont
+ * rendus par le même code à l'écran et dans le fichier. Son filtre photo suit la
+ * même règle : il est porté par le calque image, jamais appliqué à l'affichage.
  *
  * Deux propriétés à ne pas perdre de vue :
  *
@@ -26,12 +31,16 @@
  */
 
 import {
+  DEFAULT_LINE_HEIGHT,
   PARTICIPANT_PHOTO_ID,
+  PARTICIPANT_TEXT_ID,
   insertNeutralMotion,
   photoZone,
   type PhotoZone,
 } from './descriptor';
-import type { Descriptor, ImageLayer, Layer } from './types';
+import { ratioSpec } from './ratios';
+import type { PhotoFilter } from './photo-filters';
+import type { Descriptor, ImageLayer, Layer, Ratio, TextLayer } from './types';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -166,6 +175,30 @@ export function movableAxes(
   return { x: bounds.minX < bounds.maxX, y: bounds.minY < bounds.maxY };
 }
 
+/**
+ * Ramène un texte à l'intérieur du cadre.
+ *
+ * Le texte n'a rien à couvrir — contrairement à la photo, il n'est pas contraint
+ * à la zone, et il n'a pas de domaine autorisé : le participant le pose où il
+ * veut. Mais il ne doit jamais pouvoir **sortir du cadre** : la scène ne se
+ * déplace pas, donc un texte poussé hors du visuel serait irrécupérable, et le
+ * participant ne comprendrait pas où il est passé.
+ *
+ * On garde donc son **centre** à l'intérieur du cadre. Le texte reste toujours à
+ * moitié visible, donc toujours attrapable.
+ */
+export function clampTextPosition(
+  size: { w: number; h: number },
+  frame: { w: number; h: number },
+  x: number,
+  y: number,
+): { x: number; y: number } {
+  return {
+    x: Math.min(frame.w - size.w / 2, Math.max(-size.w / 2, x)),
+    y: Math.min(frame.h - size.h / 2, Math.max(-size.h / 2, y)),
+  };
+}
+
 /* ------------------------------------------------------------------ */
 /* Lecture du fichier                                                  */
 /* ------------------------------------------------------------------ */
@@ -200,6 +233,137 @@ export async function readPhotoFile(file: File): Promise<ParticipantPhoto> {
 }
 
 /* ------------------------------------------------------------------ */
+/* Style du participant                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Le texte que le participant écrit lui-même.
+ *
+ * La position est un **coin supérieur gauche**, comme pour tous les calques du
+ * descripteur : il n'existe donc qu'une seule convention de coordonnées dans
+ * tout le projet, et aucun consommateur n'a à savoir qu'il lit un calque
+ * « spécial ».
+ *
+ * Le texte est ancré à gauche parce que c'est ce qui rend la saisie prévisible :
+ * la ligne s'allonge vers la droite à mesure qu'on tape, au lieu de se recentrer
+ * à chaque lettre — un recentrage continu donnerait l'impression que le texte
+ * fuit sous le doigt.
+ */
+export interface ParticipantText {
+  content: string;
+  /** Couleur du texte, ou `brand-gradient`. */
+  color: string;
+  /** Coin supérieur gauche, dans le repère du ratio. */
+  x: number;
+  y: number;
+}
+
+/** Tout ce que le participant peut régler sur son propre visuel. */
+export interface ParticipantStyle {
+  /** Filtre appliqué à sa photo. `none` = pixels d'origine. */
+  filter: PhotoFilter;
+  /** `null` = le participant n'a pas ajouté de texte. */
+  text: ParticipantText | null;
+}
+
+export const DEFAULT_PARTICIPANT_STYLE: ParticipantStyle = {
+  filter: 'none',
+  text: null,
+};
+
+/**
+ * Couleurs proposées au participant.
+ *
+ * Trois seulement : une pour un fond sombre, une pour un fond clair, et la
+ * marque. Une palette plus large transformerait un choix binaire en hésitation,
+ * sans jamais régler le seul problème réel — la lisibilité sur la photo.
+ */
+export const TEXT_COLORS: readonly { id: string; label: string }[] = [
+  { id: '#FFFFFF', label: 'Blanc' },
+  { id: '#000000', label: 'Noir' },
+  { id: 'brand-gradient', label: 'Dégradé' },
+];
+
+/** Corps du texte, en fraction du **petit** côté du cadre. */
+const TEXT_SIZE_RATIO = 0.075;
+/** Part de la largeur de la zone laissée libre à gauche du texte. */
+const TEXT_INSET_RATIO = 0.1;
+/** Part de la largeur de la zone que le texte ne dépasse jamais. */
+const TEXT_MAX_WIDTH_RATIO = 0.8;
+
+/**
+ * Longueur maximale du texte du participant.
+ *
+ * Elle n'est pas une limite technique mais une limite de **lisibilité** : le
+ * texte se réduit pour tenir dans le cadre, donc au-delà d'une quarantaine de
+ * caractères il deviendrait trop petit pour être lu sur un téléphone. Mieux vaut
+ * arrêter la saisie que de laisser écrire un paragraphe illisible.
+ */
+export const TEXT_MAX_LENGTH = 40;
+
+/** Corps du texte pour un format donné, en unités du ratio. */
+export function participantTextSize(ratio: Ratio): number {
+  const spec = ratioSpec(ratio);
+  return Math.max(18, Math.round(Math.min(spec.width, spec.height) * TEXT_SIZE_RATIO));
+}
+
+/**
+ * Largeur que le texte ne doit pas dépasser.
+ *
+ * Elle n'est pas une boîte : `IText` se dimensionne sur son contenu et ignore la
+ * largeur qu'on lui donne. C'est un **budget**, transmis à la fabrique Fabric,
+ * qui réduit le corps tant que le texte ne tient pas dedans. Sans ce garde-fou,
+ * un texte long sortirait du cadre — et le participant ne le verrait qu'après
+ * avoir téléchargé.
+ */
+export function participantTextWidth(zone: PhotoZone): number {
+  return Math.round(zone.w * TEXT_MAX_WIDTH_RATIO);
+}
+
+/** Position et couleur de départ d'un texte : à gauche de la zone, centré en hauteur. */
+export function defaultParticipantText(zone: PhotoZone, ratio: Ratio): ParticipantText {
+  const height = Math.round(participantTextSize(ratio) * 1.3);
+  return {
+    content: '',
+    color: TEXT_COLORS[0].id,
+    x: Math.round(zone.x + zone.w * TEXT_INSET_RATIO),
+    y: Math.round(zone.y + (zone.h - height) / 2),
+  };
+}
+
+/** Le calque texte correspondant au style du participant. */
+export function participantTextLayer(
+  text: ParticipantText,
+  zone: PhotoZone,
+  ratio: Ratio,
+  z = 0,
+): TextLayer {
+  const size = participantTextSize(ratio);
+  return {
+    id: PARTICIPANT_TEXT_ID,
+    type: 'text',
+    text: text.content,
+    font: 'Inter',
+    size,
+    color: text.color,
+    align: 'center',
+    // Le gras n'est pas décoratif : un texte fin disparaît sur une photo.
+    weight: 'bold',
+    style: 'normal',
+    letterSpacing: 0,
+    lineHeight: DEFAULT_LINE_HEIGHT,
+    curve: 0,
+    x: text.x,
+    y: text.y,
+    w: participantTextWidth(zone),
+    h: Math.round(size * 1.3),
+    rotation: 0,
+    z,
+    opacity: 1,
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /* Composition du descripteur                                          */
 /* ------------------------------------------------------------------ */
 
@@ -214,6 +378,7 @@ export function photoLayer(
   zone: PhotoZone,
   placement: PhotoPlacement,
   z = 0,
+  filter: PhotoFilter = 'none',
 ): ImageLayer {
   const { w, h } = photoSize(photo, zone, placement.zoom);
   return {
@@ -228,35 +393,51 @@ export function photoLayer(
     rotation: 0,
     z,
     opacity: 1,
+    // `none` est omis : une photo sans filtre produit un descripteur identique à
+    // celui d'avant l'arrivée des filtres.
+    ...(filter !== 'none' ? { filter } : {}),
   };
 }
 
 /**
- * `z` de la photo : strictement entre le calque qu'elle recouvre et celui qui le
- * suit. Les `z` du créateur sont espacés de 10, mais on ne s'appuie pas dessus —
- * un descripteur relu à la main peut les avoir resserrés.
+ * L'interstice de `z` laissé par le créateur à la position `insertAt`.
+ *
+ * Les `z` du créateur sont espacés de 10, mais on ne s'appuie pas dessus — un
+ * descripteur relu à la main peut les avoir resserrés.
  */
-function photoZ(sorted: Layer[], insertAt: number): number {
+function gapBounds(sorted: Layer[], insertAt: number): { below: number; above: number } {
   const above = sorted[insertAt]?.z ?? (sorted[sorted.length - 1]?.z ?? 0) + 20;
   const below = insertAt > 0 ? (sorted[insertAt - 1]?.z ?? 0) : above - 20;
-  return below + (above - below) / 2;
+  return { below, above };
 }
 
 /**
- * Descripteur prêt à rendre : celui du créateur, plus la photo du participant à
- * sa place. L'ordre des calques du créateur est préservé à l'identique — c'est
- * ce qui garantit que le visuel produit est bien celui du cadre publié.
+ * Descripteur prêt à rendre : celui du créateur, plus les calques du participant
+ * à leur place. L'ordre des calques du créateur est préservé à l'identique —
+ * c'est ce qui garantit que le visuel produit est bien celui du cadre publié.
  *
- * En **mode Fond**, la photo se glisse juste au-dessus du calque qui délimite la
- * zone : elle masque ce calque dans la zone, et le décor de celui-ci reste
- * visible tout autour. En **mode Cadre**, elle passe sous tous les calques et
- * n'apparaît qu'à travers les zones transparentes du visuel.
+ * En **mode Fond**, les calques du participant se glissent juste au-dessus du
+ * calque qui délimite la zone : ils masquent ce calque dans la zone, et son décor
+ * reste visible tout autour. En **mode Cadre**, ils passent sous tous les calques
+ * et n'apparaissent qu'à travers les zones transparentes du visuel.
+ *
+ * Dans les deux cas, le participant **remplit la fenêtre du cadre, il ne le
+ * recouvre jamais** : son texte est posé sur sa photo, sous le cadre. Un texte
+ * au-dessus du cadre serait le seul calque capable d'effacer le travail du
+ * créateur, et le créateur découvrirait après publication un visuel qu'il n'a
+ * jamais validé.
  */
 export function composeDescriptor(
   frame: Descriptor,
   photo: ParticipantPhoto | null,
   placement: PhotoPlacement | null,
+  style: ParticipantStyle = DEFAULT_PARTICIPANT_STYLE,
 ): Descriptor {
+  /*
+   * Sans photo, il n'y a rien à composer : le cadre est rendu tel quel. Un texte
+   * seul ne suffit pas — le parcours ne le propose qu'après le dépôt de la photo,
+   * et un visuel sans photo n'est pas ce que le participant est venu chercher.
+   */
   if (!photo || !placement) return frame;
 
   const zone = photoZone(frame);
@@ -268,14 +449,30 @@ export function composeDescriptor(
     : -1;
   const insertAt = anchorIndex === -1 ? 0 : anchorIndex + 1;
 
-  const layer = photoLayer(photo, zone, safe, photoZ(sorted, insertAt));
-  const layers = [...sorted.slice(0, insertAt), layer, ...sorted.slice(insertAt)];
+  /*
+   * Un texte vide n'est pas un calque : le participant qui efface ce qu'il a
+   * écrit doit retrouver exactement le visuel d'avant, sans calque fantôme dans
+   * le descripteur.
+   */
+  const text = style.text && style.text.content.trim().length > 0 ? style.text : null;
+
+  /*
+   * Les `z` sont répartis dans l'interstice : la photo en premier, le texte
+   * ensuite. Avec un seul calque, la répartition redonne exactement l'ancien
+   * calcul (`below + (above - below) / 2`).
+   */
+  const { below, above } = gapBounds(sorted, insertAt);
+  const count = text ? 2 : 1;
+  const step = (above - below) / (count + 1);
+
+  const participant: Layer[] = [photoLayer(photo, zone, safe, below + step, style.filter)];
+  if (text) participant.push(participantTextLayer(text, zone, frame.ratio, below + 2 * step));
 
   return {
     ...frame,
-    layers,
-    // La photo décale les positions : on lui réserve un mouvement neutre pour que
-    // les calques du créateur gardent très exactement le leur.
-    motion: insertNeutralMotion(frame.motion, insertAt, frame.layers.length),
+    layers: [...sorted.slice(0, insertAt), ...participant, ...sorted.slice(insertAt)],
+    // Les calques ajoutés décalent les positions : on leur réserve un mouvement
+    // neutre pour que les calques du créateur gardent très exactement le leur.
+    motion: insertNeutralMotion(frame.motion, insertAt, frame.layers.length, participant.length),
   };
 }

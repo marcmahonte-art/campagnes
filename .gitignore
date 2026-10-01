@@ -37,3 +37,12 @@ docs/**/*.png
 docs/**/*.PNG
 docs/**/*.jpg
 docs/**/*.jpeg
+
+# Documents de travail du SIAO : PDF, archives de polices, échantillonnages.
+# Le dépôt suit le code, pas les brouillons de production — ces fichiers
+# pèsent plusieurs dizaines de Mo et n'ont pas leur place dans un historique.
+docs/siao/
+docs/echantillon/
+
+# Archives de polices : volumineuses, régénérables depuis leur source.
+*.zip

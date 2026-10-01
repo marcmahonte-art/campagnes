@@ -1,6 +1,7 @@
 /** Types partagés — miroir exact du schéma `supabase/migrations/`. */
 
 import type { MotionPlan } from './motion';
+import type { PhotoFilter } from './photo-filters';
 
 export type PlanKind = 'free' | 'creator' | 'organization';
 export type CampaignStatus = 'draft' | 'published';
@@ -93,6 +94,18 @@ export interface ImageLayer extends LayerBase {
   src: string;
   /** Nom d'origine, purement informatif. */
   label?: string;
+  /**
+   * Filtre appliqué à l'image **au rendu**, pas à l'affichage.
+   *
+   * Il vit dans le descripteur parce qu'il change les pixels : un filtre posé
+   * seulement sur l'aperçu produirait un fichier téléchargé différent de ce que
+   * le participant a vu. Absent = `none`, donc un descripteur écrit avant
+   * l'arrivée des filtres se relit exactement comme avant.
+   *
+   * Renseigné aujourd'hui par le parcours participant (la photo qu'il dépose) ;
+   * la mécanique est générale et vaut pour n'importe quel calque image.
+   */
+  filter?: PhotoFilter;
 }
 
 export interface TextLayer extends LayerBase {

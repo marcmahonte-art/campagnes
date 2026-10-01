@@ -1,0 +1,812 @@
+'use client';
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
+import {
+  ArrowLeft,
+  BadgeCheck,
+  Download,
+  ImagePlus,
+  Loader2,
+  Minus,
+  Plus,
+  RotateCcw,
+  ShieldCheck,
+  Trash2,
+  Type,
+  Video,
+} from 'lucide-react';
+import { cn } from '@/lib/cn';
+import { Logo } from '@/components/ui/logo';
+import { Button, ButtonLink } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { InlineError, Spinner } from '@/components/ui/feedback';
+import { ParticipantStage } from '@/components/participant/participant-stage';
+import { SharePanel } from '@/components/participant/share-panel';
+import { backend } from '@/lib/backend';
+import { frameZone, photoZone } from '@/lib/descriptor';
+import { ratioSpec } from '@/lib/ratios';
+import type { PlanId } from '@/lib/plans';
+import {
+  dataUrlToBlob,
+  downloadBlob,
+  exportFilename,
+  exportPng,
+  exportVideo,
+} from '@/lib/video-export';
+import {
+  DEFAULT_PARTICIPANT_STYLE,
+  MAX_ZOOM,
+  MIN_ZOOM,
+  TEXT_COLORS,
+  TEXT_MAX_LENGTH,
+  composeDescriptor,
+  defaultParticipantText,
+  initialPlacement,
+  movableAxes,
+  readPhotoFile,
+  zoomAroundCenter,
+  type ParticipantPhoto,
+  type ParticipantStyle,
+  type PhotoPlacement,
+} from '@/lib/participant';
+import { PHOTO_FILTER_PRESETS } from '@/lib/photo-filters';
+import { blockedMessage, remaining } from '@/lib/quota';
+import type { CampaignQuota, GalleryItem } from '@/lib/types';
+
+/**
+ * Parcours participant — l'écran que voit la communauté du créateur.
+ *
+ * Il doit tenir en trois gestes : **je choisis ma photo, je la place, je
+ * télécharge.** Ce qui s'ajoute autour — filtre, texte — reste facultatif et ne
+ * rallonge jamais le chemin de quelqu'un qui veut juste son visuel.
+ *
+ * Aucun compte, aucune application, aucun formulaire. La photo est lue dans le
+ * navigateur et n'est jamais envoyée : le participant n'a rien à accepter, et il
+ * n'y a rien à modérer côté plateforme. Le filtre et le texte suivent la même
+ * règle — ils vivent dans le descripteur composé, en mémoire, et ne sont jamais
+ * transmis.
+ *
+ * Ce composant est **le seul** parcours participant du produit. Les deux routes
+ * qui le servent — `/c/[slug]` (public) et `/d/[token]` (lien privé) — ne
+ * diffèrent que par la façon dont la campagne est chargée et par le partage
+ * social, autorisé uniquement sur le lien public. Les dupliquer ferait diverger
+ * deux écrans que le participant ne distingue pas.
+ */
+export function ParticipantJourney({
+  campaign,
+  loading,
+  sharing = true,
+}: {
+  campaign: GalleryItem | null;
+  loading: boolean;
+  /** Le partage social n'est proposé que sur le lien public. */
+  sharing?: boolean;
+}) {
+  const [photo, setPhoto] = useState<ParticipantPhoto | null>(null);
+  const [placement, setPlacement] = useState<PhotoPlacement | null>(null);
+  const [style, setStyle] = useState<ParticipantStyle>(DEFAULT_PARTICIPANT_STYLE);
+  const [reading, setReading] = useState(false);
+  const [dragging, setDragging] = useState(false);
+
+  const [exporting, setExporting] = useState<'png' | 'video' | null>(null);
+  const [progress, setProgress] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  /**
+   * Vrai dès qu'un visuel a été téléchargé. Ne débloque rien et ne cache rien :
+   * l'étape de partage change seulement d'accroche. Un participant qui repart
+   * avec son image sans rien partager a parfaitement rempli son parcours.
+   */
+  const [downloaded, setDownloaded] = useState(false);
+  /**
+   * Quota de la campagne, lu dès le chargement. `null` tant qu'il n'est pas
+   * connu — on ne suppose jamais qu'il est ouvert, sinon un participant verrait
+   * le bouton de téléchargement avant de savoir qu'il est bloqué.
+   */
+  const [quota, setQuota] = useState<CampaignQuota | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  /* ---------------- Quota ---------------- */
+  useEffect(() => {
+    if (!campaign) return;
+    let alive = true;
+    void backend.getCampaignQuota(campaign.id).then((found) => {
+      if (alive) setQuota(found);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [campaign]);
+
+  const frame = campaign?.frame?.descriptor_json ?? null;
+  const ratio = frame?.ratio ?? campaign?.ratio ?? '1:1';
+  const spec = useMemo(() => ratioSpec(ratio), [ratio]);
+
+  /**
+   * Tout le positionnement se fait dans la zone photo, pas dans le cadre entier :
+   * le cadre en mode Cadre, la fenêtre du calque désigné en mode Fond. Le
+   * participant n'a pas à connaître la différence — la zone est ce qu'il voit.
+   */
+  const zone = useMemo(() => (frame ? photoZone(frame) : frameZone(ratio)), [frame, ratio]);
+
+  /**
+   * Le filigrane suit la formule du **créateur** — le participant n'en a pas.
+   * La projection publique expose ce seul booléen, jamais la formule.
+   */
+  const creatorWatermark = campaign?.creator?.watermark ?? true;
+  const exportPlan: PlanId = creatorWatermark ? 'free' : 'creator';
+
+  /** Descripteur effectivement rendu : le cadre du créateur + les calques du participant. */
+  const composed = useMemo(
+    () => (frame ? composeDescriptor(frame, photo, placement, style) : null),
+    [frame, photo, placement, style],
+  );
+
+  const animated = Boolean(frame?.motion);
+
+  /**
+   * Le quota est-il épuisé ? `null` = pas encore lu, donc on ne suppose jamais
+   * que le lien est ouvert.
+   */
+  const blocked = quota !== null && !quota.open;
+  const left = quota ? remaining(quota.used, quota.quota) : null;
+
+  /* ---------------- Choix de la photo ---------------- */
+  const choosePhoto = useCallback(
+    async (file: File | undefined) => {
+      if (!file) return;
+      setError(null);
+      setReading(true);
+      try {
+        const next = await readPhotoFile(file);
+        setPhoto(next);
+        setPlacement(initialPlacement(next, zone));
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Cette image n'a pas pu être ouverte.");
+      } finally {
+        setReading(false);
+      }
+    },
+    [zone],
+  );
+
+  /* ---------------- Export ---------------- */
+  const runExport = useCallback(
+    async (kind: 'png' | 'video') => {
+      if (!composed || !campaign) return;
+      setError(null);
+      setExporting(kind);
+      setProgress(0);
+      try {
+        /*
+         * Le quota est réservé **avant** le rendu, jamais après : un export
+         * coûteux que personne ne pourrait récupérer ne doit pas consommer une
+         * place. La réservation est atomique côté base, donc deux participants
+         * simultanés ne peuvent pas prendre deux fois la dernière place.
+         */
+        const claim = await backend.claimParticipation(campaign.id);
+        if (claim.error) throw new Error(claim.error);
+        // La fonction renvoie toujours une ligne, mais le type ne peut pas le
+        // garantir : on ne rend jamais un export sur une réservation incertaine.
+        const result = claim.data;
+        if (!result) throw new Error("La réservation n'a pas abouti. Réessayez dans un instant.");
+
+        setQuota({ used: result.used, quota: result.quota, open: result.granted });
+
+        if (!result.granted) {
+          throw new Error(blockedMessage(campaign.name));
+        }
+
+        if (kind === 'png') {
+          const dataUrl = await exportPng({ descriptor: composed, plan: exportPlan });
+          downloadBlob(dataUrlToBlob(dataUrl), exportFilename(campaign.name, 'png'));
+        } else {
+          const result = await exportVideo({
+            descriptor: composed,
+            plan: exportPlan,
+            onProgress: (p) => setProgress(p.ratio),
+          });
+          downloadBlob(result.blob, exportFilename(campaign.name, result.extension));
+        }
+
+        setDownloaded(true);
+
+        /*
+         * Le téléchargement est le seul instant du parcours que la plateforme
+         * observe réellement : le participant peut copier un lien sans qu'elle
+         * le voie, mais elle le voit télécharger. Il compte donc comme un
+         * partage — c'est ce que le créateur appelle « ça a circulé ».
+         *
+         * L'échec est avalé : le visuel est déjà dans les mains du participant,
+         * un compteur en panne ne le lui reprendra pas.
+         */
+        void backend.recordShareEvent(campaign.id, 'share_download').catch(() => {});
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "L'enregistrement a échoué.");
+      } finally {
+        setExporting(null);
+        setProgress(0);
+      }
+    },
+    [campaign, composed, exportPlan],
+  );
+
+  /* ---------------- États transitoires ---------------- */
+  if (loading) {
+    return (
+      <div className="flex min-h-dvh items-center justify-center">
+        <Spinner className="size-5 text-gray-400" />
+      </div>
+    );
+  }
+
+  if (!campaign || !frame) {
+    return (
+      <div className="flex min-h-dvh flex-col items-center justify-center gap-5 px-4 text-center">
+        <Logo size="lg" asLink={true} />
+        <p className="max-w-sm text-sm leading-relaxed text-gray-500">
+          {campaign
+            ? "Cette campagne n'a pas encore de cadre. Son créateur doit en enregistrer un avant qu'elle puisse être partagée."
+            : "Ce lien ne correspond à aucune campagne publiée. Il a peut-être été retiré, ou l'adresse est incomplète."}
+        </p>
+        <Link
+          href="/"
+          className="flex items-center gap-1.5 text-[13px] text-gray-500 transition-colors hover:text-ink"
+        >
+          <ArrowLeft className="size-3.5" aria-hidden />
+          Retour à l’accueil
+        </Link>
+      </div>
+    );
+  }
+
+  const creatorLabel = campaign.creator
+    ? campaign.creator.org_name || `@${campaign.creator.username}`
+    : null;
+
+  const axes = photo && placement ? movableAxes(photo, zone, placement.zoom) : null;
+
+  return (
+    <div className="min-h-dvh bg-white">
+      {/* ---------------- En-tête minimal ----------------
+          Le participant vient faire une chose précise : on ne met rien qui
+          puisse détourner son attention avant qu'il ait son visuel. */}
+      <header className="border-b border-gray-200">
+        <div className="container-shell flex h-16 items-center justify-between gap-4">
+          <Logo size="sm" />
+          {creatorLabel && (
+            <span className="truncate text-[13px] text-gray-500">
+              Créé par <span className="font-medium text-ink">{creatorLabel}</span>
+            </span>
+          )}
+        </div>
+      </header>
+
+      <main className="container-shell py-10 md:py-14">
+        <div className="mx-auto max-w-3xl">
+          {/* ---------------- Titre ---------------- */}
+          <div className="text-center">
+            <span className="inline-flex items-center gap-1.5 rounded-pill border border-gray-200 px-3 py-1 text-[11px] font-medium text-gray-500">
+              <ShieldCheck className="size-3.5" aria-hidden />
+              Votre photo reste sur votre appareil
+            </span>
+            <h1 className="mt-4 text-[28px] font-bold leading-tight md:text-[38px]">
+              {campaign.name}
+            </h1>
+            <p className="mx-auto mt-3 max-w-xl text-sm leading-relaxed text-gray-500">
+              Choisissez une photo, placez-la comme vous voulez, puis enregistrez votre visuel.
+              Aucun compte, aucune application.
+            </p>
+          </div>
+
+          {/*
+            Une seule colonne : le participant ne fait qu'une chose à la fois.
+            Les réglages vivent sous l'aperçu, pas dans un panneau à côté — le
+            regard ne quitte jamais le visuel qu'il est en train de composer.
+          */}
+          <div className="mt-10">
+            {/* ---------------- Scène ---------------- */}
+            <div className="min-w-0">
+              {photo && placement ? (
+                <ParticipantStage
+                  descriptor={frame}
+                  photo={photo}
+                  placement={placement}
+                  style={style}
+                  watermark={creatorWatermark}
+                  onPlacementChange={setPlacement}
+                  onTextChange={(next) =>
+                    setStyle((current) => ({ ...current, text: next }))
+                  }
+                />
+              ) : (
+                /* ---------------- Dépôt de la photo ---------------- */
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setDragging(true);
+                  }}
+                  onDragLeave={() => setDragging(false)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setDragging(false);
+                    void choosePhoto(e.dataTransfer.files?.[0]);
+                  }}
+                  className={
+                    'relative flex min-h-[320px] flex-col items-center justify-center gap-5 overflow-hidden rounded-lg border-2 border-dashed p-8 text-center transition-colors ' +
+                    (dragging ? 'border-purple bg-purple/5' : 'border-gray-200 bg-gray-50')
+                  }
+                >
+                  {campaign.frame?.thumbnail_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={campaign.frame.thumbnail_url}
+                      alt={`Aperçu du cadre ${campaign.name}`}
+                      className="max-h-56 max-w-full rounded-md object-contain shadow-sm"
+                    />
+                  ) : (
+                    <span
+                      aria-hidden
+                      className="rounded-md border-2 border-gray-300 bg-white"
+                      style={{
+                        width: ratio === '16:9' ? 200 : ratio === '9:16' ? 112 : 150,
+                        height: ratio === '16:9' ? 112 : ratio === '9:16' ? 200 : 150,
+                      }}
+                    />
+                  )}
+
+                  <div>
+                    <p className="text-sm font-medium">Déposez votre photo ici</p>
+                    <p className="mt-1 text-[13px] text-gray-500">
+                      ou choisissez-la depuis votre appareil
+                    </p>
+                  </div>
+
+                  <Button
+                    variant="primary"
+                    size="lg"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={reading}
+                  >
+                    {reading ? (
+                      <>
+                        <Loader2 className="size-4 animate-spin" aria-hidden />
+                        Ouverture…
+                      </>
+                    ) : (
+                      <>
+                        <ImagePlus className="size-4" aria-hidden />
+                        Choisir ma photo
+                      </>
+                    )}
+                  </Button>
+
+                  <p className="text-xs text-gray-400">
+                    Format {spec.label.toLowerCase()} · JPG, PNG ou WebP
+                  </p>
+                </div>
+              )}
+
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  void choosePhoto(e.target.files?.[0]);
+                  // Sans cette remise à zéro, rechoisir le MÊME fichier ne
+                  // déclencherait aucun `change` — le bouton semblerait cassé.
+                  e.target.value = '';
+                }}
+              />
+            </div>
+
+            {photo && placement ? (
+              <>
+                {/* ---------------- Réglages, juste sous l'aperçu ---------------- */}
+                <div className="mt-5">
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      aria-label="Réduire"
+                      disabled={placement.zoom <= MIN_ZOOM + 1e-9}
+                      onClick={() =>
+                        setPlacement((current) =>
+                          current
+                            ? zoomAroundCenter(photo, zone, current, current.zoom - 0.2)
+                            : current,
+                        )
+                      }
+                      className="flex size-9 shrink-0 items-center justify-center rounded-pill border border-gray-200 text-gray-700 transition-colors hover:border-ink disabled:opacity-35 disabled:hover:border-gray-200"
+                    >
+                      <Minus className="size-4" aria-hidden />
+                    </button>
+
+                    <input
+                      type="range"
+                      min={MIN_ZOOM}
+                      max={MAX_ZOOM}
+                      step={0.01}
+                      value={placement.zoom}
+                      onChange={(e) =>
+                        setPlacement((current) =>
+                          current
+                            ? zoomAroundCenter(photo, zone, current, Number(e.target.value))
+                            : current,
+                        )
+                      }
+                      className="min-w-0 flex-1 accent-purple"
+                      aria-label="Zoom de la photo"
+                    />
+
+                    <button
+                      type="button"
+                      aria-label="Agrandir"
+                      disabled={placement.zoom >= MAX_ZOOM - 1e-9}
+                      onClick={() =>
+                        setPlacement((current) =>
+                          current
+                            ? zoomAroundCenter(photo, zone, current, current.zoom + 0.2)
+                            : current,
+                        )
+                      }
+                      className="flex size-9 shrink-0 items-center justify-center rounded-pill border border-gray-200 text-gray-700 transition-colors hover:border-ink disabled:opacity-35 disabled:hover:border-gray-200"
+                    >
+                      <Plus className="size-4" aria-hidden />
+                    </button>
+
+                    <span className="w-10 shrink-0 text-right text-[13px] tabular-nums text-gray-500">
+                      {placement.zoom.toFixed(1)}×
+                    </span>
+                  </div>
+
+                  <div className="mt-3 flex items-center justify-center gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setPlacement(initialPlacement(photo, zone))}
+                    >
+                      <RotateCcw className="size-3.5" aria-hidden />
+                      Recentrer
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={reading}
+                    >
+                      <ImagePlus className="size-3.5" aria-hidden />
+                      Changer de photo
+                    </Button>
+                  </div>
+
+                  <p className="mt-3 text-center text-[13px] text-gray-500">
+                    {axes && axes.x && axes.y
+                      ? 'Faites glisser la photo pour la positionner.'
+                      : 'Zoomez pour pouvoir déplacer la photo.'}
+                  </p>
+                </div>
+
+                {/* ---------------- Filtre ----------------
+                    Six choix, une ligne, aucun réglage à comprendre. Le filtre
+                    est porté par le descripteur, donc l'aperçu et le fichier
+                    téléchargé montrent forcément la même image. */}
+                <div className="mt-6">
+                  <span className="text-[13px] font-semibold text-gray-700">Filtre</span>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {PHOTO_FILTER_PRESETS.map((preset) => {
+                      const active = style.filter === preset.id;
+                      return (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          aria-pressed={active}
+                          onClick={() =>
+                            setStyle((current) => ({ ...current, filter: preset.id }))
+                          }
+                          className={cn(
+                            'rounded-pill border px-3.5 py-2 text-[13px] transition-colors duration-150 ease-brand',
+                            active
+                              ? 'border-ink bg-ink text-white'
+                              : 'border-gray-200 text-gray-700 hover:border-ink',
+                          )}
+                        >
+                          {preset.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* ---------------- Texte ----------------
+                    Le texte est saisi ici, pas sur le canvas : sur un téléphone,
+                    un champ est infiniment plus sûr qu'un double-clic au doigt.
+                    Le canvas sert à le placer — même partage des rôles que le
+                    zoom, qui se règle au curseur et non aux coins de l'image. */}
+                <div className="mt-6">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[13px] font-semibold text-gray-700">Texte</span>
+                    {style.text && (
+                      <button
+                        type="button"
+                        onClick={() => setStyle((current) => ({ ...current, text: null }))}
+                        className="flex items-center gap-1 text-[13px] text-gray-500 transition-colors hover:text-error"
+                      >
+                        <Trash2 className="size-3.5" aria-hidden />
+                        Retirer
+                      </button>
+                    )}
+                  </div>
+
+                  {style.text ? (
+                    <div className="mt-3 flex flex-col gap-3">
+                      <Input
+                        value={style.text.content}
+                        onChange={(e) =>
+                          setStyle((current) =>
+                            current.text
+                              ? {
+                                  ...current,
+                                  text: {
+                                    ...current.text,
+                                    content: e.target.value.slice(0, TEXT_MAX_LENGTH),
+                                  },
+                                }
+                              : current,
+                          )
+                        }
+                        placeholder="Votre nom, un slogan…"
+                        maxLength={TEXT_MAX_LENGTH}
+                        aria-label="Votre texte"
+                      />
+
+                      <div className="flex items-center gap-3">
+                        <span className="text-[13px] text-gray-500">Couleur</span>
+                        {TEXT_COLORS.map((colour) => {
+                          const active = style.text?.color === colour.id;
+                          return (
+                            <button
+                              key={colour.id}
+                              type="button"
+                              aria-label={colour.label}
+                              aria-pressed={active}
+                              onClick={() =>
+                                setStyle((current) =>
+                                  current.text
+                                    ? { ...current, text: { ...current.text, color: colour.id } }
+                                    : current,
+                                )
+                              }
+                              className={cn(
+                                'flex size-8 items-center justify-center rounded-pill border transition-colors',
+                                active ? 'border-ink' : 'border-gray-200 hover:border-gray-400',
+                              )}
+                            >
+                              <span
+                                className={cn(
+                                  'size-5 rounded-pill border border-gray-200',
+                                  colour.id === 'brand-gradient' && 'bg-brand-gradient',
+                                )}
+                                style={
+                                  colour.id === 'brand-gradient'
+                                    ? undefined
+                                    : { backgroundColor: colour.id }
+                                }
+                              />
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      <p className="text-[13px] text-gray-500">
+                        Faites glisser le texte sur l’aperçu pour le placer.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="mt-3">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() =>
+                          setStyle((current) => ({
+                            ...current,
+                            text: defaultParticipantText(zone, ratio),
+                          }))
+                        }
+                      >
+                        <Type className="size-3.5" aria-hidden />
+                        Ajouter un texte
+                      </Button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-6 rounded-lg border border-gray-200 bg-white p-5">
+                  <span className="text-[13px] font-semibold text-gray-700">
+                    Enregistrer mon visuel
+                  </span>
+
+                  <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                    <Button
+                      variant="primary"
+                      size="md"
+                      onClick={() => void runExport('png')}
+                      disabled={exporting !== null || blocked || quota === null}
+                    >
+                      {exporting === 'png' ? (
+                        <>
+                          <Loader2 className="size-4 animate-spin" aria-hidden />
+                          Préparation…
+                        </>
+                      ) : (
+                        <>
+                          <Download className="size-4" aria-hidden />
+                          Télécharger l’image
+                        </>
+                      )}
+                    </Button>
+
+                    {animated && (
+                      <Button
+                        variant="ghost"
+                        size="md"
+                        onClick={() => void runExport('video')}
+                        disabled={exporting !== null || blocked || quota === null}
+                      >
+                        {exporting === 'video' ? (
+                          <>
+                            <Loader2 className="size-4 animate-spin" aria-hidden />
+                            {Math.round(progress * 100)} %
+                          </>
+                        ) : (
+                          <>
+                            <Video className="size-4" aria-hidden />
+                            Télécharger la vidéo
+                          </>
+                        )}
+                      </Button>
+                    )}
+                  </div>
+
+                  {exporting === 'video' && (
+                    <div className="mt-3 h-1 w-full overflow-hidden rounded-pill bg-gray-100">
+                      <div
+                        className="h-full bg-brand-gradient transition-[width] duration-150"
+                        style={{ width: `${Math.round(progress * 100)}%` }}
+                      />
+                    </div>
+                  )}
+
+                  {/*
+                    Bannière du filigrane.
+                    Elle dit la vérité, et rien de plus : le badge est posé par
+                    le créateur, pas par le participant, et seul un compte peut
+                    le retirer. On ne propose donc aucun bouton d'achat ici — le
+                    participant n'a pas de compte, et un bouton qui n'active rien
+                    serait un mensonge. Le lien mène à la page des formules, qui
+                    explique elle-même comment les obtenir.
+                  */}
+                  {creatorWatermark && (
+                    <div className="mt-4 flex items-start gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3.5">
+                      <BadgeCheck
+                        className="mt-0.5 size-4 shrink-0 text-purple"
+                        strokeWidth={1.75}
+                        aria-hidden
+                      />
+                      <div>
+                        <p className="text-[13px] leading-relaxed text-gray-600">
+                          Ce visuel porte le badge « Créé avec Campagnes ». Il est ajouté par le
+                          créateur de la campagne : seul son compte peut le retirer.
+                        </p>
+                        <Link
+                          href="/tarifs"
+                          className="mt-1.5 inline-block text-[13px] font-medium text-ink underline underline-offset-2"
+                        >
+                          Voir ce que retire une formule payante
+                        </Link>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/*
+                  Étape de partage. Elle vient après l'enregistrement, jamais
+                  avant, et ne conditionne rien : elle n'apparaît que lorsque la
+                  campagne est encore ouverte. Inviter des proches vers une
+                  campagne bloquée les enverrait dans un cul-de-sac — mieux vaut
+                  ne rien proposer que proposer un lien mort.
+                */}
+                {sharing && !blocked && (
+                  <SharePanel
+                    campaign={campaign}
+                    downloaded={downloaded}
+                    downloading={exporting !== null}
+                    onDownload={() => void runExport('png')}
+                  />
+                )}
+              </>
+            ) : (
+              <Card className="mt-6 p-5">
+                <span className="text-[13px] font-semibold text-gray-700">Comment ça marche</span>
+                <ol className="mt-3 flex flex-col gap-3 text-[13px] leading-relaxed text-gray-500">
+                  <li className="flex gap-2">
+                    <span className="font-semibold text-ink">1.</span>
+                    Vous choisissez une photo.
+                  </li>
+                  <li className="flex gap-2">
+                    <span className="font-semibold text-ink">2.</span>
+                    {frame.photo_anchor
+                      ? 'Vous la placez dans la zone prévue par le cadre.'
+                      : 'Vous la placez derrière le cadre.'}
+                  </li>
+                  <li className="flex gap-2">
+                    <span className="font-semibold text-ink">3.</span>
+                    Vous ajoutez un filtre ou un texte si vous voulez, puis vous enregistrez.
+                  </li>
+                </ol>
+                <p className="mt-4 border-t border-gray-200 pt-4 text-xs leading-relaxed text-gray-400">
+                  Votre photo est traitée dans votre navigateur. Elle n’est jamais envoyée à nos
+                  serveurs, et rien n’est conservé. Seul votre téléchargement est compté, afin que
+                  le créateur sache quand sa campagne est épuisée.
+                </p>
+              </Card>
+            )}
+
+            {/*
+              Écran de blocage — apparaît quand les 10 téléchargements offerts
+              sont consommés. Il remplace les boutons d'export, pas l'écran
+              entier : le participant garde la vue de son visuel, et comprend
+              que la limite est atteinte plutôt que de croire à une panne.
+            */}
+            {blocked && (
+              <div
+                role="status"
+                className="mt-6 flex flex-col items-start gap-3 rounded-lg border border-gray-200 bg-gray-50 p-5"
+              >
+                <span className="text-[13px] font-semibold text-ink">
+                  Cette campagne a atteint sa limite
+                </span>
+                <p className="text-[13px] leading-relaxed text-gray-600">
+                  {campaign.name} a été utilisée{' '}
+                  {new Intl.NumberFormat('fr-FR').format(quota.used)} fois. Son creator peut la
+                  prolonger — son visuel n’est pas perdu, revenez plus tard.
+                </p>
+                <p className="text-xs leading-relaxed text-gray-400">
+                  Vous pouvez continuer à composer votre visuel : seul le téléchargement est
+                  momentanément indisponible.
+                </p>
+              </div>
+            )}
+
+            {/* Compteur restant, une fois connu et tant que le lien reste ouvert. */}
+            {!blocked && left !== null && left <= 3 && (
+              <p className="mt-5 text-center text-xs text-gray-400">
+                Il reste {left} téléchargement{left > 1 ? 's' : ''} gratuit{left > 1 ? 's' : ''}{' '}
+                sur cette campagne.
+              </p>
+            )}
+
+            <InlineError>{error}</InlineError>
+          </div>
+
+          {/* ---------------- Rebond produit ---------------- */}
+          <div className="mt-14 border-t border-gray-200 pt-8">
+            <div className="flex flex-col items-center justify-between gap-4 text-center md:flex-row md:text-left">
+              <div>
+                <p className="text-[15px] font-semibold">Vous organisez votre propre campagne ?</p>
+                <p className="mt-1 text-[13px] text-gray-500">
+                  Créez votre cadre et partagez un lien comme celui-ci. C’est gratuit.
+                </p>
+              </div>
+              <ButtonLink href="/signup" variant="secondary" size="sm">
+                Créer ma campagne
+              </ButtonLink>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}

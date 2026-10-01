@@ -1,63 +1,100 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Canvas as FabricCanvas, FabricObject } from 'fabric';
+import type { Canvas as FabricCanvas, FabricImage, FabricObject, IText } from 'fabric';
 import { cn } from '@/lib/cn';
 import { ratioSpec } from '@/lib/ratios';
 import { photoZone } from '@/lib/descriptor';
-import { createTextObject } from '@/lib/fabric-text';
+import { createImageObject } from '@/lib/fabric-image';
 import { createShapeObject } from '@/lib/fabric-shape';
+import { createTextObject, resolveTextFill, setTextContent } from '@/lib/fabric-text';
 import {
+  DEFAULT_PARTICIPANT_STYLE,
   clampPlacement,
+  clampTextPosition,
+  participantTextLayer,
+  participantTextWidth,
+  photoLayer,
   photoSize,
   type ParticipantPhoto,
+  type ParticipantStyle,
+  type ParticipantText,
   type PhotoPlacement,
 } from '@/lib/participant';
+import { applyPhotoFilter, type PhotoFilter } from '@/lib/photo-filters';
 import { addBadge } from '@/lib/watermark';
 import type { Descriptor } from '@/lib/types';
 
 /**
  * Scène du parcours participant.
  *
- * Elle affiche le cadre du créateur **par-dessus** la photo du participant. Le
- * cadre est inerte (ni sélectionnable, ni déplaçable) : seul le participant
- * bouge sa photo. C'est la traduction directe de la règle produit — le cadre est
- * un contrat figé, la photo est la seule variable.
+ * Elle affiche le cadre du créateur **par-dessus** les calques du participant :
+ * sa photo, puis son texte. Le cadre est inerte (ni sélectionnable, ni
+ * déplaçable) : le participant ne bouge que ce qui lui appartient. C'est la
+ * traduction directe de la règle produit — le cadre est un contrat figé, la
+ * photo et le texte sont les seules variables.
  *
  * Le canvas travaille dans le repère natif du ratio et n'est réduit à l'écran
  * que par `setZoom` : les coordonnées échangées avec le parent sont donc
  * exactement celles du descripteur, sans conversion.
+ *
+ * **Aucun réglage de pixels n'est appliqué au canvas seul.** Le filtre photo
+ * passe par `applyPhotoFilter()`, la même fonction que l'export : l'écran et le
+ * fichier ne peuvent pas diverger.
  */
 export function ParticipantStage({
   descriptor,
   photo,
   placement,
+  style = DEFAULT_PARTICIPANT_STYLE,
   watermark = false,
-  filter = 'none',
   onPlacementChange,
+  onTextChange,
   onReady,
 }: {
   descriptor: Descriptor;
   photo: ParticipantPhoto;
   placement: PhotoPlacement;
+  /** Filtre et texte du participant. */
+  style?: ParticipantStyle;
   /** Affiche le filigrane à l'écran, exactement là où l'export le posera. */
   watermark?: boolean;
-  filter?: string;
   onPlacementChange: (next: PhotoPlacement) => void;
+  onTextChange?: (next: ParticipantText) => void;
   onReady?: (api: { fitToView: () => void }) => void;
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
-  const filterStyle = filter === 'blur' ? 'blur(5px)' : filter === 'grayscale' ? 'grayscale(100%)' : 'none';
   const canvasElRef = useRef<HTMLCanvasElement>(null);
   const canvasRef = useRef<FabricCanvas | null>(null);
-  const photoObjectRef = useRef<FabricObject | null>(null);
+  const photoObjectRef = useRef<FabricImage | null>(null);
+  const textObjectRef = useRef<IText | null>(null);
 
   /** Dernier placement émis : évite que le parent nous le renvoie en boucle. */
   const lastEmitted = useRef<string>('');
   const placementRef = useRef(placement);
   placementRef.current = placement;
 
+  /**
+   * Le style est lu par référence dans les effets : le contenu du texte change à
+   * chaque frappe, et le mettre en dépendance reconstruirait la scène entière
+   * pendant que le participant écrit.
+   */
+  const styleRef = useRef(style);
+  styleRef.current = style;
+
+  /** Filtre réellement appliqué à l'objet photo, pour ne pas le refiltrer pour rien. */
+  const appliedFilter = useRef<PhotoFilter | null>(null);
+
   const [zoom, setZoom] = useState(0.3);
+  /**
+   * Incrémenté quand la scène vient d'être (re)construite.
+   *
+   * La construction est asynchrone, alors que les effets React s'exécutent avant
+   * que le canvas n'existe. Ce compteur donne aux effets dépendants du canvas un
+   * signal fiable — sans lui, ni le filtre ni le texte ne se poseraient après une
+   * reconstruction.
+   */
+  const [ready, setReady] = useState(0);
 
   const spec = useMemo(() => ratioSpec(descriptor.ratio), [descriptor.ratio]);
   const layers = useMemo(
@@ -69,6 +106,8 @@ export function ParticipantStage({
 
   const placementKey = (p: PhotoPlacement) =>
     `${p.zoom.toFixed(4)}|${Math.round(p.x)}|${Math.round(p.y)}`;
+
+  const textActive = style.text !== null;
 
   /* ---------------- Zoom adaptatif ---------------- */
   const fitToView = useCallback(() => {
@@ -107,81 +146,109 @@ export function ParticipantStage({
     [zone, onPlacementChange, photo],
   );
 
+  /**
+   * Le texte, lui, n'a pas de domaine autorisé : il se pose où le participant
+   * veut. On le retient seulement dans le cadre, sinon il deviendrait
+   * irrécupérable — la scène ne se déplace pas.
+   */
+  const emitText = useCallback(
+    (object: FabricObject) => {
+      const current = styleRef.current.text;
+      if (!current) return;
+
+      const size = {
+        w: (object.width ?? 0) * (object.scaleX ?? 1),
+        h: (object.height ?? 0) * (object.scaleY ?? 1),
+      };
+      const safe = clampTextPosition(
+        size,
+        { w: spec.width, h: spec.height },
+        object.left ?? current.x,
+        object.top ?? current.y,
+      );
+
+      object.set({ left: safe.x, top: safe.y });
+      object.setCoords();
+      onTextChange?.({ ...current, x: Math.round(safe.x), y: Math.round(safe.y) });
+    },
+    [onTextChange, spec.width, spec.height],
+  );
+
+  /* ---------------- Construction du texte ---------------- */
+  const buildTextObject = useCallback(async (): Promise<IText | null> => {
+    const text = styleRef.current.text;
+    if (!text) return null;
+
+    const layer = participantTextLayer(text, zone, descriptor.ratio);
+    return createTextObject(layer, {
+      interactive: true,
+      fitWidth: participantTextWidth(zone),
+    });
+  }, [zone, descriptor.ratio]);
+
   /* ---------------- Montage ---------------- */
   useEffect(() => {
     let disposed = false;
     let canvas: FabricCanvas | null = null;
 
     void (async () => {
-      const { Canvas, FabricImage, Rect } = await import('fabric');
+      const { Canvas } = await import('fabric');
       if (disposed || !canvasElRef.current) return;
 
       canvas = new Canvas(canvasElRef.current, {
         preserveObjectStacking: true,
-        // Pas de sélection au lasso : il n'y a qu'un objet mobile, et un
-        // rectangle de sélection accidentel donnerait l'impression d'un bug.
+        // Pas de sélection au lasso : il n'y a que des objets mobiles isolés, et
+        // un rectangle de sélection accidentel donnerait l'impression d'un bug.
         selection: false,
         backgroundColor: 'transparent',
       });
       canvasRef.current = canvas;
 
-      /* 1. La photo du participant — tout en bas, et seule mobile. */
+      /* 1. La photo du participant — tout en bas, et mobile. */
       try {
-        const image = await FabricImage.fromURL(photo.src, { crossOrigin: 'anonymous' });
-        if (disposed) return;
-
         const start = placementRef.current;
-        const size = photoSize(photo, zone, start.zoom);
-        const naturalWidth = image.width || size.w;
-        const naturalHeight = image.height || size.h;
-
-        image.set({
-          left: start.x,
-          top: start.y,
-          originX: 'left',
-          originY: 'top',
-          selectable: true,
-          evented: true,
-          // Pas de poignées : le zoom se règle au curseur, pas au coin de l'image.
-          hasControls: false,
-          hasBorders: false,
-          lockRotation: true,
-          hoverCursor: 'grab',
-          moveCursor: 'grabbing',
-        });
-        image.scaleX = size.w / naturalWidth;
-        image.scaleY = size.h / naturalHeight;
-
-        /*
-         * En mode Fond, la photo est découpée à la zone. Le rectangle de découpe
-         * est `absolutePositioned` : il vit dans le repère du canvas, donc il ne
-         * suit ni le déplacement de la photo ni le zoom de la vue. C'est
-         * exactement ce que fait l'export — l'écran et le fichier coïncident.
-         */
-        if (descriptor.photo_anchor) {
-          image.clipPath = new Rect({
-            left: zone.x,
-            top: zone.y,
-            width: zone.w,
-            height: zone.h,
-            originX: 'left',
-            originY: 'top',
-            absolutePositioned: true,
-          });
-        }
+        const image = await createImageObject(
+          photoLayer(photo, zone, start, 0, styleRef.current.filter),
+          {
+            interactive: true,
+            /*
+             * En mode Fond, la photo est découpée à la zone. Le rectangle de
+             * découpe est `absolutePositioned` : il vit dans le repère du canvas,
+             * donc il ne suit ni le déplacement de la photo ni le zoom de la vue.
+             * C'est exactement ce que fait l'export.
+             */
+            clip: descriptor.photo_anchor ? zone : null,
+          },
+        );
+        if (disposed) return;
 
         canvas.add(image);
         photoObjectRef.current = image;
+        appliedFilter.current = styleRef.current.filter;
       } catch {
         /* l'absence de photo est gérée par le parent, qui ne monte pas cette scène */
+      }
+
+      /*
+       * 1bis. Le texte du participant, au-dessus de sa photo et sous le cadre.
+       *
+       * Il est inséré à l'index 1 alors que seuls la photo et lui sont sur le
+       * canvas : les calques du cadre, ajoutés ensuite, passent donc par-dessus.
+       * L'ordre d'empilement reproduit exactement celui du descripteur.
+       */
+      const text = await buildTextObject();
+      if (disposed) return;
+      if (text) {
+        canvas.insertAt(1, text);
+        textObjectRef.current = text;
       }
 
       /* 2. Les calques du cadre — par-dessus, inertes. */
       for (const layer of layers) {
         try {
           if (layer.type === 'shape') {
-            // Inerte, comme le texte : seul le cadre compte, et la photo du
-            // participant doit rester le seul objet que l'on attrape.
+            // Inerte, comme le texte du créateur : seul le cadre compte, et les
+            // calques du participant doivent rester les seuls objets attrapables.
             // `hidden` par Fabric : un calque masqué dans l'éditeur ne doit pas
             // apparaître après publication, sinon « masquer » ne masquerait
             // que chez le créateur.
@@ -189,30 +256,16 @@ export function ParticipantStage({
             object.set({ visible: layer.visible !== false } as never);
             canvas.add(object);
           } else if (layer.type === 'text') {
-            const text = await createTextObject(layer);
-            canvas.add(text);
+            const object = await createTextObject(layer, {
+              visible: layer.visible !== false,
+            });
+            canvas.add(object);
           } else {
             if (!layer.src) continue;
-            const image = await FabricImage.fromURL(layer.src, { crossOrigin: 'anonymous' });
-            if (disposed) return;
-            const naturalWidth = image.width || layer.w;
-            const naturalHeight = image.height || layer.h;
-            image.set({
-              left: layer.x,
-              top: layer.y,
-              angle: layer.rotation,
-              opacity: layer.opacity,
-              originX: 'left',
-              originY: 'top',
-              selectable: false,
-              evented: false,
-              // Même règle que pour les formes et le texte : le masque posé
-              // dans l'éditeur doit survivre à la publication.
+            const object = await createImageObject(layer, {
               visible: layer.visible !== false,
-            } as never);
-            image.scaleX = layer.w / naturalWidth;
-            image.scaleY = layer.h / naturalHeight;
-            canvas.add(image);
+            });
+            canvas.add(object);
           }
         } catch {
           // Un calque illisible ne doit pas empêcher de participer.
@@ -225,7 +278,7 @@ export function ParticipantStage({
        * Il est dessiné par la MÊME fonction que l'export (`lib/watermark.ts`).
        * Un simple aperçu en HTML finirait par diverger de quelques pixels — et
        * le participant découvrirait alors un badge mal placé après téléchargement.
-       * Inerte, il n'intercepte jamais le glissement de la photo.
+       * Inerte, il n'intercepte jamais le glissement.
        */
       if (watermark) {
         await addBadge(canvas, spec.width, spec.height);
@@ -233,24 +286,33 @@ export function ParticipantStage({
       }
 
       canvas.requestRenderAll();
+      setReady((n) => n + 1);
 
       /* 4. Le déplacement ne peut jamais découvrir le cadre. */
       canvas.on('object:moving', (event) => {
         const object = event.target;
-        if (!object || object !== photoObjectRef.current) return;
-        const safe = clampPlacement(photo, zone, {
-          zoom: placementRef.current.zoom,
-          x: object.left ?? 0,
-          y: object.top ?? 0,
-        });
-        object.set({ left: safe.x, top: safe.y });
-        object.setCoords();
-        emit(object);
+        if (!object) return;
+
+        if (object === photoObjectRef.current) {
+          const safe = clampPlacement(photo, zone, {
+            zoom: placementRef.current.zoom,
+            x: object.left ?? 0,
+            y: object.top ?? 0,
+          });
+          object.set({ left: safe.x, top: safe.y });
+          object.setCoords();
+          emit(object);
+          return;
+        }
+
+        if (object === textObjectRef.current) emitText(object);
       });
 
       canvas.on('object:modified', (event) => {
         const object = event.target;
-        if (object && object === photoObjectRef.current) emit(object);
+        if (!object) return;
+        if (object === photoObjectRef.current) emit(object);
+        else if (object === textObjectRef.current) emitText(object);
       });
 
       fitToView();
@@ -262,11 +324,129 @@ export function ParticipantStage({
       void canvas?.dispose();
       canvasRef.current = null;
       photoObjectRef.current = null;
+      textObjectRef.current = null;
+      appliedFilter.current = null;
     };
-    // La scène se reconstruit quand la photo change : sans cela, « Changer de
-    // photo » mettrait à jour l'état du parent sans que le canvas suive.
-    // Le badge en fait partie : c'est un objet du canvas, il faut le reposer.
-  }, [photo, layers, zone, watermark, spec.width, spec.height, emit, fitToView, onReady]);
+    /*
+     * La scène se reconstruit quand la photo change : sans cela, « Changer de
+     * photo » mettrait à jour l'état du parent sans que le canvas suive.
+     * Le badge en fait partie : c'est un objet du canvas, il faut le reposer.
+     *
+     * Le style n'en fait **pas** partie : filtre, contenu et couleur du texte
+     * sont appliqués sur les objets existants, sans reconstruire la scène. La
+     * reconstruire à chaque frappe ferait perdre la position du texte et
+     * rechargerait toutes les images du cadre — un clignotement pour rien.
+     */
+  }, [
+    photo,
+    layers,
+    zone,
+    watermark,
+    spec.width,
+    spec.height,
+    emit,
+    emitText,
+    buildTextObject,
+    descriptor.photo_anchor,
+    descriptor.ratio,
+    fitToView,
+    onReady,
+  ]);
+
+  /* ---------------- Le filtre change ---------------- */
+  useEffect(() => {
+    const object = photoObjectRef.current;
+    const canvas = canvasRef.current;
+    if (!object || !canvas) return;
+    if (appliedFilter.current === style.filter) return;
+
+    let alive = true;
+    void (async () => {
+      await applyPhotoFilter(object, style.filter);
+      if (!alive) return;
+      appliedFilter.current = style.filter;
+      object.setCoords();
+      canvas.requestRenderAll();
+    })();
+
+    return () => {
+      alive = false;
+    };
+    // `ready` : après une reconstruction, le filtre doit être reposé sur le
+    // nouvel objet photo.
+  }, [style.filter, ready]);
+
+  /* ---------------- Le texte apparaît ou disparaît ---------------- */
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const current = textObjectRef.current;
+
+    if (!textActive) {
+      if (current) {
+        canvas.remove(current);
+        textObjectRef.current = null;
+        canvas.requestRenderAll();
+      }
+      return;
+    }
+
+    // Déjà en place : c'est l'effet de contenu qui prend la suite.
+    if (current) return;
+
+    let alive = true;
+    void (async () => {
+      const object = await buildTextObject();
+      if (!alive || !object) return;
+      const target = canvasRef.current;
+      if (!target) return;
+
+      // Juste au-dessus de la photo : la même place que dans le descripteur.
+      const photoIndex = photoObjectRef.current
+        ? target.getObjects().indexOf(photoObjectRef.current)
+        : -1;
+      target.insertAt(photoIndex + 1, object);
+      textObjectRef.current = object;
+      target.requestRenderAll();
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [textActive, ready, buildTextObject]);
+
+  /* ---------------- Le contenu ou la couleur du texte change ---------------- */
+  const textContent = style.text?.content ?? '';
+  const textColor = style.text?.color ?? '';
+
+  useEffect(() => {
+    const object = textObjectRef.current;
+    const canvas = canvasRef.current;
+    const current = styleRef.current.text;
+    if (!object || !canvas || !current) return;
+
+    let alive = true;
+    void (async () => {
+      const fill = await resolveTextFill(current.color);
+      if (!alive) return;
+      object.set({ fill: fill as string });
+      // Le budget de largeur est réappliqué ici : sans lui, un texte qui
+      // s'allonge pendant la frappe finirait par dépasser le cadre.
+      setTextContent(object, current.content, participantTextWidth(zone));
+      canvas.requestRenderAll();
+    })();
+
+    return () => {
+      alive = false;
+    };
+    /*
+     * La position n'est pas une dépendance : dès que l'objet existe, elle
+     * appartient au canvas, et c'est `emitText` qui la remonte au parent.
+     * L'inclure ici ferait combattre l'état du parent contre le doigt du
+     * participant.
+     */
+  }, [textContent, textColor, zone]);
 
   /* ---------------- Le parent change le placement (curseur de zoom) ---------------- */
   useEffect(() => {

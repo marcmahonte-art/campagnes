@@ -9,6 +9,7 @@ import {
 } from './types';
 import { isRatio, ratioSpec } from './ratios';
 import { isFontFamily } from './fonts';
+import { isPhotoFilter } from './photo-filters';
 import { RADIUS_MAX, STROKE_MAX, isShapeKind, shapeSpec } from './shapes';
 import type { LayerMotion, MotionPlan, MotionPresetId } from './motion';
 
@@ -99,6 +100,16 @@ export interface PhotoZone {
  * décrit un visuel en cours de composition, jamais un cadre publié.
  */
 export const PARTICIPANT_PHOTO_ID = 'participant-photo';
+
+/**
+ * Identifiant réservé du calque qui porte le texte du participant.
+ *
+ * Comme la photo, il n'existe que dans un descripteur composé — jamais dans un
+ * cadre enregistré. L'identifiant est fixe parce que le calque est unique : le
+ * participant écrit **un** texte, et deux textes se disputeraient la même place
+ * sans que l'interface puisse le lui expliquer simplement.
+ */
+export const PARTICIPANT_TEXT_ID = 'participant-text';
 
 /** Le cadre entier, dans le repère du ratio. */
 export function frameZone(ratio: Ratio): PhotoZone {
@@ -380,6 +391,13 @@ export function parseDescriptor(input: unknown): Descriptor {
           type: 'image',
           src: str(l.src, ''),
           label: typeof l.label === 'string' ? l.label : undefined,
+          /*
+           * Un filtre inconnu est **abandonné**, pas remplacé par `none` : la
+           * différence compte. Écrire `none` ferait croire que la question a été
+           * traitée, et un rendu futur ne saurait plus qu'il a perdu quelque
+           * chose. Omis, il repart simplement au défaut, qui est aussi `none`.
+           */
+          ...(isPhotoFilter(l.filter) ? { filter: l.filter } : {}),
         } satisfies ImageLayer;
       }
 
@@ -419,7 +437,7 @@ export function serializeDescriptor(descriptor: Descriptor): string {
         .sort((a, b) => a.z - b.z)
         .map((l) => {
           if (l.type === 'image') {
-            const { id, type, src, x, y, w, h, rotation, z, opacity, visible, locked } = l;
+            const { id, type, src, x, y, w, h, rotation, z, opacity, visible, locked, filter } = l;
             return {
               id,
               type,
@@ -431,6 +449,9 @@ export function serializeDescriptor(descriptor: Descriptor): string {
               rotation,
               z,
               opacity,
+              // `none` est omis, comme tout réglage resté au défaut : un calque
+              // sans filtre se sérialise exactement comme avant leur arrivée.
+              ...(filter && filter !== 'none' ? { filter } : {}),
               ...(visible === false ? { visible: false } : {}),
               ...(locked ? { locked: true } : {}),
             };
@@ -516,27 +537,36 @@ function isNeutralMotion(motion: LayerMotion): boolean {
 }
 
 /**
- * Insère un mouvement neutre à la position `index`, après avoir complété le plan
- * jusqu'à `layerCount` entrées.
+ * Insère `count` mouvements neutres à la position `index`, après avoir complété
+ * le plan jusqu'à `layerCount` entrées.
  *
  * Nécessaire parce que `sampleAt()` indexe les mouvements **par position** :
  * glisser un calque au milieu du descripteur décalerait sinon tous les suivants,
- * et le cadre ne jouerait plus la même animation. La photo du participant occupe
- * donc une position, avec un mouvement neutre — les calques du créateur gardent
- * exactement les leurs.
+ * et le cadre ne jouerait plus la même animation. Les calques du participant
+ * (sa photo, son texte) occupent donc chacun une position, avec un mouvement
+ * neutre — les calques du créateur gardent exactement les leurs.
+ *
+ * `count` vaut 1 par défaut : le cas d'un seul calque ajouté reste écrit comme
+ * avant, et l'appel à deux calques ne fait qu'élargir la même opération.
  */
 export function insertNeutralMotion(
   motion: MotionPlan | null | undefined,
   index: number,
   layerCount: number,
+  count = 1,
 ): MotionPlan | null {
   if (!motion) return null;
+  if (count < 1) return motion;
 
   const layers = [...motion.layers];
   // Un plan plus court que le nombre de calques ferait « boucler » les indices :
   // on le complète d'abord, ce qui ne change rien aux positions déjà définies.
   while (layers.length < layerCount) layers.push({ ...NEUTRAL_MOTION });
-  layers.splice(Math.min(index, layers.length), 0, { ...NEUTRAL_MOTION });
+  layers.splice(
+    Math.min(index, layers.length),
+    0,
+    ...Array.from({ length: count }, () => ({ ...NEUTRAL_MOTION })),
+  );
 
   return { ...motion, layers };
 }
