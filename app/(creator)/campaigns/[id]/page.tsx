@@ -493,7 +493,31 @@ export default function CampaignEditorPage() {
               Ouvrir
             </ButtonLink>
           )}
-        </div>
+          </div>
+          {/* Private link generation */}
+          <div className="mt-3 flex items-center gap-2">
+            {!privateLink && (
+              <Button variant="secondary" onClick={generatePrivateLink} disabled={privateLinkLoading}>
+                {privateLinkLoading ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" aria-hidden /> Génération…
+                  </>
+                ) : (
+                  <>Créer lien privé</>
+                )}
+              </Button>
+            )}
+            {privateLink && (
+              <div className="flex items-center gap-2">
+                <code className="flex-1 truncate rounded-md border border-gray-200 bg-gray-50 px-3 py-2.5 font-mono text-sm text-gray-700">
+                  {`${SITE_URL}/d/${privateLink}`}
+                </code>
+                <Button variant="ghost" onClick={() => { void navigator.clipboard.writeText(`${SITE_URL}/d/${privateLink}`); }}>
+                  <Copy className="size-4" aria-hidden /> Copier
+                </Button>
+              </div>
+            )}
+          </div>
       </section>
 
       {/* ---------------- Zone sensible ---------------- */}
@@ -538,9 +562,15 @@ function QuotaMeter({ used, quota }: { used: number; quota: number }) {
   const ratio = Math.min(1, used / safeQuota);
   const left = remaining(used, quota);
   const pct = Math.round(ratio * 100);
+  const badgeColor = left === 0 ? 'bg-red-500' : left <= 3 ? 'bg-orange-500' : 'bg-green-500';
+  const badgeLabel = left === 0 ? 'Épuisé' : left <= 3 ? 'Proche' : 'Disponible';
 
   return (
     <div className="flex flex-col gap-2">
+      {/* Badge indicating quota status */}
+      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium text-white ${badgeColor}`}>
+        {badgeLabel} {left} / {quota}
+      </span>
       <div className="flex items-baseline justify-between text-[13px]">
         <span className="font-medium tabular-nums">
           {used} / {quota}
