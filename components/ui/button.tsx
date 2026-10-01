@@ -52,7 +52,8 @@ export function ButtonLink({
   className,
   children,
   target,
-}: CommonProps & { href: string; target?: string }) {
+  onClick,
+}: CommonProps & { href: string; target?: string; onClick?: () => void }) {
   const isExternal = href.startsWith('http');
   if (isExternal) {
     return (
@@ -60,6 +61,7 @@ export function ButtonLink({
         href={href}
         target={target ?? '_blank'}
         rel="noreferrer"
+        onClick={onClick}
         className={cn(BASE, VARIANTS[variant], SIZES[size], className)}
       >
         {children}
@@ -67,7 +69,11 @@ export function ButtonLink({
     );
   }
   return (
-    <Link href={href} className={cn(BASE, VARIANTS[variant], SIZES[size], className)}>
+    <Link
+      href={href}
+      onClick={onClick}
+      className={cn(BASE, VARIANTS[variant], SIZES[size], className)}
+    >
       {children}
     </Link>
   );

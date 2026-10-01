@@ -215,6 +215,16 @@ export interface Campaign {
   participants_used: number;
   /** Téléchargements autorisés : 10 à la création, puis +100 / 500 / 1 000 / 5 000 par extension. */
   participants_granted: number;
+  /**
+   * Texte de partage rédigé par le créateur. `null` → Campagnes en compose un
+   * à partir du nom de la campagne (voir `lib/share.ts`).
+   */
+  share_text?: string | null;
+  /**
+   * Hashtags définis par le créateur, sans le `#` initial. `#Campagnes` et
+   * celui déduit du nom sont ajoutés automatiquement, et la liste est plafonnée.
+   */
+  share_hashtags?: string[] | null;
   created_at: string;
 }
 

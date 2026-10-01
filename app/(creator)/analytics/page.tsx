@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { BarChart3, Eye, Frame, Info, LayoutGrid } from 'lucide-react';
+import { Eye, Facebook, Frame, Info, LayoutGrid, MessageCircle, Music2 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { FeatureGate } from '@/components/plans/feature-gate';
 import { Spinner } from '@/components/ui/feedback';
@@ -10,6 +10,7 @@ import { backend } from '@/lib/backend';
 import { useSession } from '@/lib/backend/session';
 import { hasFeature } from '@/lib/plans';
 import { ratioSpec } from '@/lib/ratios';
+import type { ShareStats } from '@/lib/share';
 import type { CampaignWithFrame } from '@/lib/types';
 
 const numberFormat = new Intl.NumberFormat('fr-FR');
@@ -17,11 +18,19 @@ const numberFormat = new Intl.NumberFormat('fr-FR');
 export default function AnalyticsPage() {
   const { user } = useSession();
   const [campaigns, setCampaigns] = useState<CampaignWithFrame[]>([]);
+  const [shareStats, setShareStats] = useState<Record<string, ShareStats>>({});
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     if (!user) return;
-    setCampaigns(await backend.listCampaigns(user.id));
+    const list = await backend.listCampaigns(user.id);
+    setCampaigns(list);
+    /*
+     * Les partages sont lus après les campagnes : on ne demande que les
+     * identifiants qui existent, plutôt que de charger un agrégat entier dont
+     * on ne saurait que faire.
+     */
+    setShareStats(await backend.getShareStats(list.map((c) => c.id)));
     setLoading(false);
   }, [user]);
 
@@ -38,8 +47,28 @@ export default function AnalyticsPage() {
       byRatio.set(campaign.ratio, (byRatio.get(campaign.ratio) ?? 0) + 1);
     }
 
-    return { published, drafts, byRatio };
-  }, [campaigns]);
+    const shares = { total: 0, whatsapp: 0, facebook: 0, tiktok: 0 };
+    for (const stats of Object.values(shareStats)) {
+      shares.total += stats.total;
+      shares.whatsapp += stats.whatsapp;
+      shares.facebook += stats.facebook;
+      shares.tiktok += stats.tiktok;
+    }
+
+    return { published, drafts, byRatio, shares };
+  }, [campaigns, shareStats]);
+
+  /** Campagnes ayant au moins un partage, la plus partagée d'abord. */
+  const sharedCampaigns = useMemo(
+    () =>
+      campaigns
+        .map((campaign) => ({ campaign, stats: shareStats[campaign.id] }))
+        .filter((entry): entry is { campaign: CampaignWithFrame; stats: ShareStats } =>
+          Boolean(entry.stats && entry.stats.total > 0),
+        )
+        .sort((a, b) => b.stats.total - a.stats.total),
+    [campaigns, shareStats],
+  );
 
   if (!user) {
     return (
@@ -141,6 +170,89 @@ export default function AnalyticsPage() {
         </Card>
       </section>
 
+      {/* ---------------- Partages sociaux ---------------- */}
+      <section className="flex flex-col gap-4">
+        <div className="flex items-baseline justify-between gap-3">
+          <h2 className="text-[18px] font-semibold">Partages sociaux</h2>
+          <span className="text-[13px] text-gray-500">
+            {numberFormat.format(totals.shares.total)} au total
+          </span>
+        </div>
+
+        {totals.shares.total === 0 ? (
+          <Card className="p-6">
+            <p className="text-[13px] leading-relaxed text-gray-500">
+              Aucun partage enregistré pour l’instant. Le comptage démarre dès qu’un participant
+              partage une campagne publiée — ou télécharge son visuel.
+            </p>
+          </Card>
+        ) : (
+          <>
+            <div className="grid gap-5 sm:grid-cols-3">
+              <StatCard
+                icon={MessageCircle}
+                label="WhatsApp"
+                value={numberFormat.format(totals.shares.whatsapp)}
+                hint="partages"
+              />
+              <StatCard
+                icon={Facebook}
+                label="Facebook"
+                value={numberFormat.format(totals.shares.facebook)}
+                hint="partages"
+              />
+              <StatCard
+                icon={Music2}
+                label="TikTok"
+                value={numberFormat.format(totals.shares.tiktok)}
+                hint="ouvertures du dépôt"
+              />
+            </div>
+
+            <Card className="divide-y divide-gray-100 overflow-hidden">
+              {sharedCampaigns.map(({ campaign, stats }) => (
+                <div
+                  key={campaign.id}
+                  className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5"
+                >
+                  <Link
+                    href={`/campaigns/${campaign.id}`}
+                    className="min-w-0 truncate text-[14px] font-medium transition-colors hover:text-purple"
+                  >
+                    {campaign.name}
+                  </Link>
+                  <span className="flex items-center gap-3 text-[12px] text-gray-500">
+                    <span className="font-medium tabular-nums text-ink">
+                      {numberFormat.format(stats.total)}
+                    </span>
+                    <span className="tabular-nums">
+                      WhatsApp {stats.whatsapp} · Facebook {stats.facebook} · TikTok {stats.tiktok}
+                    </span>
+                  </span>
+                </div>
+              ))}
+            </Card>
+          </>
+        )}
+
+        {/*
+          Ce paragraphe n'est pas une précaution de style : le compteur est
+          réellement déclaratif (voir migration 0011). Le navigateur du
+          participant annonce le partage ; rien ne permet de vérifier qu'il a
+          bien eu lieu, ni qu'il n'a pas été répété. Présenter ces chiffres
+          comme une mesure certifiée serait un mensonge, et le créateur prendrait
+          des décisions sur une base fausse.
+        */}
+        <p className="flex items-start gap-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-[12px] leading-relaxed text-gray-500">
+          <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+          <span>
+            Ces chiffres sont <span className="font-medium text-ink">indicatifs</span> : ils sont
+            annoncés par le navigateur du participant, et rien ne permet de les vérifier côté
+            serveur. Aucune donnée personnelle n’est conservée — ni identité, ni adresse IP.
+          </span>
+        </p>
+      </section>
+
       {/* ---------------- Détail par campagne ---------------- */}
       <section className="flex flex-col gap-4">
         <div className="flex items-baseline justify-between">
@@ -199,9 +311,10 @@ export default function AnalyticsPage() {
       <p className="flex items-start gap-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-[12px] leading-relaxed text-gray-500">
         <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden />
         <span>
-          Les statistiques de trafic (ouvertures de lien, taux de conversion) arriveront avec le
-          parcours participant. Cette page mesure ce qui est disponible aujourd’hui : l’activité de
-          vos campagnes.
+          Les ouvertures de lien et les taux de conversion ne sont pas mesurés : Campagnes ne
+          dépose aucun cookie de mesure et n’identifie aucun visiteur. Cette page décrit donc ce qui
+          est réellement observable — l’activité de vos campagnes, et les partages que leurs
+          participants ont bien voulu annoncer.
         </span>
       </p>
     </div>

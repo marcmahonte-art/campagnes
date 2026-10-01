@@ -1,616 +1,166 @@
-'use client';
-
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import Link from 'next/link';
-import { useParams } from 'next/navigation';
-import {
-  ArrowLeft,
-  Download,
-  ImagePlus,
-  Loader2,
-  Minus,
-  Plus,
-  RotateCcw,
-  ShieldCheck,
-  Video,
-} from 'lucide-react';
-import { Logo } from '@/components/ui/logo';
-import { Button, ButtonLink } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { InlineError, Spinner } from '@/components/ui/feedback';
-import { ParticipantStage } from '@/components/participant/participant-stage';
-import { FilterTools } from '@/components/participant/filter-tools';
-import { Toolbar } from '@/components/participant/toolbar';
-import { backend } from '@/lib/backend';
-import { frameZone, photoZone } from '@/lib/descriptor';
-import { ratioSpec } from '@/lib/ratios';
-import type { PlanId } from '@/lib/plans';
-import {
-  dataUrlToBlob,
-  downloadBlob,
-  exportFilename,
-  exportPng,
-  exportVideo,
-} from '@/lib/video-export';
-import {
-  MAX_ZOOM,
-  MIN_ZOOM,
-  composeDescriptor,
-  initialPlacement,
-  movableAxes,
-  readPhotoFile,
-  zoomAroundCenter,
-  type ParticipantPhoto,
-  type PhotoPlacement,
-} from '@/lib/participant';
-import { blockedMessage, remaining } from '@/lib/quota';
-import type { CampaignQuota, GalleryItem } from '@/lib/types';
+import type { Metadata } from 'next';
+import { isSupabaseConfigured, SITE_URL } from '@/lib/backend/config';
+import { supabasePublic } from '@/lib/supabase/public';
+import { ParticipantCampaign } from './participant-campaign';
 
 /**
- * Page participant — `/c/[slug]`. C'est le seul écran que voit la communauté du
- * créateur, et il doit tenir en trois gestes : **je choisis ma photo, je la
- * place, je télécharge.**
+ * Page publique d'une campagne — `/c/[slug]`.
  *
- * Aucun compte, aucune application, aucun formulaire. La photo est lue dans le
- * navigateur et n'est jamais envoyée : le participant n'a rien à accepter, et il
- * n'y a rien à modérer côté plateforme.
+ * Cette page est un **coquille serveur** : elle n'existe que pour les balises
+ * Open Graph. Tout le parcours participant vit dans `ParticipantCampaign`, un
+ * composant client — lecture du fichier, composition Fabric, export ne peuvent
+ * pas se faire ailleurs.
+ *
+ * La séparation est nécessaire, pas décorative : un aperçu de partage est lu
+ * par le robot de WhatsApp ou de Facebook **avant** qu'aucun JavaScript ne soit
+ * exécuté. Un `generateMetadata` dans un composant client ne serait jamais vu.
+ *
+ * Elle lit en `anon`, sans cookie, et ne consomme aucun quota : ouvrir la page
+ * ne coûte rien, seule la réservation au téléchargement décompte une unité.
  */
-export default function ParticipantPage() {
-  const params = useParams<{ slug: string }>();
-  const slug = typeof params?.slug === 'string' ? params.slug : '';
 
-  const [campaign, setCampaign] = useState<GalleryItem | null>(null);
-  const [loading, setLoading] = useState(true);
+interface ShareMeta {
+  name: string;
+  description: string;
+  image: string | null;
+}
 
-  const [photo, setPhoto] = useState<ParticipantPhoto | null>(null);
-  const [placement, setPlacement] = useState<PhotoPlacement | null>(null);
-  const [reading, setReading] = useState(false);
-  const [dragging, setDragging] = useState(false);
+/** Description de repli, quand le créateur n'a rien rédigé. */
+function defaultDescription(name: string): string {
+  return `Participez à la campagne ${name} : déposez votre photo, placez-la dans le cadre et repartez avec votre visuel. Sans compte, sans application.`;
+}
 
-  const [exporting, setExporting] = useState<'png' | 'video' | null>(null);
-  const [progress, setProgress] = useState(0);
-  const [error, setError] = useState<string | null>(null);
-  /**
-   * Quota de la campagne, lu dès le chargement. `null` tant qu'il n'est pas
-   * connu — on ne suppose jamais qu'il est ouvert, sinon un participant verrait
-   * le bouton de téléchargement avant de savoir qu'il est bloqué.
+/**
+ * Lit le strict nécessaire à un aperçu : un nom, une phrase, une vignette.
+ *
+ * Ne lève jamais. Une base injoignable, une colonne absente (migration non
+ * appliquée), un réseau coupé : dans tous les cas on renvoie `null`, et la page
+ * s'affiche normalement avec les métadonnées par défaut du site. Un aperçu raté
+ * est un désagrément ; une page blanche serait une panne.
+ */
+async function readShareMeta(slug: string): Promise<ShareMeta | null> {
+  if (!isSupabaseConfigured) return null;
+
+  try {
+    const sb = supabasePublic();
+
+    /*
+     * `select('*')` et non `select('name, share_text, frame_id')`.
+     *
+     * Nommer `share_text` ferait échouer la requête entière tant que la
+     * migration 0011 n'est pas appliquée — et la page perdrait son aperçu même
+     * pour un nom qu'elle pourrait lire. En lisant la ligne entière, une colonne
+     * absente reste simplement absente : on retombe sur la description par
+     * défaut, et l'aperçu fonctionne dès aujourd'hui.
+     */
+    const { data } = await sb
+      .from('campaigns')
+      .select('*')
+      .eq('slug', slug)
+      .eq('status', 'published')
+      .maybeSingle();
+
+    if (!data) return null;
+    const row = data as Record<string, unknown>;
+
+    const name = typeof row.name === 'string' && row.name.trim() ? row.name.trim() : 'Campagne';
+
+    /*
+     * Le texte du créateur sert de description, mais seulement sa première
+     * ligne : la suite contient le lien et les hashtags, qui n'ont rien à faire
+     * dans un aperçu — Facebook et WhatsApp les afficheraient en texte brut.
+     */
+    const custom = typeof row.share_text === 'string' ? row.share_text.trim() : '';
+    const firstLine = custom
+      .split('\n')
+      .map((line) => line.trim())
+      .find((line) => line.length > 0);
+
+    const description = firstLine ? firstLine.slice(0, 200) : defaultDescription(name);
+
+    /*
+     * La vignette est celle du **cadre**, pas le visuel du participant : ce
+     * dernier n'existe que dans son navigateur et n'est jamais téléversé. Il n'y
+     * a donc rien d'autre à exposer, et rien de privé à exposer.
+     */
+    let image: string | null = null;
+    const frameId = typeof row.frame_id === 'string' ? row.frame_id : null;
+
+    if (frameId) {
+      const { data: frame } = await sb
+        .from('frames')
+        .select('thumbnail_url')
+        .eq('id', frameId)
+        .maybeSingle();
+      const thumb = (frame as Record<string, unknown> | null)?.thumbnail_url;
+      // Seule une adresse absolue est utilisable dans `og:image`. Une data URL
+      // (mode démonstration) ou un chemin relatif serait ignoré, voire rejeté
+      // par le robot : mieux vaut ne rien annoncer.
+      if (typeof thumb === 'string' && /^https?:\/\//.test(thumb)) image = thumb;
+    }
+
+    return { name, description, image };
+  } catch {
+    return null;
+  }
+}
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}): Promise<Metadata> {
+  const { slug } = await params;
+  const url = `${SITE_URL}/c/${slug}`;
+  const meta = await readShareMeta(slug);
+
+  /*
+   * Campagne inconnue, brouillon, ou base non configurée : on ne fabrique aucun
+   * aperçu. Annoncer le nom d'un brouillon reviendrait à le publier, et un
+   * aperçu générique vaut mieux qu'un aperçu faux.
    */
-  const [quota, setQuota] = useState<CampaignQuota | null>(null);
-  const [filter, setFilter] = useState<string>('none');
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  /* ---------------- Chargement de la campagne ---------------- */
-  useEffect(() => {
-    if (!slug) return;
-    let alive = true;
-
-    void backend.getPublicCampaign(slug).then((found) => {
-      if (!alive) return;
-      setCampaign(found);
-      setLoading(false);
-    });
-
-    return () => {
-      alive = false;
+  if (!meta) {
+    return {
+      title: 'Campagne',
+      alternates: { canonical: url },
+      robots: { index: false, follow: false },
     };
-  }, [slug]);
-
-  /* ---------------- Quota ---------------- */
-  useEffect(() => {
-    if (!campaign) return;
-    let alive = true;
-    void backend.getCampaignQuota(campaign.id).then((found) => {
-      if (alive) setQuota(found);
-    });
-    return () => {
-      alive = false;
-    };
-  }, [campaign]);
-
-  const frame = campaign?.frame?.descriptor_json ?? null;
-  const ratio = frame?.ratio ?? campaign?.ratio ?? '1:1';
-  const spec = useMemo(() => ratioSpec(ratio), [ratio]);
-
-  /**
-   * Tout le positionnement se fait dans la zone photo, pas dans le cadre entier :
-   * le cadre en mode Cadre, la fenêtre du calque désigné en mode Fond. Le
-   * participant n'a pas à connaître la différence — la zone est ce qu'il voit.
-   */
-  const zone = useMemo(
-    () => (frame ? photoZone(frame) : frameZone(ratio)),
-    [frame, ratio],
-  );
-
-  /**
-   * Le filigrane suit la formule du **créateur** — le participant n'en a pas.
-   * La projection publique expose ce seul booléen, jamais la formule.
-   */
-  const creatorWatermark = campaign?.creator?.watermark ?? true;
-  const exportPlan: PlanId = creatorWatermark ? 'free' : 'creator';
-
-  /** Descripteur effectivement rendu : le cadre du créateur + la photo en dessous. */
-  const composed = useMemo(
-    () => (frame ? composeDescriptor(frame, photo, placement) : null),
-    [frame, photo, placement],
-  );
-
-  const animated = Boolean(frame?.motion);
-
-  /**
-   * Le quota est-il épuisé ? `null` = pas encore lu, donc on ne suppose jamais
-   * que le lien est ouvert.
-   */
-  const blocked = quota !== null && !quota.open;
-  const left = quota ? remaining(quota.used, quota.quota) : null;
-
-  /* ---------------- Choix de la photo ---------------- */
-  const choosePhoto = useCallback(
-    async (file: File | undefined) => {
-      if (!file) return;
-      setError(null);
-      setReading(true);
-      try {
-        const next = await readPhotoFile(file);
-        setPhoto(next);
-        setPlacement(initialPlacement(next, zone));
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Cette image n'a pas pu être ouverte.");
-      } finally {
-        setReading(false);
-      }
-    },
-    [zone],
-  );
-
-  /* ---------------- Export ---------------- */
-  const runExport = useCallback(
-    async (kind: 'png' | 'video') => {
-      if (!composed || !campaign) return;
-      setError(null);
-      setExporting(kind);
-      setProgress(0);
-      try {
-        /*
-         * Le quota est réservé **avant** le rendu, jamais après : un export
-         * coûteux que personne ne pourrait pas récupérer ne doit pas consommer
-         * une place. La réservation est atomique côté base, donc deux
-         * participants simultanés ne peuvent pas prendre deux fois la
-         * dernière place.
-         */
-        const claim = await backend.claimParticipation(campaign.id);
-        if (claim.error) throw new Error(claim.error);
-        // La fonction renvoie toujours une ligne, mais le type ne le peut pas
-        // garantir : on ne rend jamais un export sur une réservation incertaine.
-        const result = claim.data;
-        if (!result) throw new Error("La réservation n'a pas abouti. Réessayez dans un instant.");
-
-        setQuota({ used: result.used, quota: result.quota, open: result.granted });
-
-        if (!result.granted) {
-          throw new Error(blockedMessage(campaign.name));
-        }
-
-        if (kind === 'png') {
-          const dataUrl = await exportPng({ descriptor: composed, plan: exportPlan });
-          downloadBlob(dataUrlToBlob(dataUrl), exportFilename(campaign.name, 'png'));
-        } else {
-          const result = await exportVideo({
-            descriptor: composed,
-            plan: exportPlan,
-            onProgress: (p) => setProgress(p.ratio),
-          });
-          downloadBlob(result.blob, exportFilename(campaign.name, result.extension));
-        }
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "L'enregistrement a échoué.");
-      } finally {
-        setExporting(null);
-        setProgress(0);
-      }
-    },
-    [campaign, composed, exportPlan],
-  );
-
-  /* ---------------- États transitoires ---------------- */
-  if (loading) {
-    return (
-      <div className="flex min-h-dvh items-center justify-center">
-        <Spinner className="size-5 text-gray-400" />
-      </div>
-    );
   }
 
-  if (!campaign || !frame) {
-    return (
-      <div className="flex min-h-dvh flex-col items-center justify-center gap-5 px-4 text-center">
-        <Logo size="lg" asLink={true} />
-        <p className="max-w-sm text-sm leading-relaxed text-gray-500">
-          {campaign
-            ? "Cette campagne n'a pas encore de cadre. Son créateur doit en enregistrer un avant qu'elle puisse être partagée."
-            : "Ce lien ne correspond à aucune campagne publiée. Il a peut-être été retiré, ou l'adresse est incomplète."}
-        </p>
-        <Link
-          href="/"
-          className="flex items-center gap-1.5 text-[13px] text-gray-500 transition-colors hover:text-ink"
-        >
-          <ArrowLeft className="size-3.5" aria-hidden />
-          Retour à l’accueil
-        </Link>
-      </div>
-    );
-  }
+  // Le séparateur suit le gabarit du site (`%s · Campagnes`), pour qu'un aperçu
+  // et un onglet de navigateur annoncent la même chose.
+  const title = `${meta.name} · Campagnes`;
+  const images = meta.image
+    ? [{ url: meta.image, alt: `Aperçu de la campagne ${meta.name}` }]
+    : undefined;
 
-  const creatorLabel = campaign.creator
-    ? campaign.creator.org_name || `@${campaign.creator.username}`
-    : null;
+  return {
+    title: meta.name,
+    description: meta.description,
+    alternates: { canonical: url },
+    openGraph: {
+      type: 'website',
+      url,
+      title,
+      description: meta.description,
+      siteName: 'Campagnes',
+      locale: 'fr_FR',
+      images,
+    },
+    twitter: {
+      card: images ? 'summary_large_image' : 'summary',
+      title,
+      description: meta.description,
+      images: meta.image ? [meta.image] : undefined,
+    },
+  };
+}
 
-  const axes = photo && placement ? movableAxes(photo, zone, placement.zoom) : null;
-
-  return (
-    <div className="min-h-dvh bg-white">
-      {/* ---------------- En-tête minimal ----------------
-          Le participant vient faire une chose précise : on ne met rien qui
-          puisse détourner son attention avant qu'il ait son visuel. */}
-      <header className="border-b border-gray-200">
-        <div className="container-shell flex h-16 items-center justify-between gap-4">
-          <Logo size="sm" />
-          {creatorLabel && (
-            <span className="truncate text-[13px] text-gray-500">
-              Créé par <span className="font-medium text-ink">{creatorLabel}</span>
-            </span>
-          )}
-        </div>
-      </header>
-        <Toolbar />
-        <FilterTools filter={filter} setFilter={setFilter} />
-
-      <main className="container-shell py-10 md:py-14">
-        <div className="mx-auto max-w-3xl">
-          {/* ---------------- Titre ---------------- */}
-          <div className="text-center">
-            <span className="inline-flex items-center gap-1.5 rounded-pill border border-gray-200 px-3 py-1 text-[11px] font-medium text-gray-500">
-              <ShieldCheck className="size-3.5" aria-hidden />
-              Votre photo reste sur votre appareil
-            </span>
-            <h1 className="mt-4 text-[28px] font-bold leading-tight md:text-[38px]">
-              {campaign.name}
-            </h1>
-            <p className="mx-auto mt-3 max-w-xl text-sm leading-relaxed text-gray-500">
-              Choisissez une photo, placez-la comme vous voulez, puis enregistrez votre visuel.
-              Aucun compte, aucune application.
-            </p>
-          </div>
-
-          {/*
-            Une seule colonne : le participant ne fait qu'une chose à la fois.
-            Les réglages vivent sous l'aperçu, pas dans un panneau à côté — le
-            regard ne quitte jamais le visuel qu'il est en train de composer.
-          */}
-          <div className="mt-10">
-            {/* ---------------- Scène ---------------- */}
-            <div className="min-w-0">
-              {photo && placement ? (
-                <ParticipantStage
-                  descriptor={frame}
-                  photo={photo}
-                  placement={placement}
-                  watermark={creatorWatermark}
-                  onPlacementChange={setPlacement}
-                />
-              ) : (
-                /* ---------------- Dépôt de la photo ---------------- */
-                <div
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    setDragging(true);
-                  }}
-                  onDragLeave={() => setDragging(false)}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    setDragging(false);
-                    void choosePhoto(e.dataTransfer.files?.[0]);
-                  }}
-                  className={
-                    'relative flex min-h-[320px] flex-col items-center justify-center gap-5 overflow-hidden rounded-lg border-2 border-dashed p-8 text-center transition-colors ' +
-                    (dragging ? 'border-purple bg-purple/5' : 'border-gray-200 bg-gray-50')
-                  }
-                >
-                  {campaign.frame?.thumbnail_url ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={campaign.frame.thumbnail_url}
-                      alt={`Aperçu du cadre ${campaign.name}`}
-                      className="max-h-56 max-w-full rounded-md object-contain shadow-sm"
-                    />
-                  ) : (
-                    <span
-                      aria-hidden
-                      className="rounded-md border-2 border-gray-300 bg-white"
-                      style={{
-                        width: ratio === '16:9' ? 200 : ratio === '9:16' ? 112 : 150,
-                        height: ratio === '16:9' ? 112 : ratio === '9:16' ? 200 : 150,
-                      }}
-                    />
-                  )}
-
-                  <div>
-                    <p className="text-sm font-medium">Déposez votre photo ici</p>
-                    <p className="mt-1 text-[13px] text-gray-500">
-                      ou choisissez-la depuis votre appareil
-                    </p>
-                  </div>
-
-                  <Button
-                    variant="primary"
-                    size="lg"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={reading}
-                  >
-                    {reading ? (
-                      <>
-                        <Loader2 className="size-4 animate-spin" aria-hidden />
-                        Ouverture…
-                      </>
-                    ) : (
-                      <>
-                        <ImagePlus className="size-4" aria-hidden />
-                        Choisir ma photo
-                      </>
-                    )}
-                  </Button>
-
-                  <p className="text-xs text-gray-400">
-                    Format {spec.label.toLowerCase()} · JPG, PNG ou WebP
-                  </p>
-                </div>
-              )}
-
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => {
-                  void choosePhoto(e.target.files?.[0]);
-                  // Sans cette remise à zéro, rechoisir le MÊME fichier ne
-                  // déclencherait aucun `change` — le bouton semblerait cassé.
-                  e.target.value = '';
-                }}
-              />
-
-            </div>
-
-            {photo && placement ? (
-              <>
-                {/* ---------------- Réglages, juste sous l'aperçu ---------------- */}
-                <div className="mt-5">
-                  <div className="flex items-center gap-3">
-                    <button
-                      type="button"
-                      aria-label="Réduire"
-                      disabled={placement.zoom <= MIN_ZOOM + 1e-9}
-                      onClick={() =>
-                        setPlacement((current) =>
-                          current
-                            ? zoomAroundCenter(photo, zone, current, current.zoom - 0.2)
-                            : current,
-                        )
-                      }
-                      className="flex size-9 shrink-0 items-center justify-center rounded-pill border border-gray-200 text-gray-700 transition-colors hover:border-ink disabled:opacity-35 disabled:hover:border-gray-200"
-                    >
-                      <Minus className="size-4" aria-hidden />
-                    </button>
-
-                    <input
-                      type="range"
-                      min={MIN_ZOOM}
-                      max={MAX_ZOOM}
-                      step={0.01}
-                      value={placement.zoom}
-                      onChange={(e) =>
-                        setPlacement((current) =>
-                          current
-                            ? zoomAroundCenter(photo, zone, current, Number(e.target.value))
-                            : current,
-                        )
-                      }
-                      className="min-w-0 flex-1 accent-purple"
-                      aria-label="Zoom de la photo"
-                    />
-
-                    <button
-                      type="button"
-                      aria-label="Agrandir"
-                      disabled={placement.zoom >= MAX_ZOOM - 1e-9}
-                      onClick={() =>
-                        setPlacement((current) =>
-                          current
-                            ? zoomAroundCenter(photo, zone, current, current.zoom + 0.2)
-                            : current,
-                        )
-                      }
-                      className="flex size-9 shrink-0 items-center justify-center rounded-pill border border-gray-200 text-gray-700 transition-colors hover:border-ink disabled:opacity-35 disabled:hover:border-gray-200"
-                    >
-                      <Plus className="size-4" aria-hidden />
-                    </button>
-
-                    <span className="w-10 shrink-0 text-right text-[13px] tabular-nums text-gray-500">
-                      {placement.zoom.toFixed(1)}×
-                    </span>
-                  </div>
-
-                  <div className="mt-3 flex items-center justify-center gap-2">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setPlacement(initialPlacement(photo, zone))}
-                    >
-                      <RotateCcw className="size-3.5" aria-hidden />
-                      Recentrer
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={reading}
-                    >
-                      <ImagePlus className="size-3.5" aria-hidden />
-                      Changer de photo
-                    </Button>
-                  </div>
-
-                  <p className="mt-3 text-center text-[13px] text-gray-500">
-                    {axes && axes.x && axes.y
-                      ? 'Faites glisser la photo pour la positionner.'
-                      : 'Zoomez pour pouvoir déplacer la photo.'}
-                  </p>
-                </div>
-
-                  <div className="mt-6 rounded-lg border border-gray-200 bg-white p-5">
-                    <span className="text-[13px] font-semibold text-gray-700">
-                      Enregistrer mon visuel
-                    </span>
-
-                    <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-                      <Button
-                        variant="primary"
-                        size="md"
-                        onClick={() => void runExport('png')}
-                        disabled={exporting !== null || blocked || quota === null}
-                      >
-                        {exporting === 'png' ? (
-                          <>
-                            <Loader2 className="size-4 animate-spin" aria-hidden />
-                            Préparation…
-                          </>
-                        ) : (
-                          <>
-                            <Download className="size-4" aria-hidden />
-                            Télécharger l’image
-                          </>
-                        )}
-                      </Button>
-
-                      {animated && (
-                        <Button
-                          variant="ghost"
-                          size="md"
-                          onClick={() => void runExport('video')}
-                          disabled={exporting !== null || blocked || quota === null}
-                        >
-                          {exporting === 'video' ? (
-                            <>
-                              <Loader2 className="size-4 animate-spin" aria-hidden />
-                              {Math.round(progress * 100)} %
-                            </>
-                          ) : (
-                            <>
-                              <Video className="size-4" aria-hidden />
-                              Télécharger la vidéo
-                            </>
-                          )}
-                        </Button>
-                      )}
-                    </div>
-
-                    {exporting === 'video' && (
-                      <div className="mt-3 h-1 w-full overflow-hidden rounded-pill bg-gray-100">
-                        <div
-                          className="h-full bg-brand-gradient transition-[width] duration-150"
-                          style={{ width: `${Math.round(progress * 100)}%` }}
-                        />
-                      </div>
-                    )}
-
-                    {creatorWatermark && (
-                      <p className="mt-4 text-xs leading-relaxed text-gray-400">
-                        Ce visuel porte le badge « Créé avec Campagnes ». Son créateur peut le
-                        retirer en passant à une formule payante.
-                      </p>
-                    )}
-                  </div>
-                </>
-              ) : (
-                <Card className="mt-6 p-5">
-                  <span className="text-[13px] font-semibold text-gray-700">Comment ça marche</span>
-                  <ol className="mt-3 flex flex-col gap-3 text-[13px] leading-relaxed text-gray-500">
-                    <li className="flex gap-2">
-                      <span className="font-semibold text-ink">1.</span>
-                      Vous choisissez une photo.
-                    </li>
-                    <li className="flex gap-2">
-                      <span className="font-semibold text-ink">2.</span>
-                      {frame.photo_anchor
-                        ? 'Vous la placez dans la zone prévue par le cadre.'
-                        : 'Vous la placez derrière le cadre.'}
-                    </li>
-                    <li className="flex gap-2">
-                      <span className="font-semibold text-ink">3.</span>
-                      Vous enregistrez, c’est prêt.
-                    </li>
-                  </ol>
-                  <p className="mt-4 border-t border-gray-200 pt-4 text-xs leading-relaxed text-gray-400">
-                    Votre photo est traitée dans votre navigateur. Elle n’est jamais envoyée à nos
-                    serveurs, et rien n’est conservé. Seul votre téléchargement est compté, afin que
-                    le créateur sache quand sa campagne est épuisée.
-                  </p>
-                </Card>
-              )}
-
-            {/*
-              Écran de blocage — apparaît quand les 10 téléchargements offerts
-              sont consommés. Il remplace les boutons d'export, pas l'écran
-              entier : le participant garde la vue de son visuel, et comprend
-              que la limite est atteinte plutôt que de croire à une panne.
-            */}
-            {blocked && (
-              <div
-                role="status"
-                className="mt-6 flex flex-col items-start gap-3 rounded-lg border border-gray-200 bg-gray-50 p-5"
-              >
-                <span className="text-[13px] font-semibold text-ink">
-                  Cette campagne a atteint sa limite
-                </span>
-                <p className="text-[13px] leading-relaxed text-gray-600">
-                  {campaign.name} a été utilisée{' '}
-                  {new Intl.NumberFormat('fr-FR').format(quota.used)} fois. Son creator peut la
-                  prolonger — son visuel n’est pas perdu, revenez plus tard.
-                </p>
-                <p className="text-xs leading-relaxed text-gray-400">
-                  Vous pouvez continuer à composer votre visuel : seul le téléchargement est
-                  momentanément indisponible.
-                </p>
-              </div>
-            )}
-
-            {/* Compteur restant, une fois connu et tant que le lien reste ouvert. */}
-            {!blocked && left !== null && left <= 3 && (
-              <p className="mt-5 text-center text-xs text-gray-400">
-                Il reste {left} téléchargement{left > 1 ? 's' : ''} gratuit{left > 1 ? 's' : ''}{' '}
-                sur cette campagne.
-              </p>
-            )}
-
-            <InlineError>{error}</InlineError>
-          </div>
-
-          {/* ---------------- Rebond produit ---------------- */}
-          <div className="mt-14 border-t border-gray-200 pt-8">
-            <div className="flex flex-col items-center justify-between gap-4 text-center md:flex-row md:text-left">
-              <div>
-                <p className="text-[15px] font-semibold">Vous organisez votre propre campagne ?</p>
-                <p className="mt-1 text-[13px] text-gray-500">
-                  Créez votre cadre et partagez un lien comme celui-ci. C’est gratuit.
-                </p>
-              </div>
-              <ButtonLink href="/signup" variant="secondary" size="sm">
-                Créer ma campagne
-              </ButtonLink>
-            </div>
-          </div>
-        </div>
-      </main>
-    </div>
-  );
+export default async function ParticipantPage({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}) {
+  const { slug } = await params;
+  return <ParticipantCampaign slug={slug} />;
 }

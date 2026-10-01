@@ -13,6 +13,7 @@ import './globals.css';
 import { SessionProvider } from '@/lib/backend/session';
 import { DemoBanner } from '@/components/ui/feedback';
 import { isDemoMode } from '@/lib/backend';
+import { SITE_URL } from '@/lib/backend/config';
 
 /*
  * Polices de l'éditeur. Chaque police déclare les variantes qu'elle possède
@@ -81,6 +82,10 @@ const satisfy = Satisfy({
 });
 
 export const metadata: Metadata = {
+  // Sans `metadataBase`, Next.js résout les URL canoniques et Open Graph en
+  // `localhost:3000` — y compris en production. Les pages légales déclarent une
+  // canonique : elles seraient donc annoncées à la mauvaise adresse.
+  metadataBase: new URL(SITE_URL),
   title: {
     default: 'Campagnes — Créez. Animez. Partagez.',
     template: '%s · Campagnes',

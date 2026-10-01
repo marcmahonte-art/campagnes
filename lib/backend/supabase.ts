@@ -12,7 +12,8 @@ import { parseDescriptor } from '@/lib/descriptor';
 import { isCampaignKind } from '@/lib/campaign-kinds';
 import { FREE_DOWNLOADS, toClaim, toQuota } from '@/lib/quota';
 import { supabaseBrowser } from '@/lib/supabase/client';
-import { MEDIA_BUCKET, SITE_URL } from './config';
+import type { ShareEventType, ShareStats } from '@/lib/share';
+import { MEDIA_BUCKET, REPORTS_BUCKET, SITE_URL } from './config';
 import type {
   Backend,
   CreateCampaignInput,
@@ -105,6 +106,12 @@ function message(error: unknown, fallback: string): string {
     if (/duplicate key.*username/i.test(raw)) return 'Ce nom d’utilisateur est déjà pris.';
     if (/duplicate key.*slug/i.test(raw)) return 'Ce slug est déjà utilisé.';
     if (/Password should be at least/i.test(raw)) return 'Le mot de passe doit contenir au moins 6 caractères.';
+    // Une colonne absente ne veut pas dire « erreur de l'utilisateur » : elle
+    // veut dire que la base n'a pas encore reçu la migration correspondante.
+    // Afficher le message Postgres brut ferait porter au créateur une faute qui
+    // n'est pas la sienne, et ne lui dirait pas quoi faire.
+    if (/column .* does not exist|could not find the .* column|schema cache/i.test(raw))
+      return "Cette option n'est pas encore disponible : la base de données n'a pas reçu sa dernière mise à jour.";
     // Supabase plafonne fortement les envois d'emails d'authentification. Dire
     // « trop de tentatives » laissait croire à une faute de l'utilisateur : on
     // nomme la vraie limite et on donne la marche à suivre.
@@ -501,6 +508,143 @@ export const supabaseBackend: Backend = {
       frame,
       creator: creator ? rowToCreator(creator as Row) : null,
     };
+  },
+
+  /* --- Liens privés de distribution --------------------------------- */
+  /**
+   * `create_distribution_link` est `security definer` et vérifie elle-même que
+   * l'appelant est le propriétaire de la campagne. Le navigateur n'a donc aucun
+   * droit d'écriture direct sur `distribution_links`.
+   */
+  async createDistributionLink(campaignId, quota, expiresAt): Promise<Result<string>> {
+    const { data, error } = await supabaseBrowser().rpc('create_distribution_link', {
+      p_campaign_id: campaignId,
+      p_quota: quota,
+      p_expires_at: expiresAt ?? null,
+    });
+    if (error) return { error: message(error, 'Impossible de créer le lien privé.') };
+    if (typeof data !== 'string' || data.length === 0) {
+      return { error: "Le lien privé n'a pas pu être créé." };
+    }
+    return { data };
+  },
+
+  /**
+   * Un visiteur anonyme ne peut pas lire `distribution_links` : `resolve_distribution`
+   * lui rend seulement l'identifiant de la campagne, jamais le jeton, le quota ou
+   * l'échéance. Aucune unité de quota n'est consommée à l'ouverture de la page.
+   */
+  async getPrivateCampaign(token): Promise<GalleryItem | null> {
+    const sb = supabaseBrowser();
+
+    const { data, error } = await sb.rpc('resolve_distribution', { p_token: token });
+    if (error || !data) return null;
+
+    const campaignId = typeof data === 'string' ? data : null;
+    if (!campaignId) return null;
+
+    const { data: row } = await sb
+      .from('campaigns')
+      .select('*')
+      .eq('id', campaignId)
+      .eq('status', 'published')
+      .maybeSingle();
+    if (!row) return null;
+
+    const campaign = rowToCampaign(row as Row);
+    const frame = campaign.frame_id ? await this.getFrame(campaign.frame_id) : null;
+
+    const { data: creator } = await sb
+      .from('creator_profiles')
+      .select('id, username, org_name, logo_url, created_at, watermark')
+      .eq('id', campaign.owner_id)
+      .maybeSingle();
+
+    return {
+      ...campaign,
+      frame,
+      creator: creator ? rowToCreator(creator as Row) : null,
+    };
+  },
+
+  /* --- Signalements de contenu -------------------------------------- */
+  /**
+   * Tout est revalidé en base par `submit_report` : motif, longueurs, format de
+   * l'email et fréquence des envois. Le navigateur ne fait que donner un retour
+   * rapide — il ne protège rien.
+   */
+  async submitReport(input): Promise<Result> {
+    const { error } = await supabaseBrowser().rpc('submit_report', {
+      p_reason: input.reason,
+      p_campaign_url: input.campaignUrl || null,
+      p_description: input.description,
+      p_email: input.email,
+      p_attachment_path: input.attachmentPath ?? null,
+    });
+    if (error) return { error: message(error, "Le signalement n'a pas pu être envoyé.") };
+    return {};
+  },
+
+  /**
+   * Espace privé `reports`. Le chemin est horodaté et porte un identifiant
+   * aléatoire : deux personnes ne peuvent pas écraser la pièce jointe l'une de
+   * l'autre, même en déposant un fichier au même nom.
+   */
+  async uploadReportAttachment(file): Promise<Result<string>> {
+    const ext = (file.name.split('.').pop() || 'bin').toLowerCase();
+    const path = `${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}.${ext}`;
+
+    const { error } = await supabaseBrowser()
+      .storage.from(REPORTS_BUCKET)
+      .upload(path, file, {
+        upsert: false,
+        contentType: file.type || 'application/octet-stream',
+      });
+    if (error) return { error: message(error, "La pièce jointe n'a pas pu être envoyée.") };
+    return { data: path };
+  },
+
+  /* --- Partage social ------------------------------------------------ */
+  /**
+   * `record_share_event` est `security definer` et revalide elle-même le type
+   * de l'événement : la liste de `lib/share.ts` n'est qu'un confort côté
+   * navigateur. Elle refuse aussi les brouillons — un événement ne peut pas
+   * désigner une campagne que personne ne peut voir.
+   *
+   * Elle est ouverte à `anon`, comme le parcours participant lui-même.
+   */
+  async recordShareEvent(campaignId, eventType: ShareEventType): Promise<Result> {
+    const { error } = await supabaseBrowser().rpc('record_share_event', {
+      p_campaign_id: campaignId,
+      p_event_type: eventType,
+    });
+    if (error) return { error: message(error, "Le partage n'a pas pu être compté.") };
+    return {};
+  },
+
+  /**
+   * Lecture de la vue agrégée. `security_invoker = true` : la RLS de
+   * `campaign_events` s'applique, donc un créateur ne lit que ses propres
+   * campagnes — le filtre `in` ci-dessous n'est qu'une optimisation.
+   */
+  async getShareStats(campaignIds): Promise<Record<string, ShareStats>> {
+    if (campaignIds.length === 0) return {};
+
+    const { data } = await supabaseBrowser()
+      .from('campaign_share_stats')
+      .select('campaign_id, total, whatsapp, facebook, tiktok')
+      .in('campaign_id', campaignIds);
+
+    const out: Record<string, ShareStats> = {};
+    for (const row of (data as Row[] | null) ?? []) {
+      out[String(row.campaign_id)] = {
+        total: numOr(row.total, 0),
+        whatsapp: numOr(row.whatsapp, 0),
+        facebook: numOr(row.facebook, 0),
+        tiktok: numOr(row.tiktok, 0),
+      };
+    }
+    return out;
   },
 
   /* --- Formule ------------------------------------------------------ */

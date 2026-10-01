@@ -1,3 +1,4 @@
+"use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
@@ -7,8 +8,6 @@ import { Button, ButtonLink } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { InlineError, Spinner } from '@/components/ui/feedback';
 import { ParticipantStage } from '@/components/participant/participant-stage';
-import { Toolbar } from '@/components/participant/toolbar';
-import { FilterTools } from '@/components/participant/filter-tools';
 import { backend } from '@/lib/backend';
 import { frameZone, photoZone } from '@/lib/descriptor';
 import { ratioSpec } from '@/lib/ratios';
@@ -38,8 +37,6 @@ export default function PrivateParticipantPage() {
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [quota, setQuota] = useState<CampaignQuota | null>(null);
-
-  const [filter, setFilter] = useState<string>('none'); // placeholder state
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -162,10 +159,6 @@ export default function PrivateParticipantPage() {
           )}
         </div>
       </header>
-      {/* Toolbar */}
-      <Toolbar />
-      {/* Outils de filtre (placeholder) */}
-      <FilterTools filter={filter} setFilter={setFilter} />
       <main className="container-shell py-10 md:py-14">
         <div className="mx-auto max-w-3xl">
           {/* Titre */}

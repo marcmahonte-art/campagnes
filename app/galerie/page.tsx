@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Images, SearchX } from 'lucide-react';
 import { SiteHeader } from '@/components/site-header';
+import { SiteFooter } from '@/components/site-footer';
 import { Button, ButtonLink } from '@/components/ui/button';
 import { CreateTemplateCard, GalleryCard } from '@/components/gallery/gallery-card';
 import { GalleryFiltersBar } from '@/components/gallery/gallery-filters';
@@ -137,6 +138,8 @@ export default function GaleriePage() {
       </section>
 
       <TemplateDrawer item={preview} onClose={() => setPreview(null)} />
+
+      <SiteFooter />
     </>
   );
 }

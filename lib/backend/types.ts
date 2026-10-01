@@ -12,6 +12,8 @@ import type {
   Ratio,
   User,
 } from '@/lib/types';
+import type { ReportReason } from '@/lib/reports';
+import type { ShareEventType, ShareStats } from '@/lib/share';
 
 export type BackendMode = 'supabase' | 'local';
 
@@ -39,6 +41,17 @@ export interface UpdateProfilePatch {
   org_name?: string | null;
   logo_url?: string | null;
   onboarded_at?: string | null;
+}
+
+/** Signalement de contenu envoyé depuis la page publique `/signalement`. */
+export interface ReportInput {
+  reason: ReportReason;
+  /** Adresse de la campagne visée. Facultative : on peut signaler sans lien. */
+  campaignUrl: string;
+  description: string;
+  email: string;
+  /** Chemin de la pièce jointe déjà téléversée, le cas échéant. */
+  attachmentPath?: string | null;
 }
 
 /**
@@ -82,7 +95,12 @@ export interface Backend {
   createCampaign(input: CreateCampaignInput): Promise<Result<Campaign>>;
   updateCampaign(
     campaignId: string,
-    patch: Partial<Pick<Campaign, 'name' | 'slug' | 'ratio' | 'kind' | 'status' | 'frame_id'>>,
+    patch: Partial<
+      Pick<
+        Campaign,
+        'name' | 'slug' | 'ratio' | 'kind' | 'status' | 'frame_id' | 'share_text' | 'share_hashtags'
+      >
+    >,
   ): Promise<Result>;
   deleteCampaign(campaignId: string): Promise<Result>;
   listSlugs(): Promise<string[]>;
@@ -129,6 +147,77 @@ export interface Backend {
    * l'existence d'une campagne non publiée.
    */
   getPublicCampaign(slug: string): Promise<GalleryItem | null>;
+
+  /* --- Liens privés de distribution ---------------------------------- */
+  /**
+   * Crée un jeton de distribution privé rattaché à une campagne.
+   *
+   * Le quota du lien est **distinct** de celui de la campagne : un lien privé
+   * sert à compter les téléchargements d'une diffusion précise (un client, un
+   * événement), pas à prolonger la campagne entière. Ne jamais lui passer
+   * `participants_granted` : les deux compteurs ne mesurent pas la même chose.
+   *
+   * L'écriture passe par une fonction SQL `security definer` — le navigateur
+   * n'écrit jamais directement dans `distribution_links`.
+   */
+  createDistributionLink(
+    campaignId: string,
+    quota: number,
+    expiresAt?: string | null,
+  ): Promise<Result<string>>;
+
+  /**
+   * Résout un jeton privé vers sa campagne, **sans consommer de quota**.
+   *
+   * Ouvrir la page ne doit rien coûter : seule la réservation au moment du
+   * téléchargement décompte une unité. Renvoie `null` pour un jeton inconnu,
+   * expiré, révoqué ou épuisé — un lien mort doit être indiscernable d'un lien
+   * inexistant.
+   */
+  getPrivateCampaign(token: string): Promise<GalleryItem | null>;
+
+  /* --- Signalements de contenu -------------------------------------- */
+  /**
+   * Enregistre un signalement.
+   *
+   * L'appel passe par une fonction SQL `security definer` qui **revalide tout**
+   * (motif, longueurs, format de l'email) et applique une limitation de
+   * fréquence. La validation faite dans le navigateur n'est qu'un confort : elle
+   * est contournable, elle ne protège rien.
+   *
+   * Aucun signalement n'est lisible depuis l'application : ils sont consultés
+   * par l'équipe, jamais exposés au public ni au créateur visé.
+   */
+  submitReport(input: ReportInput): Promise<Result>;
+
+  /**
+   * Téléverse la pièce jointe d'un signalement, dans un espace **privé**.
+   *
+   * Distincte de `uploadImage` à dessein : celle-ci doit fonctionner sans
+   * compte, puisque le signalement est ouvert à tous.
+   */
+  uploadReportAttachment(file: File): Promise<Result<string>>;
+
+  /* --- Partage social ------------------------------------------------ */
+  /**
+   * Compte un partage. À appeler en « tir et oublie ».
+   *
+   * Un compteur en panne ne doit **jamais** empêcher un partage d'aboutir : le
+   * geste utile est local (ouvrir WhatsApp, copier dans le presse-papiers) et
+   * il a déjà eu lieu quand cette fonction est appelée. Son échec ne se montre
+   * donc pas au participant — il n'y peut rien, et cela ne le concerne pas.
+   */
+  recordShareEvent(campaignId: string, eventType: ShareEventType): Promise<Result>;
+
+  /**
+   * Partages par campagne, pour l'écran Analytics.
+   *
+   * Une campagne sans aucun partage est **absente** du résultat : l'appelant
+   * affiche zéro, il ne lit pas un objet vide. Renvoyer une entrée à zéro pour
+   * chaque campagne laisserait croire à une mesure, alors que rien n'a été
+   * mesuré.
+   */
+  getShareStats(campaignIds: string[]): Promise<Record<string, ShareStats>>;
 
   /* --- Formule ------------------------------------------------------ */
   /** Change la formule du compte. En mode Supabase, l'activation passe par un contact. */

@@ -1,5 +1,6 @@
 import { ArrowRight, Frame, LayoutGrid, Share2, Sparkles, UserX, Zap } from 'lucide-react';
 import { SiteHeader } from '@/components/site-header';
+import { SiteFooter } from '@/components/site-footer';
 import { Logo } from '@/components/ui/logo';
 import { ButtonLink } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -199,28 +200,7 @@ export default function HomePage() {
       </section>
 
       {/* ---------- Pied de page ---------- */}
-      <footer className="border-t border-gray-200">
-        <div className="container-shell flex flex-col items-start justify-between gap-4 py-10 md:flex-row md:items-center">
-          <div>
-            <Logo variant="black" size="sm" asLink={true} />
-            <p className="mt-2 text-[13px] text-gray-500">Créez. Animez. Partagez.</p>
-          </div>
-          <nav className="flex flex-wrap items-center gap-x-6 gap-y-2 text-[13px] text-gray-500">
-            <ButtonLink href="/galerie" variant="ghost" size="sm">
-              Galerie
-            </ButtonLink>
-            <ButtonLink href="/tarifs" variant="ghost" size="sm">
-              Tarifs
-            </ButtonLink>
-            <ButtonLink href="/signup" variant="ghost" size="sm">
-              Créer un compte
-            </ButtonLink>
-            <ButtonLink href="/login" variant="ghost" size="sm">
-              Se connecter
-            </ButtonLink>
-          </nav>
-        </div>
-      </footer>
+      <SiteFooter />
     </>
   );
 }

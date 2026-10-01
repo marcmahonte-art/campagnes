@@ -9,11 +9,12 @@ import {
   Copy,
   ExternalLink,
   Loader2,
+  Share2,
   Trash2,
   UploadCloud,
 } from 'lucide-react';
 import { Button, ButtonLink } from '@/components/ui/button';
-import { Field, Input, InputPrefix } from '@/components/ui/input';
+import { Field, Input, InputPrefix, Textarea } from '@/components/ui/input';
 import { StatusBadge } from '@/components/ui/badge';
 import { InlineError, Spinner } from '@/components/ui/feedback';
 import { FrameEditor } from '@/components/frame/frame-editor';
@@ -35,7 +36,14 @@ import {
 } from '@/lib/quota';
 import { maxLayers } from '@/lib/plans';
 import { isValidSlug } from '@/lib/slug';
-import { SITE_URL } from '@/lib/backend/config';
+import {
+  BRAND_HASHTAG,
+  MAX_CUSTOM_HASHTAGS,
+  buildShareText,
+  campaignHashtags,
+  parseHashtagsInput,
+  publicCampaignUrl,
+} from '@/lib/share';
 import type { CampaignWithFrame, Descriptor, Ratio } from '@/lib/types';
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
@@ -67,6 +75,20 @@ export default function CampaignEditorPage() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   /** Aperçu : masque les outils d'édition et joue l'animation du cadre. */
   const [preview, setPreview] = useState(false);
+
+  /**
+   * Texte et hashtags de partage.
+   *
+   * Volontairement **hors de l'autosave** : ces colonnes n'existent qu'à partir
+   * de la migration 0011. Les mêler à l'enregistrement du cadre ferait échouer
+   * ce dernier sur une base qui ne les porte pas encore — on perdrait le travail
+   * de composition pour une option annexe. Une sauvegarde explicite et isolée
+   * garantit qu'un échec ici ne coûte jamais le cadre.
+   */
+  const [shareText, setShareText] = useState('');
+  const [shareHashtags, setShareHashtags] = useState('');
+  const [shareState, setShareState] = useState<SaveState>('idle');
+  const [shareError, setShareError] = useState<string | null>(null);
 
   /** Tant que le chargement initial n'est pas terminé, l'autosave est désactivé. */
   const initialized = useRef(false);
@@ -114,6 +136,8 @@ export default function CampaignEditorPage() {
       history.reset(desc);
       setName(loaded.name);
       setSlug(loaded.slug);
+      setShareText(loaded.share_text ?? '');
+      setShareHashtags((loaded.share_hashtags ?? []).join(' '));
       setLoading(false);
       // Laisse le Frame Editor finir son premier rendu avant d'armer l'autosave.
       setTimeout(() => {
@@ -187,7 +211,35 @@ export default function CampaignEditorPage() {
   }, [descriptor, name, slug, persist, campaign, frameId]);
 
   /* ---------------- Actions ---------------- */
-  const publicUrl = useMemo(() => `${SITE_URL}/c/${campaign?.slug ?? ''}`, [campaign?.slug]);
+  /*
+   * Même fonction que celle utilisée par le participant : le créateur voit donc
+   * exactement le lien qui sera partagé, pas une approximation construite
+   * ailleurs à partir d'une autre source.
+   */
+  const publicUrl = useMemo(() => publicCampaignUrl(campaign?.slug ?? ''), [campaign?.slug]);
+
+  /**
+   * Aperçu du texte de partage, recalculé à la frappe.
+   *
+   * Le créateur voit exactement ce que le participant enverra — c'est la seule
+   * façon de comprendre ce que font les hashtags automatiques, et d'écrire un
+   * texte qui ne les répète pas.
+   */
+  const sharePreview = useMemo(
+    () =>
+      buildShareText(
+        { name, share_text: shareText, share_hashtags: parseHashtagsInput(shareHashtags) },
+        publicUrl,
+      ),
+    [name, shareText, shareHashtags, publicUrl],
+  );
+
+  /** Ce que `campaignHashtags` ajoutera tout seul, pour pouvoir le montrer. */
+  const automaticTags = useMemo(
+    () =>
+      campaignHashtags({ name, share_hashtags: [] }).filter((tag) => tag !== BRAND_HASHTAG),
+    [name],
+  );
 
   /** Le lien public ne répond plus : le quota de participants est consommé. */
   const blocked = campaign
@@ -228,6 +280,37 @@ export default function CampaignEditorPage() {
     } catch {}
   }
 
+  /**
+   * Enregistre le texte et les hashtags de partage.
+   *
+   * Écriture isolée, avec son propre indicateur d'état : l'échec de cette
+   * sauvegarde ne doit jamais se confondre avec celui du cadre, et le créateur
+   * doit savoir laquelle des deux a échoué.
+   */
+  async function saveShare() {
+    if (!campaign) return;
+    setShareState('saving');
+    setShareError(null);
+
+    const tags = parseHashtagsInput(shareHashtags);
+    const trimmed = shareText.trim();
+    const patch = {
+      share_text: trimmed ? trimmed : null,
+      share_hashtags: tags.length > 0 ? tags : null,
+    };
+
+    const result = await backend.updateCampaign(campaign.id, patch);
+    if (result.error) {
+      setShareState('error');
+      setShareError(result.error);
+      return;
+    }
+
+    setCampaign((prev) => (prev ? { ...prev, ...patch } : prev));
+    setShareState('saved');
+    setTimeout(() => setShareState((s) => (s === 'saved' ? 'idle' : s)), 2000);
+  }
+
   // Generate a private distribution link
   async function generatePrivateLink() {
     if (!campaign) return;
@@ -239,7 +322,7 @@ export default function CampaignEditorPage() {
     if (result.error) {
       setError(result.error);
     } else {
-      setPrivateLink(result.data);
+      setPrivateLink(result.data ?? null);
     }
     setPrivateLinkLoading(false);
   }
@@ -494,30 +577,100 @@ export default function CampaignEditorPage() {
             </ButtonLink>
           )}
           </div>
-          {/* Private link generation */}
-          <div className="mt-3 flex items-center gap-2">
-            {!privateLink && (
-              <Button variant="secondary" onClick={generatePrivateLink} disabled={privateLinkLoading}>
-                {privateLinkLoading ? (
-                  <>
-                    <Loader2 className="size-4 animate-spin" aria-hidden /> Génération…
-                  </>
-                ) : (
-                  <>Créer lien privé</>
-                )}
-              </Button>
-            )}
-            {privateLink && (
-              <div className="flex items-center gap-2">
-                <code className="flex-1 truncate rounded-md border border-gray-200 bg-gray-50 px-3 py-2.5 font-mono text-sm text-gray-700">
-                  {`${SITE_URL}/d/${privateLink}`}
-                </code>
-                <Button variant="ghost" onClick={() => { void navigator.clipboard.writeText(`${SITE_URL}/d/${privateLink}`); }}>
-                  <Copy className="size-4" aria-hidden /> Copier
-                </Button>
-              </div>
-            )}
+          {/*
+            Lien privé de distribution — parqué.
+            L'affordance est masquée tant que la migration 0009 n'est pas
+            appliquée : `create_distribution_link` n'existe pas encore en base,
+            le bouton ne pourrait donc qu'échouer. Un bouton qui ne peut pas
+            aboutir n'a rien à faire à l'écran.
+            Le code est conservé ci-dessus (`generatePrivateLink`, `privateLink`)
+            et le service `distributionService` passe désormais par la façade :
+            réafficher ce bloc suffira une fois la migration passée.
+          */}
+      </section>
+
+      {/* ---------------- Partage social ---------------- */}
+      <section className="flex flex-col gap-4 rounded-lg border border-gray-200 bg-white p-5">
+        <div className="flex items-start gap-2.5">
+          <Share2 className="mt-0.5 size-4 shrink-0 text-purple" strokeWidth={1.75} aria-hidden />
+          <div>
+            <h2 className="text-[15px] font-semibold">Partage social</h2>
+            <p className="mt-1 text-[13px] leading-relaxed text-gray-500">
+              Ce que vos participants verront au moment de partager. Laissez vide et Campagnes
+              rédige un texte à partir du nom de la campagne.
+            </p>
           </div>
+        </div>
+
+        <Field
+          label="Texte de partage"
+          htmlFor="share-text"
+          hint="Le lien public et les hashtags sont ajoutés automatiquement s’ils manquent."
+        >
+          <Textarea
+            id="share-text"
+            rows={3}
+            value={shareText}
+            onChange={(e) => setShareText(e.target.value)}
+            placeholder={`Je participe à ${name || 'la campagne'} ✨`}
+          />
+        </Field>
+
+        <Field
+          label="Hashtags"
+          htmlFor="share-hashtags"
+          hint={`Jusqu’à ${MAX_CUSTOM_HASHTAGS}. Séparez-les par une espace ou une virgule — le # est facultatif.`}
+        >
+          <Input
+            id="share-hashtags"
+            value={shareHashtags}
+            onChange={(e) => setShareHashtags(e.target.value)}
+            placeholder="SIAO, BurkinaFaso"
+          />
+        </Field>
+
+        {automaticTags.length > 0 && (
+          <p className="text-xs leading-relaxed text-gray-500">
+            Ajoutés automatiquement :{' '}
+            <span className="font-medium text-ink">{BRAND_HASHTAG}</span> et{' '}
+            <span className="font-medium text-ink">{automaticTags.join(' ')}</span>.
+          </p>
+        )}
+
+        <div>
+          <span className="text-xs font-medium text-gray-700">Aperçu du message</span>
+          <div className="mt-1.5 rounded-md border border-gray-200 bg-gray-50 p-3">
+            <p className="whitespace-pre-wrap font-mono text-[12px] leading-relaxed text-gray-700">
+              {sharePreview}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <Button variant="ghost" onClick={() => void saveShare()} disabled={shareState === 'saving'}>
+            {shareState === 'saving' ? (
+              <>
+                <Loader2 className="size-4 animate-spin" aria-hidden />
+                Enregistrement…
+              </>
+            ) : shareState === 'saved' ? (
+              <>
+                <Check className="size-4 text-success" aria-hidden />
+                Enregistré
+              </>
+            ) : (
+              'Enregistrer le partage'
+            )}
+          </Button>
+
+          {campaign.status !== 'published' && (
+            <span className="text-xs leading-relaxed text-gray-500">
+              Le partage ne devient actif qu’après publication.
+            </span>
+          )}
+        </div>
+
+        {shareError && <InlineError>{shareError}</InlineError>}
       </section>
 
       {/* ---------------- Zone sensible ---------------- */}

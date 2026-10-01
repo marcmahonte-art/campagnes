@@ -36,6 +36,7 @@ export type {
   Backend,
   BackendMode,
   CreateCampaignInput,
+  ReportInput,
   Result,
   SignUpOutcome,
   UpdateProfilePatch,

@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { ArrowRight, Coins, ShieldCheck, Sparkles } from 'lucide-react';
 import { SiteHeader } from '@/components/site-header';
+import { SiteFooter } from '@/components/site-footer';
 import { ButtonLink } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { OfferCard } from '@/components/plans/offer-card';
@@ -160,6 +161,8 @@ export default function TarifsPage() {
           </div>
         </Card>
       </section>
+
+      <SiteFooter />
     </>
   );
 }

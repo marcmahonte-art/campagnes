@@ -11,6 +11,7 @@ import type {
 import { createDescriptor } from '@/lib/descriptor';
 import { isCampaignKind } from '@/lib/campaign-kinds';
 import { FREE_DOWNLOADS, toQuota } from '@/lib/quota';
+import { SHARE_EVENTS, type ShareEventType, type ShareStats } from '@/lib/share';
 import type {
   Backend,
   CreateCampaignInput,
@@ -37,14 +38,26 @@ interface DbUser extends User {
   password: string;
 }
 
+/** Un partage compté, en mode démonstration. Même forme que `campaign_events`. */
+interface DbShareEvent {
+  campaign_id: string;
+  event_type: ShareEventType;
+  created_at: string;
+}
+
 interface Db {
   users: DbUser[];
   frames: Frame[];
   campaigns: Campaign[];
+  /**
+   * Compteurs de partage. Optionnel à la lecture : une base écrite avant la
+   * migration 0011 n'a pas ce champ, et ce n'est pas une raison pour la jeter.
+   */
+  shareEvents?: DbShareEvent[];
 }
 
 function emptyDb(): Db {
-  return { users: [], frames: [], campaigns: [] };
+  return { users: [], frames: [], campaigns: [], shareEvents: [] };
 }
 
 /**
@@ -78,6 +91,7 @@ function readDb(): Db {
       users: Array.isArray(parsed.users) ? parsed.users : [],
       frames: Array.isArray(parsed.frames) ? parsed.frames : [],
       campaigns: Array.isArray(parsed.campaigns) ? parsed.campaigns.map(normalize) : [],
+      shareEvents: Array.isArray(parsed.shareEvents) ? parsed.shareEvents : [],
     };
   } catch {
     return emptyDb();
@@ -284,10 +298,15 @@ export const localBackend: Backend = {
     const id = readSession();
     if (!id) return { error: 'Non connecté.' };
     const db = readDb();
+    const campaigns = db.campaigns.filter((c) => c.owner_id !== id);
+    // Les compteurs suivent la campagne : un événement orphelin n'a plus rien à
+    // mesurer, et le laisser grossir indéfiniment serait une fuite silencieuse.
+    const kept = new Set(campaigns.map((c) => c.id));
     writeDb({
       users: db.users.filter((u) => u.id !== id),
       frames: db.frames.filter((f) => f.owner_id !== id),
-      campaigns: db.campaigns.filter((c) => c.owner_id !== id),
+      campaigns,
+      shareEvents: (db.shareEvents ?? []).filter((e) => kept.has(e.campaign_id)),
     });
     writeSession(null);
     return {};
@@ -492,6 +511,76 @@ export const localBackend: Backend = {
       frame: db.frames.find((f) => f.id === campaign.frame_id) ?? null,
       creator: owner ? publicCreator(owner) : null,
     };
+  },
+
+  /* --- Liens privés de distribution --------------------------------- */
+  /**
+   * Le mode démonstration ne stocke aucun jeton de distribution : ni table, ni
+   * entrée prévue dans `localStorage`. On le dit franchement plutôt que de
+   * renvoyer un jeton que rien ne saurait ensuite résoudre.
+   */
+  async createDistributionLink(_campaignId, _quota, _expiresAt): Promise<Result<string>> {
+    return { error: 'Les liens privés ne sont pas disponibles en mode démonstration.' };
+  },
+
+  async getPrivateCampaign(_token): Promise<GalleryItem | null> {
+    return null;
+  },
+
+  /* --- Signalements de contenu -------------------------------------- */
+  /**
+   * Le mode démonstration n'a ni table de signalements ni espace de stockage
+   * privé. On le dit, plutôt que de laisser croire à un envoi qui ne mènerait
+   * nulle part : un signalement perdu en silence est le pire des cas, parce que
+   * la personne croit avoir agi.
+   */
+  async submitReport(_input): Promise<Result> {
+    return { error: 'Les signalements ne sont pas disponibles en mode démonstration.' };
+  },
+
+  async uploadReportAttachment(_file): Promise<Result<string>> {
+    return { error: 'Les signalements ne sont pas disponibles en mode démonstration.' };
+  },
+
+  /* --- Partage social ------------------------------------------------ */
+  /**
+   * Même règle qu'en base : le type est revalidé, et un brouillon ne reçoit
+   * aucun événement. La revalidation n'est pas une ceinture de sécurité ici —
+   * c'est ce qui garantit que les deux implémentations comptent la même chose,
+   * et donc que le mode démonstration dit la vérité sur le mode réel.
+   */
+  async recordShareEvent(campaignId, eventType): Promise<Result> {
+    if (!(SHARE_EVENTS as readonly string[]).includes(eventType)) {
+      return { error: "Type d'événement inconnu." };
+    }
+
+    const db = readDb();
+    const campaign = db.campaigns.find((c) => c.id === campaignId);
+    if (!campaign || campaign.status !== 'published') return {};
+
+    db.shareEvents = [
+      ...(db.shareEvents ?? []),
+      { campaign_id: campaignId, event_type: eventType, created_at: new Date().toISOString() },
+    ];
+    writeDb(db);
+    return {};
+  },
+
+  async getShareStats(campaignIds): Promise<Record<string, ShareStats>> {
+    const wanted = new Set(campaignIds);
+    const out: Record<string, ShareStats> = {};
+
+    for (const event of readDb().shareEvents ?? []) {
+      if (!wanted.has(event.campaign_id)) continue;
+      const stats = out[event.campaign_id] ?? { total: 0, whatsapp: 0, facebook: 0, tiktok: 0 };
+      stats.total += 1;
+      if (event.event_type === 'share_whatsapp') stats.whatsapp += 1;
+      else if (event.event_type === 'share_facebook') stats.facebook += 1;
+      else if (event.event_type === 'share_tiktok') stats.tiktok += 1;
+      out[event.campaign_id] = stats;
+    }
+
+    return out;
   },
 
   /* --- Formule ------------------------------------------------------ */
@@ -779,6 +868,7 @@ export async function seedDemoAccount(): Promise<User> {
     users: [...db.users, user],
     frames: [...db.frames, verticalFrame, squareFrame],
     campaigns: [...db.campaigns, published, draft],
+    shareEvents: db.shareEvents ?? [],
   });
   writeSession(userId);
 
