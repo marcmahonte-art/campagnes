@@ -20,6 +20,7 @@ import { FrameEditor } from '@/components/frame/frame-editor';
 import { useHistory } from '@/components/editor/use-history';
 import { DescriptorViewer } from '@/components/campaign/descriptor-viewer';
 import { backend } from '@/lib/backend';
+import { distributionService } from '@/lib/distribution-service';
 import { useSession } from '@/lib/backend/session';
 import { parseDescriptor } from '@/lib/descriptor';
 import { kindSpec, seedDescriptorFor } from '@/lib/campaign-kinds';
@@ -61,6 +62,8 @@ export default function CampaignEditorPage() {
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [privateLink, setPrivateLink] = useState<string | null>(null);
+  const [privateLinkLoading, setPrivateLinkLoading] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   /** Aperçu : masque les outils d'édition et joue l'animation du cadre. */
   const [preview, setPreview] = useState(false);
@@ -222,10 +225,26 @@ export default function CampaignEditorPage() {
       await navigator.clipboard.writeText(publicUrl);
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
-    } catch {
-      setCopied(false);
-    }
+    } catch {}
   }
+
+  // Generate a private distribution link
+  async function generatePrivateLink() {
+    if (!campaign) return;
+    setPrivateLinkLoading(true);
+    const result = await distributionService.createDistributionLink(
+      campaign.id,
+      campaign.participants_granted,
+    );
+    if (result.error) {
+      setError(result.error);
+    } else {
+      setPrivateLink(result.data);
+    }
+    setPrivateLinkLoading(false);
+  }
+
+
 
   async function removeCampaign() {
     if (!campaign) return;

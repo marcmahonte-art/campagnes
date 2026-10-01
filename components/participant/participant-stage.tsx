@@ -33,6 +33,7 @@ export function ParticipantStage({
   photo,
   placement,
   watermark = false,
+  filter = 'none',
   onPlacementChange,
   onReady,
 }: {
@@ -41,10 +42,12 @@ export function ParticipantStage({
   placement: PhotoPlacement;
   /** Affiche le filigrane à l'écran, exactement là où l'export le posera. */
   watermark?: boolean;
+  filter?: string;
   onPlacementChange: (next: PhotoPlacement) => void;
   onReady?: (api: { fitToView: () => void }) => void;
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
+  const filterStyle = filter === 'blur' ? 'blur(5px)' : filter === 'grayscale' ? 'grayscale(100%)' : 'none';
   const canvasElRef = useRef<HTMLCanvasElement>(null);
   const canvasRef = useRef<FabricCanvas | null>(null);
   const photoObjectRef = useRef<FabricObject | null>(null);

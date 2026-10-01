@@ -19,6 +19,8 @@ import { Button, ButtonLink } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { InlineError, Spinner } from '@/components/ui/feedback';
 import { ParticipantStage } from '@/components/participant/participant-stage';
+import { FilterTools } from '@/components/participant/filter-tools';
+import { Toolbar } from '@/components/participant/toolbar';
 import { backend } from '@/lib/backend';
 import { frameZone, photoZone } from '@/lib/descriptor';
 import { ratioSpec } from '@/lib/ratios';
@@ -74,6 +76,7 @@ export default function ParticipantPage() {
    * le bouton de téléchargement avant de savoir qu'il est bloqué.
    */
   const [quota, setQuota] = useState<CampaignQuota | null>(null);
+  const [filter, setFilter] = useState<string>('none');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -259,6 +262,8 @@ export default function ParticipantPage() {
           )}
         </div>
       </header>
+        <Toolbar />
+        <FilterTools filter={filter} setFilter={setFilter} />
 
       <main className="container-shell py-10 md:py-14">
         <div className="mx-auto max-w-3xl">
