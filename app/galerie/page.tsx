@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Images, SearchX } from 'lucide-react';
 import { SiteHeader } from '@/components/site-header';
@@ -10,6 +10,7 @@ import { CreateTemplateCard, GalleryCard } from '@/components/gallery/gallery-ca
 import { GalleryFiltersBar } from '@/components/gallery/gallery-filters';
 import { GallerySkeleton } from '@/components/gallery/gallery-skeleton';
 import { TemplateDrawer } from '@/components/gallery/template-drawer';
+import { useSession } from '@/lib/backend/session';
 import { backend } from '@/lib/backend';
 import { NO_FILTERS, activeFilterCount, filterGallery, type GalleryFilters } from '@/lib/gallery';
 import type { GalleryItem } from '@/lib/types';
@@ -32,6 +33,13 @@ export default function GaleriePage() {
   const [filters, setFilters] = useState<GalleryFilters>(NO_FILTERS);
   const [preview, setPreview] = useState<GalleryItem | null>(null);
 
+  /*
+   * La session décide si le cœur est actif. Elle est relue après le
+   * chargement : un visiteur qui se connecte dans un autre onglet voit ainsi
+   * ses campagnes deviennent « aimables » sans qu'il ait à recharger la page.
+   */
+  const { user } = useSession();
+
   useEffect(() => {
     let alive = true;
     void backend.listGallery().then((list) => {
@@ -42,6 +50,25 @@ export default function GaleriePage() {
     return () => {
       alive = false;
     };
+  }, []);
+
+  /*
+   * Un like met à jour **la liste**, pas la carte.
+   *
+   * La carte garde son propre état pendant la frappe — c'est ce qui rend le
+   * geste instantané — mais la liste est la source de vérité : sans cela, un
+   * filtre « Populaire » ne reréordonnerait rien, et un like pose en haut de
+   * l'écran resterait « vide » ailleurs.
+   *
+   * La modification est locale et instantanée : la base a déjà répondu, la
+   * fonction RPC a renvoyé le compteur exact.
+   */
+  const applyLike = useCallback((campaignId: string, likesCount: number, likedByMe: boolean) => {
+    setItems((current) =>
+      current.map((item) =>
+        item.id === campaignId ? { ...item, likesCount, likedByMe } : item,
+      ),
+    );
   }, []);
 
   const visible = useMemo(() => filterGallery(items, filters), [items, filters]);
@@ -131,13 +158,23 @@ export default function GaleriePage() {
             {!filtering && <CreateTemplateCard onClick={() => router.push('/campaigns/new')} />}
 
             {visible.map((item) => (
-              <GalleryCard key={item.id} item={item} onOpen={setPreview} />
+              <GalleryCard
+              key={item.id}
+              item={item}
+              onOpen={setPreview}
+              connected={Boolean(user)}
+              onLike={applyLike}
+            />
             ))}
           </div>
         )}
       </section>
 
-      <TemplateDrawer item={preview} onClose={() => setPreview(null)} />
+      <TemplateDrawer
+          item={preview}
+          onClose={() => setPreview(null)}
+          onLike={applyLike}
+        />
 
       <SiteFooter />
     </>

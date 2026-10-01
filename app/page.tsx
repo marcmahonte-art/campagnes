@@ -1,7 +1,5 @@
 import {
   ArrowRight,
-  Heart,
-  Users,
   Play,
   Sparkles,
   ChevronRight,
@@ -12,6 +10,8 @@ import {
 } from 'lucide-react';
 import { SiteHeader } from '@/components/site-header';
 import { SiteFooter } from '@/components/site-footer';
+import { TrendingCampaigns } from '@/components/gallery/trending-campaigns';
+import { TrendingTemplates } from '@/components/gallery/trending-templates';
 import { Logo } from '@/components/ui/logo';
 import { ButtonLink } from '@/components/ui/button';
 
@@ -28,44 +28,18 @@ const FEATURED = {
   ratio: '9:16' as const,
 };
 
-const TRENDING_CAMPAIGNS = [
-  {
-    id: '1',
-    name: 'SIAO 2026',
-    creator: 'Ministère du Commerce',
-    category: 'Événement',
-    categoryColor: '#7B61FF',
-    likes: 12400,
-    uses: 3200,
-  },
-  {
-    id: '2',
-    name: 'Bourse Étudiante 2025',
-    creator: 'Association Jeunesse & Avenir',
-    category: 'Association',
-    categoryColor: '#FF6B6B',
-    likes: 8700,
-    uses: 1900,
-  },
-  {
-    id: '3',
-    name: 'Tournoi Inter-Universitaire',
-    creator: 'FASO Sport',
-    category: 'Sport',
-    categoryColor: '#22C55E',
-    likes: 6300,
-    uses: 1400,
-  },
-  {
-    id: '4',
-    name: 'Festival Wagadou 2025',
-    creator: 'Collectif Wagadou',
-    category: 'Culture',
-    categoryColor: '#FFD93D',
-    likes: 5800,
-    uses: 1200,
-  },
-];
+/*
+ * `TRENDING_CAMPAIGNS` a été retiré.
+ *
+ * C'était quatre campagnes écrites en dur, avec des compteurs inventés —
+ * 12 400 likes, 3 200 utilisations — et un aperçu réduit au nom de la campagne
+ * sur un fond gris. Aucun de ces chiffres ne mesurait quoi que ce soit, et ils
+ * étaient visibles par tout visiteur sur la page d'accueil : c'est la seule
+ * description de campagne de tout le projet qui ne venait pas de la base.
+ *
+ * La section lit désormais `TrendingCampaigns`, qui va chercher les campagnes
+ * publiées et affiche le vrai visuel par le même composant que la galerie.
+ */
 
 const TRUST_LOGOS = [
   'Ministère du Commerce',
@@ -86,53 +60,13 @@ const TEMPLATE_FILTERS = [
   { id: 'trending', label: 'En ce moment', icon: Flame },
 ];
 
-const SAMPLE_TEMPLATES = [
-  {
-    id: 't1',
-    name: 'Journée de la Femme',
-    creator: 'Studio Campagnes',
-    kind: 'Photo Frame',
-    uses: 2400,
-    isNew: true,
-  },
-  {
-    id: 't2',
-    name: 'Éducation pour tous',
-    creator: 'Lumière Afrique',
-    kind: 'Photo Frame',
-    uses: 1800,
-    ratio: '9:16',
-  },
-  {
-    id: 't3',
-    name: 'Sport & Jeunesse',
-    creator: 'Vassi Sport',
-    kind: 'Video Frame',
-    uses: 1200,
-    ratio: '16:9',
-  },
-  {
-    id: 't4',
-    name: 'Nature & Environnement',
-    creator: 'Green Burkina',
-    kind: 'Background Frame',
-    uses: 956,
-    ratio: '16:9',
-  },
-  {
-    id: 't5',
-    name: 'Solidarité',
-    creator: 'Humanité Plus',
-    kind: 'Photo Frame',
-    uses: 743,
-    ratio: '16:9',
-  },
-];
-
-function compactNumber(n: number): string {
-  if (n >= 1000) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`;
-  return String(n);
-}
+/*
+ * `SAMPLE_TEMPLATES` a été retiré pour la même raison que
+ * `TRENDING_CAMPAIGNS` : cinq campagnes inventées, avec des compteurs qui
+ * n'existaient pas et des aperçus réduits au nom sur fond gris. Les filtres
+ * ci-dessus, eux, restent — ils décrivent les types réellement disponibles, et
+ * la galerie sait les appliquer.
+ */
 
 /* ──────────────────────────────────────────────────────────────────────────── */
 
@@ -296,63 +230,7 @@ export default function HomePage() {
             </ButtonLink>
           </header>
 
-          <div className="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-            {TRENDING_CAMPAIGNS.map((campaign) => (
-              <article key={campaign.id} className="group relative flex flex-col">
-                {/* Card image placeholder */}
-                <div className="relative aspect-[4/3] overflow-hidden rounded-lg bg-gray-50">
-                  <div className="flex size-full items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100">
-                    <span className="text-[15px] font-semibold text-gray-300">
-                      {campaign.name}
-                    </span>
-                  </div>
-
-                  {/* Category badge */}
-                  <span
-                    className="absolute left-3 top-3 rounded-pill px-2.5 py-1 text-[11px] font-semibold text-white"
-                    style={{ backgroundColor: campaign.categoryColor }}
-                  >
-                    {campaign.category}
-                  </span>
-
-                  {/* Hover overlay */}
-                  <span
-                    aria-hidden
-                    className="pointer-events-none absolute inset-0 flex items-end justify-center bg-ink/0 pb-4 opacity-0 transition-all duration-200 ease-brand group-hover:bg-ink/10 group-hover:opacity-100"
-                  >
-                    <span className="flex items-center gap-1.5 rounded-pill bg-white px-3.5 py-2 text-[13px] font-medium text-ink shadow-md">
-                      Utiliser ce template
-                      <ArrowRight className="size-3.5" aria-hidden />
-                    </span>
-                  </span>
-                </div>
-
-                {/* Info */}
-                <div className="mt-3 flex flex-col gap-1.5">
-                  <h3 className="text-[15px] font-semibold leading-snug">{campaign.name}</h3>
-                  <div className="flex items-center gap-2 text-[13px] text-gray-500">
-                    <div className="flex size-[18px] items-center justify-center rounded-full bg-gray-100 text-[10px] font-bold text-gray-500">
-                      {campaign.creator.charAt(0)}
-                    </div>
-                    <span className="truncate">{campaign.creator}</span>
-                  </div>
-                  <div className="flex items-center gap-3 text-[12px] text-gray-400">
-                    <span className="flex items-center gap-1">
-                      <Heart className="size-3" aria-hidden />
-                      {compactNumber(campaign.likes)}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Users className="size-3" aria-hidden />
-                      {compactNumber(campaign.uses)}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Clickable overlay */}
-                <a href="/galerie" className="absolute inset-0 rounded-lg" aria-label={`Voir ${campaign.name}`} />
-              </article>
-            ))}
-          </div>
+          <TrendingCampaigns limit={4} />
         </div>
       </section>
 
@@ -423,58 +301,7 @@ export default function HomePage() {
           </div>
 
           {/* Templates grid */}
-          <div className="mt-8 grid grid-cols-2 gap-x-5 gap-y-7 sm:grid-cols-3 lg:grid-cols-5">
-            {SAMPLE_TEMPLATES.map((template) => (
-              <article key={template.id} className="group relative flex flex-col">
-                <div className="relative aspect-[4/3] overflow-hidden rounded-lg bg-gray-50">
-                  <div className="flex size-full items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100">
-                    <span className="text-[13px] font-medium text-gray-300">{template.name}</span>
-                  </div>
-
-                  {/* Badges */}
-                  <div className="pointer-events-none absolute inset-x-3 top-3 flex items-start justify-between gap-2">
-                    {template.isNew && (
-                      <span className="rounded-pill bg-brand-gradient px-2 py-0.5 text-[11px] font-semibold text-white">
-                        Nouveau
-                      </span>
-                    )}
-                    {template.ratio && (
-                      <span className="ml-auto rounded-pill bg-white/85 px-2 py-0.5 text-[11px] font-medium text-gray-700 backdrop-blur-sm">
-                        {template.ratio}
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Hover */}
-                  <span
-                    aria-hidden
-                    className="pointer-events-none absolute inset-0 flex items-end justify-center bg-ink/0 pb-4 opacity-0 transition-all duration-200 ease-brand group-hover:bg-ink/10 group-hover:opacity-100"
-                  >
-                    <span className="flex items-center gap-1.5 rounded-pill bg-white px-3 py-1.5 text-[12px] font-medium text-ink shadow-md">
-                      Utiliser
-                      <ArrowRight className="size-3" aria-hidden />
-                    </span>
-                  </span>
-                </div>
-
-                <div className="mt-2.5 flex flex-col gap-1">
-                  <h3 className="text-[14px] font-semibold leading-snug">{template.name}</h3>
-                  <p className="text-[12px] text-gray-500">{template.creator}</p>
-                  <div className="flex items-center gap-2 text-[11px] text-gray-400">
-                    <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
-                      {template.kind}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Users className="size-2.5" aria-hidden />
-                      {compactNumber(template.uses)}
-                    </span>
-                  </div>
-                </div>
-
-                <a href="/galerie" className="absolute inset-0 rounded-lg" aria-label={`Utiliser ${template.name}`} />
-              </article>
-            ))}
-          </div>
+          <TrendingTemplates limit={5} />
         </div>
       </section>
 

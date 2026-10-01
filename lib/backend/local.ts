@@ -45,6 +45,25 @@ interface DbShareEvent {
   created_at: string;
 }
 
+/** Un like posé, en mode démonstration. Même forme que `campaign_likes`. */
+interface DbLike {
+  campaign_id: string;
+  user_id: string;
+  created_at: string;
+}
+
+/** Nombre de likes d'une campagne. `likes` est optionnel : une base d'avant 0012. */
+function countLikes(db: Db, campaignId: string): number {
+  return (db.likes ?? []).filter((l) => l.campaign_id === campaignId).length;
+}
+
+/** L'utilisateur a-t-il aimé cette campagne ? */
+function hasLiked(db: Db, campaignId: string, userId: string): boolean {
+  return (db.likes ?? []).some(
+    (l) => l.campaign_id === campaignId && l.user_id === userId,
+  );
+}
+
 interface Db {
   users: DbUser[];
   frames: Frame[];
@@ -54,10 +73,16 @@ interface Db {
    * migration 0011 n'a pas ce champ, et ce n'est pas une raison pour la jeter.
    */
   shareEvents?: DbShareEvent[];
+  /**
+   * Likes posés. Optionnel à la lecture, comme `shareEvents` : une base
+   * écrite avant la migration 0012 n'a pas ce champ, et ce n'est pas une
+   * raison de jeter les campagnes qu'elle contient.
+   */
+  likes?: DbLike[];
 }
 
 function emptyDb(): Db {
-  return { users: [], frames: [], campaigns: [], shareEvents: [] };
+  return { users: [], frames: [], campaigns: [], shareEvents: [], likes: [] };
 }
 
 /**
@@ -92,6 +117,7 @@ function readDb(): Db {
       frames: Array.isArray(parsed.frames) ? parsed.frames : [],
       campaigns: Array.isArray(parsed.campaigns) ? parsed.campaigns.map(normalize) : [],
       shareEvents: Array.isArray(parsed.shareEvents) ? parsed.shareEvents : [],
+      likes: Array.isArray(parsed.likes) ? parsed.likes : [],
     };
   } catch {
     return emptyDb();
@@ -483,6 +509,7 @@ export const localBackend: Backend = {
   /* --- Galerie publique --------------------------------------------- */
   async listGallery(): Promise<GalleryItem[]> {
     const db = readDb();
+    const me = readSession();
     return db.campaigns
       .filter((c) => c.status === 'published')
       .sort((a, b) => b.created_at.localeCompare(a.created_at))
@@ -492,8 +519,42 @@ export const localBackend: Backend = {
           ...c,
           frame: db.frames.find((f) => f.id === c.frame_id) ?? null,
           creator: owner ? publicCreator(owner) : null,
+          // Même règle que le mode Supabase : une utilisation est un
+          // téléchargement, et un téléchargement est déjà compté par le quota.
+          usageCount: c.participants_used ?? 0,
+          likesCount: countLikes(db, c.id),
+          likedByMe: me ? hasLiked(db, c.id, me) : false,
         };
       });
+  },
+
+  /**
+   * Ajoute ou retire le like du visiteur courant.
+   *
+   * Même refus que la base : sans session, l'appel échoue. Une démonstration
+   * qui laisserait aimer sans compte montrerait un comportement que la
+   * production refuse — et l'utilisateur le découvrirait en passant en vrai.
+   */
+  async toggleCampaignLike(campaignId) {
+    await delay();
+    const me = readSession();
+    if (!me) return { error: 'Connectez-vous pour aimer cette campagne.' };
+
+    const db = readDb();
+    const campaign = db.campaigns.find((c) => c.id === campaignId && c.status === 'published');
+    if (!campaign) return { error: 'Campagne introuvable.' };
+
+    const liked = hasLiked(db, campaignId, me);
+    const mine = db.likes ?? [];
+    const rest = liked
+      ? mine.filter((l) => !(l.campaign_id === campaignId && l.user_id === me))
+      : [...mine, { campaign_id: campaignId, user_id: me, created_at: new Date().toISOString() }];
+
+    writeDb({ ...db, likes: rest });
+
+    return {
+      data: { liked: !liked, likesCount: countLikes({ ...db, likes: rest }, campaignId) },
+    };
   },
 
   /**

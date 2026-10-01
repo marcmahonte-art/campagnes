@@ -1,10 +1,11 @@
 'use client';
 
-import { ArrowRight, BadgeCheck, ExternalLink, Heart, Play, Users } from 'lucide-react';
+import { ArrowRight, BadgeCheck, ExternalLink, Play, Users } from 'lucide-react';
 import { ButtonLink } from '@/components/ui/button';
 import { Drawer } from '@/components/ui/drawer';
 import { GalleryPreview } from './gallery-preview';
 import { CreatorAvatar } from './creator-avatar';
+import { LikeButton } from './like-button';
 import { kindSpec } from '@/lib/campaign-kinds';
 import { ratioSpec } from '@/lib/ratios';
 import { compactCount, relativeDate } from '@/lib/gallery';
@@ -29,9 +30,12 @@ import type { GalleryItem } from '@/lib/types';
 export function TemplateDrawer({
   item,
   onClose,
+  onLike,
 }: {
   item: GalleryItem | null;
   onClose: () => void;
+  /** Remonte un like à la page, qui garde la source de vérité de la liste. */
+  onLike?: (campaignId: string, count: number, liked: boolean) => void;
 }) {
   const { user } = useSession();
 
@@ -82,11 +86,8 @@ export function TemplateDrawer({
             <GalleryPreview
               src={item.frame?.thumbnail_url ?? null}
               alt={`Aperçu de la campagne ${item.name}`}
+              title={item.name}
               watermark={item.creator?.watermark ?? true}
-              fallback={{
-                width: item.ratio === '16:9' ? 200 : item.ratio === '9:16' ? 112 : 150,
-                height: item.ratio === '16:9' ? 112 : item.ratio === '9:16' ? 200 : 150,
-              }}
             />
           </div>
 
@@ -146,23 +147,21 @@ export function TemplateDrawer({
           </div>
         )}
 
-        {/* Compteurs — affichés seulement s'ils mesurent quelque chose. */}
-        {(usages > 0 || likes > 0) && (
-          <div className="flex items-center gap-5 text-[13px] text-gray-500">
-            {usages > 0 && (
-              <span className="flex items-center gap-1.5">
-                <Users className="size-3.5" aria-hidden />
-                {compactCount(usages)} utilisations
-              </span>
-            )}
-            {likes > 0 && (
-              <span className="flex items-center gap-1.5">
-                <Heart className="size-3.5" aria-hidden />
-                {compactCount(likes)}
-              </span>
-            )}
-          </div>
-        )}
+        {/* Compteurs — le cœur est le même bouton que dans la grille, pour qu'un
+            like posé ici se voie aussi là-bas. */}
+        <div className="flex items-center gap-5 text-[13px] text-gray-500">
+          <LikeButton
+            campaignId={item.id}
+            initialCount={likes}
+            initialLiked={Boolean(item.likedByMe)}
+            connected={Boolean(user)}
+            onChange={(count, liked) => onLike?.(item.id, count, liked)}
+          />
+          <span className="flex items-center gap-1.5">
+            <Users className="size-3.5" aria-hidden />
+            {compactCount(usages)} utilisations
+          </span>
+        </div>
 
         <ButtonLink
           href={`/c/${item.slug}`}

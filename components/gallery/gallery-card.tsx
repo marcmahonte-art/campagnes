@@ -1,11 +1,12 @@
 'use client';
 
-import { ArrowRight, BadgeCheck, Heart, Play, Users } from 'lucide-react';
+import { ArrowRight, BadgeCheck, Play } from 'lucide-react';
 import { GalleryPreview } from './gallery-preview';
 import { CreatorAvatar } from './creator-avatar';
+import { LikeButton, UsageCount } from './like-button';
 import { kindSpec } from '@/lib/campaign-kinds';
 import { ratioSpec } from '@/lib/ratios';
-import { compactCount, relativeDate } from '@/lib/gallery';
+import { relativeDate } from '@/lib/gallery';
 import type { GalleryItem } from '@/lib/types';
 
 /**
@@ -42,9 +43,15 @@ function stopPlaying(element: HTMLVideoElement) {
 export function GalleryCard({
   item,
   onOpen,
+  connected = false,
+  onLike,
 }: {
   item: GalleryItem;
   onOpen: (item: GalleryItem) => void;
+  /** L'utilisateur courant est-il connecté ? Décide si le cœur est actif. */
+  connected?: boolean;
+  /** Remonte un like à la page, qui garde la source de vérité de la liste. */
+  onLike?: (campaignId: string, count: number, liked: boolean) => void;
 }) {
   const spec = kindSpec(item.kind);
   const ratio = ratioSpec(item.ratio);
@@ -81,14 +88,11 @@ export function GalleryCard({
             <GalleryPreview
               src={item.frame?.thumbnail_url ?? null}
               alt={`Aperçu de la campagne ${item.name}`}
+              title={item.name}
               // Créateur inconnu → on marque, comme partout ailleurs : mieux
               // vaut un visuel marqué à tort qu'un visuel qui contourne la
               // formule par accident.
               watermark={item.creator?.watermark ?? true}
-              fallback={{
-                width: item.ratio === '16:9' ? 132 : item.ratio === '9:16' ? 74 : 99,
-                height: item.ratio === '16:9' ? 74 : item.ratio === '9:16' ? 132 : 99,
-              }}
             />
           )}
         </div>
@@ -147,19 +151,20 @@ export function GalleryCard({
         </div>
 
         <div className="flex items-center gap-3 text-[12px] text-gray-400">
-          {/* Les compteurs ne s'affichent que s'ils mesurent quelque chose. */}
-          {likes > 0 && (
-            <span className="flex items-center gap-1">
-              <Heart className="size-3" aria-hidden />
-              {compactCount(likes)}
-            </span>
-          )}
-          {usages > 0 && (
-            <span className="flex items-center gap-1">
-              <Users className="size-3" aria-hidden />
-              {compactCount(usages)} utilisations
-            </span>
-          )}
+          {/*
+            Le cœur est un bouton, le compteur d'utilisations ne l'est pas.
+            Les deux sont affichés même à zéro : un compteur absent ferait
+            croire que la mesure n'existe pas, alors qu'elle est simplement
+            à son premier jour. « 0 utilisations » est une information.
+          */}
+          <LikeButton
+            campaignId={item.id}
+            initialCount={likes}
+            initialLiked={Boolean(item.likedByMe)}
+            connected={connected}
+            onChange={(count, liked) => onLike?.(item.id, count, liked)}
+          />
+          <UsageCount count={usages} />
           <span>{relativeDate(item.created_at)}</span>
         </div>
       </div>

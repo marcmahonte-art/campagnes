@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { StaticCanvas } from 'fabric';
+import { ImageOff } from 'lucide-react';
 import { addBadge } from '@/lib/watermark';
 
 /**
@@ -27,11 +28,17 @@ interface GalleryPreviewProps {
   alt: string;
   /** Vrai si la formule du créateur impose le badge sur les visuels livrés. */
   watermark: boolean;
-  /** Dimensions de repli, quand il n'y a pas de vignette. */
-  fallback: { width: number; height: number };
+  /**
+   * Nom de la campagne, affiché quand il n'y a pas de vignette.
+   *
+   * Un cadre vide n'est pas une erreur d'affichage : c'est une campagne publiée
+   * dont le visuel n'a pas été généré. Le titre est alors la seule chose
+   * honnête à montrer.
+   */
+  title?: string;
 }
 
-export function GalleryPreview({ src, alt, watermark, fallback }: GalleryPreviewProps) {
+export function GalleryPreview({ src, alt, watermark, title = 'Aperçu indisponible' }: GalleryPreviewProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const canvasElRef = useRef<HTMLCanvasElement>(null);
   const [failed, setFailed] = useState(false);
@@ -119,12 +126,28 @@ export function GalleryPreview({ src, alt, watermark, fallback }: GalleryPreview
   }, [src, watermark]);
 
   if (!src || failed) {
+    /*
+     * Pas de vignette : un cadre qui n'a pas encore été enregistré en laisse une.
+     * On montre le **titre** plutôt qu'un rectangle vide — c'est la seule chose
+     * que l'on sait dire de cette campagne, et une zone grise sans nom ferait
+     * croire à une image cassée.
+     *
+     * Le pas `p-5` de la carte est reproduit ici : le texte doit tomber au même
+     * endroit que le visuel qu'il remplace, sinon la ligne bouge quand la
+     * vignette arrive.
+     */
     return (
-      <span
-        aria-hidden
-        className="rounded-sm border-2 border-gray-300 bg-white"
-        style={{ width: fallback.width, height: fallback.height }}
-      />
+      <div className="flex size-full items-center justify-center p-2">
+        <div
+          aria-hidden
+          className="flex size-full flex-col items-center justify-center gap-1.5 rounded-md border border-dashed border-gray-200 bg-gradient-to-br from-gray-50 to-gray-100 px-3 text-center"
+        >
+          <ImageOff className="size-4 text-gray-300" />
+          <span className="line-clamp-2 text-[12px] font-medium leading-snug text-gray-400">
+            {title}
+          </span>
+        </div>
+      </div>
     );
   }
 

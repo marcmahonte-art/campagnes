@@ -287,6 +287,14 @@ export interface GalleryItem extends CampaignWithFrame {
   usageCount?: number;
   /** Nombre de mises en favori réelles. Absent → jamais compté. */
   likesCount?: number;
+  /**
+   * L'utilisateur courant a-t-il aimé cette campagne ?
+   *
+   * `false` pour un visiteur non connecté : ce n'est pas « il n'a pas aimé »,
+   * c'est « la question ne se pose pas ». L'écran fait la différence et
+   * invite à se connecter plutôt que d'afficher un cœur vide sans raison.
+   */
+  likedByMe?: boolean;
 }
 
 /* ------------------------------------------------------------------ */

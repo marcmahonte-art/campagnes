@@ -28,6 +28,18 @@ export interface SignUpOutcome {
   error?: string;
 }
 
+/**
+ * Résultat d'un like — l'état après action, pas avant.
+ *
+ * Le total vient de la base et non d'un calcul local : le renvoyer évite que
+ * deux onglets ouverts finissent par afficher des chiffres différents.
+ */
+export interface LikeToggle {
+  /** `true` si la campagne est aimée **après** l'action. */
+  liked: boolean;
+  likesCount: number;
+}
+
 export interface CreateCampaignInput {
   ownerId: string;
   name: string;
@@ -140,6 +152,20 @@ export interface Backend {
   /* --- Galerie publique --------------------------------------------- */
   /** Toutes les campagnes publiées, tous créateurs confondus (§13). */
   listGallery(): Promise<GalleryItem[]>;
+
+  /**
+   * Ajoute ou retire le like de l'utilisateur courant.
+   *
+   * L'opération est indivisible : ajouter et retirer passent par le même
+   * appel. L'écran n'a donc pas à lire l'état courant pour savoir quoi faire,
+   * et deux clics ne peuvent pas produire deux lignes.
+   *
+   * Renvoie l'état **après** action et le compteur exact. Une erreur — dont
+   * « connexion requise » — revient dans `Result.error`, jamais sous la forme
+   * d'un `liked: false` : la différence est ce qui permet à l'écran de
+   * distinguer un refus d'une panne.
+   */
+  toggleCampaignLike(campaignId: string): Promise<Result<LikeToggle>>;
 
   /**
    * Une campagne publiée, par son slug — c'est l'entrée du parcours participant.

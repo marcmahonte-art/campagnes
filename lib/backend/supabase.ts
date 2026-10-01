@@ -122,6 +122,35 @@ function message(error: unknown, fallback: string): string {
   return fallback;
 }
 
+/**
+ * Nombre de likes d'une campagne, pour un écran qui lit une campagne seule.
+ *
+ * La vue `campaign_stats` est une source unique : on ne recompte rien ici.
+ * Un échec vaut zéro — un compteur absent ne doit pas empêcher l'écran de
+ * s'afficher, il doit simplement afficher « 0 ».
+ */
+async function likeCount(sb: ReturnType<typeof supabaseBrowser>, campaignId: string): Promise<number> {
+  const { data } = await sb
+    .from('campaign_stats')
+    .select('likes_count')
+    .eq('campaign_id', campaignId)
+    .maybeSingle();
+  return Number((data as { likes_count?: number } | null)?.likes_count ?? 0);
+}
+
+/** L'utilisateur courant a-t-il aimé cette campagne ? */
+async function likedByMe(
+  sb: ReturnType<typeof supabaseBrowser>,
+  campaignId: string,
+): Promise<boolean> {
+  const { data } = await sb
+    .from('campaign_stats')
+    .select('liked_by_me')
+    .eq('campaign_id', campaignId)
+    .maybeSingle();
+  return Boolean((data as { liked_by_me?: boolean } | null)?.liked_by_me);
+}
+
 export const supabaseBackend: Backend = {
   mode: 'supabase',
 
@@ -472,11 +501,71 @@ export const supabaseBackend: Backend = {
       creatorsById.set(String(c.id), rowToCreator(c));
     });
 
-    return campaigns.map((c) => ({
-      ...c,
-      frame: c.frame_id ? framesById.get(c.frame_id) ?? null : null,
-      creator: creatorsById.get(c.owner_id) ?? null,
-    }));
+    /*
+     * Les deux compteurs des cartes de galerie.
+     *
+     * `usageCount` vient de `participants_used`, le compteur de téléchargements
+     * déjà posé par la migration 0007 : un téléchargement **est** une
+     * utilisation, et cette colonne est incrémentée sous verrou de ligne. On ne
+     * crée donc pas de second compteur, qui finirait par diverger du premier.
+     *
+     * `likesCount` et `likedByMe` viennent de la vue `campaign_stats`, qui
+     * agrège le total et n'expose le booléen qu'à l'appelant.
+     */
+    const { data: stats } = await sb.from('campaign_stats').select('*');
+    const statsByCampaign = new Map<string, { likes_count: number; liked_by_me: boolean }>();
+    ((stats as Row[] | null) ?? []).forEach((s) => {
+      statsByCampaign.set(String(s.campaign_id), {
+        likes_count: Number(s.likes_count ?? 0),
+        liked_by_me: Boolean(s.liked_by_me),
+      });
+    });
+
+    return campaigns.map((c) => {
+      const stats = statsByCampaign.get(c.id);
+      return {
+        ...c,
+        frame: c.frame_id ? framesById.get(c.frame_id) ?? null : null,
+        creator: creatorsById.get(c.owner_id) ?? null,
+        usageCount: c.participants_used ?? 0,
+        likesCount: stats?.likes_count ?? 0,
+        likedByMe: stats?.liked_by_me ?? false,
+      };
+    });
+  },
+
+  /**
+   * Ajoute ou retire le like de l'utilisateur courant.
+   *
+   * Tout se joue dans `toggle_campaign_like` : le navigateur ne touche jamais
+   * `campaign_likes`. Une écriture directe depuis le client serait un compteur
+   * que l'on pourrait gonfler sans passer par la fonction, et donc sans le
+   * verrou de ligne — c'est-à-dire sans garantie d'exactitude.
+   */
+  async toggleCampaignLike(campaignId) {
+    const { data, error } = await supabaseBrowser().rpc('toggle_campaign_like', {
+      p_campaign_id: campaignId,
+    });
+
+    if (error) {
+      /*
+       * Le refus d'un visiteur n'est pas une panne. `toggle_campaign_like`
+       * lève une erreur 42501 quand `auth.uid()` est nul : la traduire en
+       * « connexion requise » évite d'afficher une erreur technique à quelqu'un
+       * qui n'a fait qu'appuyer sur un cœur.
+       */
+      if (error.code === '42501') {
+        return { error: 'Connectez-vous pour aimer cette campagne.' };
+      }
+      return { error: message(error, "L'enregistrement du like a échoué.") };
+    }
+
+    const row = (Array.isArray(data) ? data[0] : data) as
+      | { liked?: boolean; likes_count?: number }
+      | null;
+    if (!row) return { error: "L'enregistrement du like a échoué." };
+
+    return { data: { liked: Boolean(row.liked), likesCount: Number(row.likes_count ?? 0) } };
   },
 
   /**
@@ -507,6 +596,9 @@ export const supabaseBackend: Backend = {
       ...campaign,
       frame,
       creator: creator ? rowToCreator(creator as Row) : null,
+      usageCount: campaign.participants_used ?? 0,
+      likesCount: await likeCount(sb, campaign.id),
+      likedByMe: await likedByMe(sb, campaign.id),
     };
   },
 
@@ -564,6 +656,9 @@ export const supabaseBackend: Backend = {
       ...campaign,
       frame,
       creator: creator ? rowToCreator(creator as Row) : null,
+      usageCount: campaign.participants_used ?? 0,
+      likesCount: await likeCount(sb, campaign.id),
+      likedByMe: await likedByMe(sb, campaign.id),
     };
   },
 
