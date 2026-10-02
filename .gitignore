@@ -60,3 +60,7 @@ premium-render.html
 # Photo factice déposée par `tools/watermark-check/runtime-check.js` pour
 # déclencher l'affichage réel du bandeau. Régénérable, pas un livrable.
 tools/watermark-check/.tmp/
+
+# Captures produites par `tools/header-check/` : preuves locales de mesure,
+# régénérées à la demande.
+tools/header-check/.tmp/
