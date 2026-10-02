@@ -272,6 +272,72 @@ export const DEFAULT_PARTICIPANT_STYLE: ParticipantStyle = {
 };
 
 /**
+ * Tout l'état du parcours participant, en une seule valeur.
+ *
+ * C'est **le** point qui rend « annuler / rétablir » possible sans mécanique
+ * supplémentaire : l'écran ne détient plus trois `useState` qui dérivent chacun
+ * de leur côté, mais un seul objet immuable. Un historique sur cette valeur
+ * unique couvre forcément tout ce que le participant règle — s'il oubliait un
+ * champ, il suffirait de l'ajouter ici, et l'annulation le prendrait en compte
+ * sans qu'aucune ligne de l'écran ne change.
+ *
+ * `photo` et `placement` valent `null` ensemble : le parcours n'expose aucun
+ * réglage avant le dépôt de la photo. Les séparer laisserait un état
+ * intermédiaire — une photo sans placement — que rien ne saurait rendre.
+ */
+export interface ParticipantState {
+  photo: ParticipantPhoto | null;
+  placement: PhotoPlacement | null;
+  style: ParticipantStyle;
+}
+
+export const DEFAULT_PARTICIPANT_STATE: ParticipantState = {
+  photo: null,
+  placement: null,
+  style: DEFAULT_PARTICIPANT_STYLE,
+};
+
+/**
+ * Deux états sont-ils identiques au sens de l'historique ?
+ *
+ * La comparaison est volontairement **structurelle et stricte**. Le piège serait
+ * de tester l'identité de référence : `zoomAroundCenter` renvoie toujours un
+ * nouvel objet, même quand le curseur ne bouge pas d'un cran. L'historique se
+ * remplirait alors d'entrées identiques, et le participant devrait appuyer dix
+ * fois sur « Annuler » pour revenir d'un seul geste — le pire des deux mondes :
+ * un bouton qui a l'air actif et ne fait rien.
+ */
+export function isSameParticipantState(a: ParticipantState, b: ParticipantState): boolean {
+  if (a.photo !== b.photo) return false;
+  if (!samePlacement(a.placement, b.placement)) return false;
+  return sameStyle(a.style, b.style);
+}
+
+function samePlacement(a: PhotoPlacement | null, b: PhotoPlacement | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  // Les coordonnées peuvent être fractionnaires : on compare à l'unité près,
+  // l'unité la plus fine que le curseur puisse produire.
+  return (
+    Math.abs(a.zoom - b.zoom) < 1e-6 &&
+    Math.abs(a.x - b.x) < 0.5 &&
+    Math.abs(a.y - b.y) < 0.5
+  );
+}
+
+function sameStyle(a: ParticipantStyle, b: ParticipantStyle): boolean {
+  if (a.filter !== b.filter) return false;
+  if (a.text === b.text) return true;
+  if (!a.text || !b.text) return false;
+  return (
+    a.text.content === b.text.content &&
+    a.text.color === b.text.color &&
+    Math.abs(a.text.x - b.text.x) < 0.5 &&
+    Math.abs(a.text.y - b.text.y) < 0.5
+  );
+}
+
+/**
  * Couleurs proposées au participant.
  *
  * Trois seulement : une pour un fond sombre, une pour un fond clair, et la

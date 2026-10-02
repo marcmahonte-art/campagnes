@@ -10,10 +10,12 @@ import {
   Loader2,
   Minus,
   Plus,
+  Redo2,
   RotateCcw,
   ShieldCheck,
   Trash2,
   Type,
+  Undo2,
   Video,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
@@ -36,7 +38,7 @@ import {
   exportVideo,
 } from '@/lib/video-export';
 import {
-  DEFAULT_PARTICIPANT_STYLE,
+  DEFAULT_PARTICIPANT_STATE,
   MAX_ZOOM,
   MIN_ZOOM,
   TEXT_COLORS,
@@ -44,14 +46,16 @@ import {
   composeDescriptor,
   defaultParticipantText,
   initialPlacement,
+  isSameParticipantState,
   movableAxes,
   readPhotoFile,
   zoomAroundCenter,
-  type ParticipantPhoto,
-  type ParticipantStyle,
+  type ParticipantState,
+  type ParticipantText,
   type PhotoPlacement,
 } from '@/lib/participant';
-import { PHOTO_FILTER_PRESETS } from '@/lib/photo-filters';
+import { useHistory } from '@/components/editor/use-history';
+import { PHOTO_FILTER_PRESETS, type PhotoFilter } from '@/lib/photo-filters';
 import { blockedMessage, remaining } from '@/lib/quota';
 import type { CampaignQuota, GalleryItem } from '@/lib/types';
 
@@ -84,9 +88,119 @@ export function ParticipantJourney({
   /** Le partage social n'est proposé que sur le lien public. */
   sharing?: boolean;
 }) {
-  const [photo, setPhoto] = useState<ParticipantPhoto | null>(null);
-  const [placement, setPlacement] = useState<PhotoPlacement | null>(null);
-  const [style, setStyle] = useState<ParticipantStyle>(DEFAULT_PARTICIPANT_STYLE);
+  /*
+   * Un seul état, un seul historique.
+   *
+   * Le participant réglait trois choses séparément (photo, placement, style) ;
+   * elles tiennent maintenant dans une valeur unique, ce qui permet d'annuler
+   * n'importe quel geste — un filtre, une frappe, un glissement — avec le même
+   * bouton, et sans que l'écran ait à savoir ce qui a changé.
+   *
+   * `coalesceMs` est plus long que dans l'éditeur créateur (700 ms) : déplacer
+   * une photo au doigt produit beaucoup plus d'événements qu'un glissement à la
+   * souris, et annuler doit rendre le geste entier, pas la dernière image du
+   * geste.
+   */
+  const history = useHistory<ParticipantState>(DEFAULT_PARTICIPANT_STATE, {
+    limit: 40,
+    coalesceMs: 900,
+    /*
+     * Comparaison structurelle, et non d'identité : chaque geste reconstruit un
+     * objet neuf, même à valeur égale. Sans cela l'historique empilerait des
+     * entrées identiques et « Annuler » semblerait ne rien faire.
+     */
+    equals: isSameParticipantState,
+  });
+  const { photo, placement, style } = history.value;
+
+  /** Raccourci : toute modification du parcours passe par ici. */
+  const update = history.set;
+
+  /**
+   * L'état courant, lu par référence depuis les rappels du canvas.
+   *
+   * `update()` accepte déjà une fonction de l'état précédent — c'est ce qu'il
+   * faut pour le texte. Pour le placement, la scène fournit une valeur absolue
+   * et non un delta ; sans cette référence, le rappel devrait dépendre de
+   * `placement`, donc être recréé à chaque rendu, donc reconstruire la scène
+   * Fabric pendant que le participant fait glisser sa photo.
+   */
+  const historyStateRef = useRef(history.value);
+  historyStateRef.current = history.value;
+
+  const setPhoto = useCallback(
+    (next: ParticipantState['photo'], nextPlacement: PhotoPlacement | null, reset: boolean) => {
+      // Un changement de photo repart d'un historique propre : les placements
+      // d'une photo n'ont aucun sens pour la suivante, et empiler les deux
+      // ferait « annuler » vers un cadrage qui n'a jamais existé.
+      if (reset) {
+        history.reset({ photo: next, placement: nextPlacement, style: DEFAULT_PARTICIPANT_STATE.style });
+        return;
+      }
+      update((current) => ({ ...current, photo: next, placement: nextPlacement }));
+    },
+    // `history` est stable (mémorisé par le hook) : le lire dans la portée ne
+    // doit pas recréer ce rappel à chaque rendu.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [update],
+  );
+
+  const setPlacement = useCallback(
+    (next: PhotoPlacement | ((prev: PhotoPlacement | null) => PhotoPlacement | null)) => {
+      update((current) => ({
+        ...current,
+        placement: typeof next === 'function' ? next(current.placement) : next,
+      }));
+    },
+    [update],
+  );
+
+  const setStyle = useCallback(
+    (
+      next:
+        | ParticipantState['style']
+        | ((prev: ParticipantState['style']) => ParticipantState['style']),
+    ) => {
+      update((current) => ({
+        ...current,
+        style: typeof next === 'function' ? next(current.style) : next,
+      }));
+    },
+    [update],
+  );
+
+  const setText = useCallback(
+    (next: ParticipantText | null) => {
+      setStyle((current) => ({ ...current, text: next }));
+    },
+    [setStyle],
+  );
+
+  /**
+   * Déplacement sur le canvas : une entrée par **geste**, pas par image.
+   *
+   * Le canvas émet un événement à chaque pixel parcouru. Sans regroupement,
+   * annuler après un glissement demanderait des dizaines d'appuis pour revenir
+   * au point de départ. C'est le rôle de `coalesce` de l'historique.
+   */
+  const setPlacementFromCanvas = useCallback(
+    (next: PhotoPlacement) => {
+      update({ ...historyStateRef.current, placement: next }, { coalesce: true });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [update],
+  );
+
+  const setTextFromCanvas = useCallback(
+    (next: ParticipantText) => {
+      update(
+        (current) => ({ ...current, style: { ...current.style, text: next } }),
+        { coalesce: true },
+      );
+    },
+    [update],
+  );
+
   const [reading, setReading] = useState(false);
   const [dragging, setDragging] = useState(false);
 
@@ -107,6 +221,29 @@ export function ParticipantJourney({
   const [quota, setQuota] = useState<CampaignQuota | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  /* ---------------- Raccourcis clavier ---------------- */
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'z') return;
+
+      /*
+       * On n'intercepte pas la frappe dans un champ : il n'y a qu'un `<Input>`
+       * (le texte du participant), et Ctrl+Z y appartient au navigateur — sa
+       * pile interne et la nôtre sont deux choses différentes, et les mélanger
+       * ferait perdre du texte sans prévenir.
+       */
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+
+      event.preventDefault();
+      if (event.shiftKey) history.redo();
+      else history.undo();
+    };
+
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [history]);
 
   /* ---------------- Quota ---------------- */
   useEffect(() => {
@@ -161,15 +298,21 @@ export function ParticipantJourney({
       setReading(true);
       try {
         const next = await readPhotoFile(file);
-        setPhoto(next);
-        setPlacement(initialPlacement(next, zone));
+        /*
+         * Première photo ou remplacement ? La distinction n'est pas cosmétique :
+         * remplacer la photo doit laisser « Annuler » ramener la précédente,
+         * alors que la toute première n'a rien à annuler — son historique doit
+         * donc partir vide.
+         */
+        const replacing = photo !== null;
+        setPhoto(next, initialPlacement(next, zone), !replacing);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Cette image n'a pas pu être ouverte.");
       } finally {
         setReading(false);
       }
     },
-    [zone],
+    [zone, photo, setPhoto],
   );
 
   /* ---------------- Export ---------------- */
@@ -316,10 +459,8 @@ export function ParticipantJourney({
                   placement={placement}
                   style={style}
                   watermark={creatorWatermark}
-                  onPlacementChange={setPlacement}
-                  onTextChange={(next) =>
-                    setStyle((current) => ({ ...current, text: next }))
-                  }
+                  onPlacementChange={setPlacementFromCanvas}
+                  onTextChange={setTextFromCanvas}
                 />
               ) : (
                 /* ---------------- Dépôt de la photo ---------------- */
@@ -462,7 +603,7 @@ export function ParticipantJourney({
                     </span>
                   </div>
 
-                  <div className="mt-3 flex items-center justify-center gap-2">
+                  <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
                     <Button
                       variant="ghost"
                       size="sm"
@@ -479,6 +620,34 @@ export function ParticipantJourney({
                     >
                       <ImagePlus className="size-3.5" aria-hidden />
                       Changer de photo
+                    </Button>
+
+                    {/*
+                      Annuler / rétablir.
+                      Les deux boutons ne disparaissent jamais : ils s'éteignent.
+                      Un bouton qui s'évapore fait sauter les voisins sous le
+                      doigt, et le participant croit que l'interface a changé
+                      d'avis.
+                    */}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={history.undo}
+                      disabled={!history.canUndo}
+                      aria-label="Annuler la dernière modification"
+                    >
+                      <Undo2 className="size-3.5" aria-hidden />
+                      Annuler
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={history.redo}
+                      disabled={!history.canRedo}
+                      aria-label="Rétablir la modification annulée"
+                    >
+                      <Redo2 className="size-3.5" aria-hidden />
+                      Rétablir
                     </Button>
                   </div>
 

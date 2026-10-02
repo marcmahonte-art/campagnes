@@ -17,7 +17,15 @@ export default function sitemap(): MetadataRoute.Sitemap {
   const pages: { path: string; priority: number; changeFrequency: 'weekly' | 'monthly' }[] = [
     { path: '/', priority: 1, changeFrequency: 'weekly' },
     { path: '/galerie', priority: 0.9, changeFrequency: 'weekly' },
+    /*
+     * `/premium` est indexable : elle est ouverte au public, sans compte, et
+     * c'est par les moteurs et les aperçus de partage que beaucoup de visiteurs
+     * la trouveront. Priorité haute mais sous la galerie : elle est
+     * événementielle, donc temporaire.
+     */
+    { path: '/premium', priority: 0.9, changeFrequency: 'weekly' },
     { path: '/tarifs', priority: 0.8, changeFrequency: 'monthly' },
+    { path: '/aide', priority: 0.6, changeFrequency: 'monthly' },
     { path: '/confidentialite', priority: 0.4, changeFrequency: 'monthly' },
     { path: '/conditions', priority: 0.4, changeFrequency: 'monthly' },
     { path: '/cookies', priority: 0.3, changeFrequency: 'monthly' },

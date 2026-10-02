@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 /**
  * Historique « annuler / rétablir » d'une valeur immuable.
@@ -41,10 +41,29 @@ export interface HistoryState<T> {
 
 export function useHistory<T>(
   initial: T,
-  options: { limit?: number; coalesceMs?: number } = {},
+  options: {
+    limit?: number;
+    coalesceMs?: number;
+    /**
+     * Égalité entre deux valeurs.
+     *
+     * Par défaut l'identité (`Object.is`), ce qui suffit quand la valeur est un
+     * objet construit à neuf à chaque vraie modification. Dès qu'un appelant
+     * produit des objets neufs même quand rien n'a changé — le cas d'un état
+     * composite réécrit par un geste au doigt — l'identité ne suffit plus :
+     * l'historique se remplit d'entrées identiques et « annuler » n'avance plus.
+     * Fournir une comparaison structurelle rend le regroupement honnête.
+     */
+    equals?: (a: T, b: T) => boolean;
+  } = {},
 ): HistoryState<T> {
   const limit = options.limit ?? 60;
   const coalesceMs = options.coalesceMs ?? 700;
+  const equals = options.equals ?? Object.is;
+
+  /** Stable : permet de l'utiliser dans les rappels sans les recréer. */
+  const equalsRef = useRef(equals);
+  equalsRef.current = equals;
 
   const [snap, setSnap] = useState<Snapshot<T>>({
     past: [],
@@ -58,7 +77,7 @@ export function useHistory<T>(
       setSnap((s) => {
         const value =
           typeof next === 'function' ? (next as (prev: T) => T)(s.present) : next;
-        if (Object.is(value, s.present)) return s;
+        if (equalsRef.current(value, s.present)) return s;
 
         const now = Date.now();
         // On ne regroupe que si une entrée existe déjà et que l'écart est court :
@@ -80,7 +99,7 @@ export function useHistory<T>(
   const replace = useCallback((next: T | ((prev: T) => T)) => {
     setSnap((s) => {
       const value = typeof next === 'function' ? (next as (prev: T) => T)(s.present) : next;
-      if (Object.is(value, s.present)) return s;
+      if (equalsRef.current(value, s.present)) return s;
       return { ...s, present: value, lastAt: 0 };
     });
   }, []);

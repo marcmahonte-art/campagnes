@@ -9,7 +9,8 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "check:shapes": "tsc -p tools/shape-check/tsconfig.json && node tools/shape-check/run.js"
+    "check:shapes": "tsc -p tools/shape-check/tsconfig.json && node tools/shape-check/run.js",
+    "check:history": "tsc -p tools/history-check/tsconfig.json && node tools/history-check/build/tools/history-check/check-history.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.2",

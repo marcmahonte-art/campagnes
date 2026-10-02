@@ -46,3 +46,13 @@ docs/echantillon/
 
 # Archives de polices : volumineuses, régénérables depuis leur source.
 *.zip
+
+# Captures de vérification produites par `tools/premium-check/` : ce sont des
+# preuves locales de mesure (largeurs d'écran), pas des livrables — on les
+# régénère à la demande au lieu de les suivre.
+.premium-shots/
+
+# Rendus HTML de contrôle (dump de page produit par les outils headless) : sortie
+# intermédiaire de diagnostic, jamais servie ni référencée.
+pr2.html
+premium-render.html

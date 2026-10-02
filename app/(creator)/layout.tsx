@@ -7,6 +7,7 @@ import { LogOut } from 'lucide-react';
 import { Logo } from '@/components/ui/logo';
 import { Spinner } from '@/components/ui/feedback';
 import { PlanBadge } from '@/components/plans/plan-card';
+import { AccountMenu } from '@/components/dashboard/account-menu';
 import { MobileTabBar, SidebarNav } from '@/components/dashboard/nav';
 import { useSession } from '@/lib/backend/session';
 
@@ -79,37 +80,35 @@ export default function CreatorLayout({ children }: { children: React.ReactNode 
               </button>
             </div>
 
-            <div className="flex items-center justify-between px-1">
+            <div className="flex items-center justify-between gap-2 px-1">
               <PlanBadge plan={user.plan} />
-              <Link
-                href="/settings#formule"
-                className="text-[12px] text-gray-500 underline underline-offset-4 transition-colors hover:text-ink"
-              >
-                Gérer
-              </Link>
+              <div className="flex items-center gap-3">
+                <Link
+                  href="/aide"
+                  className="text-[12px] text-gray-500 underline underline-offset-4 transition-colors hover:text-ink"
+                >
+                  Aide
+                </Link>
+                <Link
+                  href="/settings#formule"
+                  className="text-[12px] text-gray-500 underline underline-offset-4 transition-colors hover:text-ink"
+                >
+                  Gérer
+                </Link>
+              </div>
             </div>
           </div>
         </aside>
 
         {/* ---------- Contenu ---------- */}
         <main className="min-w-0 flex-1">
-          {/* En-tête mobile */}
-          <div className="mb-6 flex items-center justify-between md:hidden">
+          {/* En-tête mobile — le logo à gauche, le compte à droite.
+              Le profil et la déconnexion vivaient dans la colonne latérale, masquée
+              en dessous de `md` : ils étaient donc inatteignables sur téléphone.
+              `AccountMenu` les rend accessibles sans rien retirer à cet écran. */}
+          <div className="mb-6 flex items-center justify-between gap-3 md:hidden">
             <Logo size="sm" />
-            <Link
-              href={`/u/${user.username}`}
-              className="flex items-center gap-2 rounded-pill border border-gray-200 bg-white py-1 pl-1 pr-3 text-xs font-medium"
-            >
-              <span className="flex size-6 items-center justify-center overflow-hidden rounded-full bg-ink text-[9px] font-semibold text-white">
-                {user.logo_url ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={user.logo_url} alt="" className="size-full object-cover" />
-                ) : (
-                  initials
-                )}
-              </span>
-              @{user.username}
-            </Link>
+            <AccountMenu user={user} />
           </div>
 
           {children}
