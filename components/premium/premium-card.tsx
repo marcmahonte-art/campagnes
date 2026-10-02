@@ -32,14 +32,18 @@ export function PremiumCard({ campaign }: { campaign: PremiumCampaign }) {
   /** Rapport largeur/hauteur, calculé depuis la seule source de vérité. */
   const ratioValue = ratio.width / ratio.height;
   const Icon = KIND_ICONS[campaign.kind] ?? ImageIcon;
-  const ready = campaign.templateId !== null;
+  const ready = campaign.slug !== null;
 
   return (
     <article className="group flex flex-col overflow-hidden rounded-lg border border-gray-200 bg-white transition-all duration-200 ease-brand hover:-translate-y-0.5 hover:shadow-md">
       {/* ---------------- Aperçu ----------------
-          `aspect-[4/3]` réserve la place : la grille ne bouge pas quand les
-          visuels arriveront, donc aucune surprise de mise en page (CLS). */}
-      <div className="relative aspect-[4/3] overflow-hidden bg-gray-50">
+          La boîte est carrée et l'image est ajustée **sans rognage**
+          (`object-contain` sur fond blanc) : les cadres sont des PNG à zones
+          transparentes, les rogner amputterait la bordure du visuel et
+          laisserait voir le damier à l'endroit de la photo. Un cadre carré dans
+          une boîte carrée remplit l'espace ; un cadre panoramique y laisse des
+          marges blanches, ce qui reste lisible — contrairement à un visuel rogné. */}
+      <div className="relative aspect-square overflow-hidden bg-white">
         {campaign.previewImage ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -47,7 +51,7 @@ export function PremiumCard({ campaign }: { campaign: PremiumCampaign }) {
             alt={`Aperçu de la campagne ${campaign.title}`}
             loading="lazy"
             decoding="async"
-            className="size-full object-cover transition-transform duration-200 ease-brand group-hover:scale-[1.02]"
+            className="size-full object-contain transition-transform duration-200 ease-brand group-hover:scale-[1.02]"
           />
         ) : (
           /* Emplacement vide, assumé. On montre la forme du visuel à venir —
@@ -94,7 +98,7 @@ export function PremiumCard({ campaign }: { campaign: PremiumCampaign }) {
 
         {ready ? (
           <a
-            href={`/c/${campaign.id}`}
+            href={`/c/${campaign.slug}`}
             className="flex h-11 items-center justify-center gap-2 rounded-pill bg-brand-gradient text-sm font-medium text-white transition-all duration-200 ease-brand hover:shadow-md active:scale-[.985]"
           >
             Utiliser ce template

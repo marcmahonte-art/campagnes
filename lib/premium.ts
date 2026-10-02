@@ -13,11 +13,13 @@
  * certaines sont donc écrites en clair, et tout le reste est marqué `null` —
  * l'interface affiche alors une invitation à compléter, jamais une supposition.
  *
- * Les 6 modèles ci-dessous décrivent des **campagnes à créer**, pas des
- * campagnes existantes : leurs `templateId` valent `null` tant que les
- * descripteurs correspondants n'ont pas été dessinés dans l'éditeur. La grille
- * les montre quand même — c'est le plan de la page — mais le bouton « Utiliser
- * ce template » reste inerte et le dit, plutôt que de mener à un cadre vide.
+ * Les 6 modèles ci-dessous ne décrivent pas tous la même réalité : les deux
+ * premiers sont des **campagnes déjà publiées** — leur `slug` est renseigné, le
+ * CTA mène donc au parcours participant existant. Les quatre suivants sont des
+ * **modèles à créer** : `slug` reste `null` tant que le descripteur n'a pas été
+ * dessiné dans l'éditeur. La grille les montre tous — c'est le plan de la page —
+ * mais là où le cadre n'existe pas, le bouton reste inerte et le dit, plutôt que
+ * de mener à un cadre vide.
  */
 
 import type { CampaignKind, Ratio } from './types';
@@ -29,15 +31,17 @@ import type { CampaignKind, Ratio } from './types';
 /**
  * Identité de l'événement, affichée dans le hero et le header.
  *
- * `dates` et `city` sont laissés à `null` par défaut : la maquette les
- * mentionne, mais rien dans le dépôt ne les confirme. Les renseigner ici les
- * fera apparaître partout, sans toucher à un composant.
+ * `dates` et `city` ne sont pas déduits : ils sont **lus sur les visuels
+ * officiels eux-mêmes** — les deux cadres publiés ci-dessous portent la mention
+ * « 30 OCT. - 08 NOV. 2026 · Ouagadougou ». Les renseigner ici les fera
+ * apparaître partout, sans toucher à un composant. Une autre édition doit les
+ * faire revérifier avant d'être affichée.
  */
 export const SIAO = {
   name: 'SIAO',
   edition: '18ᵉ édition',
-  dates: null as string | null,
-  city: null as string | null,
+  dates: '30 oct. – 08 nov. 2026',
+  city: 'Ouagadougou',
   /** Hashtags officiels, repris des visuels fournis. */
   hashtags: ['#SIAO2026', '#Artisanat', '#BurkinaFaso'],
 } as const;
@@ -54,15 +58,28 @@ export interface PremiumCampaign {
   kind: CampaignKind;
   ratio: Ratio;
   /**
-   * Modèle réellement branché, ou `null` si le descripteur n'existe pas encore.
+   * Slug de la campagne **publiée**, tel que le participant l'atteint.
    *
-   * C'est le champ qui décide de tout : renseigné, le CTA mène au parcours
-   * participant ; `null`, le CTA est désactivé et annonce que le visuel est à
-   * venir. On ne fait jamais semblant — un bouton qui mène à un cadre vide est
-   * pire qu'un bouton éteint.
+   * C'est le champ qui décide de tout : renseigné, « Utiliser ce template »
+   * mène à `/c/:slug` — le parcours participant existant, sans compte, avec le
+   * quota, l'export et le partage déjà en place. `null`, le CTA est désactivé et
+   * annonce que le visuel est à venir.
+   *
+   * On ne fait jamais semblant : un bouton actif qui mènerait à un cadre vide
+   * est pire qu'un bouton éteint. C'est aussi pourquoi le slug est recopié
+   * depuis la base plutôt que déduit du titre — `Siao - Je participe au SIAO`
+   * est publié sous le slug `polo-concert`, et inventer un slug à partir du
+   * titre produirait un lien mort.
    */
-  templateId: string | null;
-  /** Visuel d'aperçu. `null` → cadre de remplacement, jamais une image inventée. */
+  slug: string | null;
+  /**
+   * Aperçu du cadre, servi depuis `public/`.
+   *
+   * Jamais l'URL de la vignette en base : le produit les stocke en data URL, et
+   * les inliner ici ferait livrer plusieurs mégaoctets de HTML à une page qui
+   * s'ouvre depuis un QR code. Les fichiers de `public/siao/previews/` sont donc
+   * des **instantanés** des vignettes — à rafraîchir si le cadre est modifié.
+   */
   previewImage: string | null;
   /** Pastille courte, par exemple « Officielle ». */
   badge: string | null;
@@ -83,31 +100,31 @@ export const PREMIUM_CAMPAIGNS: PremiumCampaign[] = [
     title: 'Je participe au SIAO 2026',
     kind: 'photo_frame',
     ratio: '1:1',
-    templateId: null,
-    previewImage: null,
+    slug: 'polo-concert',
+    previewImage: '/siao/previews/je-participe.webp',
     badge: null,
     description: null,
     order: 1,
-    status: 'draft',
+    status: 'published',
   },
   {
     id: 'siao-exposant',
     title: 'Je suis exposant au SIAO 2026',
     kind: 'photo_frame',
     ratio: '1:1',
-    templateId: null,
-    previewImage: null,
+    slug: 'je-suis-exposant-au-siao',
+    previewImage: '/siao/previews/je-suis-exposant.webp',
     badge: null,
     description: null,
     order: 2,
-    status: 'draft',
+    status: 'published',
   },
   {
     id: 'siao-experience',
     title: 'Mon expérience au SIAO',
     kind: 'background_frame',
     ratio: '1:1',
-    templateId: null,
+    slug: null,
     previewImage: null,
     badge: null,
     description: null,
@@ -119,7 +136,7 @@ export const PREMIUM_CAMPAIGNS: PremiumCampaign[] = [
     title: 'Mon artisan préféré',
     kind: 'photo_frame',
     ratio: '1:1',
-    templateId: null,
+    slug: null,
     previewImage: null,
     badge: null,
     description: null,
@@ -131,7 +148,7 @@ export const PREMIUM_CAMPAIGNS: PremiumCampaign[] = [
     title: "Je découvre l'artisanat africain",
     kind: 'background_frame',
     ratio: '1:1',
-    templateId: null,
+    slug: null,
     previewImage: null,
     badge: null,
     description: null,
@@ -143,7 +160,7 @@ export const PREMIUM_CAMPAIGNS: PremiumCampaign[] = [
     title: 'SIAO 2026 — Officielle',
     kind: 'photo_frame',
     ratio: '1:1',
-    templateId: null,
+    slug: null,
     previewImage: null,
     badge: 'Officielle',
     description: null,
@@ -161,13 +178,13 @@ export const PREMIUM_CAMPAIGNS: PremiumCampaign[] = [
  * dessiné s'affiche donc avec un emplacement vide et un bouton éteint — le
  * visiteur voit ce qui arrive, au lieu de ne rien voir.
  *
- * Ne sont retirées que les campagnes explicitement `draft` **avec** un
- * `templateId` : ce cas signifie « le visuel existe mais il n'est pas prêt à
- * être montré », et c'est le seul où l'affichage serait un mensonge.
+ * Ne sont retirées que les campagnes explicitement `draft` **avec** un `slug` :
+ * ce cas signifie « le cadre existe mais il n'est pas prêt à être montré », et
+ * c'est le seul où l'affichage serait un mensonge.
  */
 export function premiumCampaigns(): PremiumCampaign[] {
   return [...PREMIUM_CAMPAIGNS]
-    .filter((campaign) => campaign.status === 'published' || campaign.templateId === null)
+    .filter((campaign) => campaign.status === 'published' || campaign.slug === null)
     .sort((a, b) => a.order - b.order);
 }
 
@@ -179,7 +196,7 @@ export function premiumCampaigns(): PremiumCampaign[] {
  * qu'elle mène quelque part.
  */
 export function readyCount(campaigns: PremiumCampaign[] = premiumCampaigns()): number {
-  return campaigns.filter((campaign) => campaign.templateId !== null).length;
+  return campaigns.filter((campaign) => campaign.slug !== null).length;
 }
 
 /* ------------------------------------------------------------------ */
