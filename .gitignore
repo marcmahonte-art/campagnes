@@ -64,3 +64,7 @@ tools/watermark-check/.tmp/
 # Captures produites par `tools/header-check/` : preuves locales de mesure,
 # régénérées à la demande.
 tools/header-check/.tmp/
+
+# Charges utiles SQL et dumps de page fabriqués pour appliquer/vérifier une
+# migration. Sortie intermédiaire de diagnostic, jamais servie.
+.tmp-mig/
