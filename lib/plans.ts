@@ -262,6 +262,20 @@ export const PREMIUM_MODULES: PremiumModule[] = [
     availableFrom: 'creator',
   },
   {
+    /*
+     * Les modèles de cadres sont un module **à part entière**, pas un détail de
+     * Frame Pro : la bibliothèque est le premier verrou qu'un créateur gratuit
+     * rencontre, avant même d'avoir composé quoi que ce soit. Il lui faut donc
+     * sa propre entrée, pour que l'interface sache quelle formule proposer.
+     */
+    id: 'templates',
+    name: 'Modèles de cadres',
+    feature: 'templates_premium',
+    description:
+      'Bibliothèque de modèles prêts à l’emploi, conçus pour les événements et les campagnes.',
+    availableFrom: 'creator',
+  },
+  {
     id: 'motion',
     name: 'Motion',
     feature: 'motion',

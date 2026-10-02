@@ -42,7 +42,7 @@ import type {
   TextLayer,
   VerticalAlign,
 } from '@/lib/types';
-import type { PlanId } from '@/lib/plans';
+import { PLANS, PREMIUM_MODULES, hasFeature, type PlanId } from '@/lib/plans';
 
 /* ------------------------------------------------------------------ */
 /* Pont descripteur ⇄ objets Fabric                                    */
@@ -1197,15 +1197,43 @@ export function FrameEditor({
    * modèle à l'échelle du format courant. Ce que l'utilisateur perd — le décor
    * précédent — est annoncé par la modale avant l'application, pas après.
    */
+  /**
+   * Les modèles de cadres sont un module premium (`templates_premium`).
+   *
+   * La règle est lue depuis `lib/plans.ts`, jamais recopiée : le bouton du
+   * panneau porte déjà le verrou, et cette garde couvre les autres chemins
+   * (raccourci, appel direct) — on ne se repose pas sur l'état d'un bouton
+   * pour protéger un droit.
+   */
+  const templatesUnlocked = hasFeature(plan, 'templates_premium');
+
+  const openTemplates = useCallback(() => {
+    if (!templatesUnlocked) {
+      const required =
+        PREMIUM_MODULES.find((m) => m.feature === 'templates_premium')?.availableFrom ?? 'creator';
+      setError(
+        `Les modèles de cadres sont réservés à la formule ${PLANS[required].name}. ` +
+          'Votre travail actuel est conservé.',
+      );
+      return;
+    }
+    setError(null);
+    setTemplatesOpen(true);
+  }, [templatesUnlocked]);
+
   const useTemplate = useCallback(
     async (template: FrameTemplate, preserveContent: boolean) => {
+      if (!templatesUnlocked) {
+        setError('Les modèles de cadres sont réservés aux formules payantes.');
+        return;
+      }
       const next = applyTemplate(descriptorRef.current, template, preserveContent);
       await buildObjects(next);
       applyLocks();
       setSelectedId(null);
       onChange(next);
     },
-    [applyLocks, buildObjects, onChange],
+    [applyLocks, buildObjects, onChange, templatesUnlocked],
   );
 
   const selectedLayer = descriptor.layers.find((l) => l.id === selectedId) ?? null;
@@ -1328,11 +1356,12 @@ export function FrameEditor({
         descriptor={descriptor}
         kind={kind}
         maxLayers={maxLayers}
+        plan={plan}
         onAddImage={() => fileInputRef.current?.click()}
         onAddText={() => void addText()}
         onAddShape={(shape) => void addShape(shape)}
         onChangeRatio={changeRatio}
-        onOpenTemplates={() => setTemplatesOpen(true)}
+        onOpenTemplates={openTemplates}
         busy={busy}
         locked={locked}
         onToggleLock={() => setLocked((v) => !v)}

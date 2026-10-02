@@ -32,6 +32,8 @@ import { kindSpec } from '@/lib/campaign-kinds';
 import { ratioSpec } from '@/lib/ratios';
 import { CURVE_MAX, CURVE_MIN } from '@/lib/descriptor';
 import { FONTS, fontSpec } from '@/lib/fonts';
+import { PLANS, PREMIUM_MODULES, hasFeature, type PlanId } from '@/lib/plans';
+import { PlanBadge } from '@/components/plans/plan-card';
 import {
   RADIUS_MAX,
   SHAPES,
@@ -142,6 +144,7 @@ export function FramePanel({
   descriptor,
   kind,
   maxLayers,
+  plan,
   onAddImage,
   onAddText,
   onAddShape,
@@ -155,6 +158,8 @@ export function FramePanel({
   kind: CampaignKind;
   /** Plafond imposé par la formule. `null` = illimité. */
   maxLayers: number | null;
+  /** Formule du compte : décide de l'accès aux modèles de cadres. */
+  plan: PlanId | string | null;
   onAddImage: () => void;
   onAddText: () => void;
   onAddShape: (kind: ShapeKind) => void;
@@ -169,20 +174,56 @@ export function FramePanel({
   const count = descriptor.layers.length;
   const limitReached = maxLayers !== null && count >= maxLayers;
 
+  /*
+   * Les modèles de cadres sont un module premium (`templates_premium`). La
+   * règle n'est pas recopiée ici : elle est lue depuis `lib/plans.ts`, comme la
+   * limite de calques. Ajouter une formule demain ne demande aucune retouche.
+   */
+  const templatesUnlocked = hasFeature(plan, 'templates_premium');
+  const templatesFrom =
+    PREMIUM_MODULES.find((m) => m.feature === 'templates_premium')?.availableFrom ?? 'creator';
+  const templatesPlan = PLANS[templatesFrom];
+
   return (
     <div className="flex flex-col gap-5">
       <PanelHeading title="Mon cadre" hint={spec.detail} />
 
       {onOpenTemplates && (
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={onOpenTemplates}
-          className="w-full flex items-center justify-center gap-2"
-        >
-          <LayoutTemplate className="size-4 text-purple" strokeWidth={1.75} aria-hidden />
-          Choisir un modèle…
-        </Button>
+        <div className="flex flex-col gap-1.5">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={templatesUnlocked ? onOpenTemplates : undefined}
+            disabled={!templatesUnlocked}
+            aria-disabled={!templatesUnlocked}
+            title={
+              templatesUnlocked
+                ? undefined
+                : 'Les modèles de cadres sont réservés aux formules payantes.'
+            }
+            className="w-full flex items-center justify-center gap-2"
+          >
+            {templatesUnlocked ? (
+              <LayoutTemplate className="size-4 text-purple" strokeWidth={1.75} aria-hidden />
+            ) : (
+              <Lock className="size-4 text-gray-400" strokeWidth={1.75} aria-hidden />
+            )}
+            Choisir un modèle…
+          </Button>
+          {/*
+            On ne cache pas le module : il reste visible avec la formule qui le
+            débloque. Un bouton verrouillé et muet ferait croire à une panne.
+          */}
+          {!templatesUnlocked && (
+            <p className="flex items-center gap-1.5 text-[11px] leading-relaxed text-gray-500">
+              <PlanBadge plan={templatesFrom} />
+              <span>{templatesPlan.name}</span>
+              <a href="/tarifs" className="underline underline-offset-4 hover:text-ink">
+                Voir les formules
+              </a>
+            </p>
+          )}
+        </div>
       )}
 
       <div className="flex flex-col gap-2">
