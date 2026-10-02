@@ -56,3 +56,7 @@ docs/echantillon/
 # intermédiaire de diagnostic, jamais servie ni référencée.
 pr2.html
 premium-render.html
+
+# Photo factice déposée par `tools/watermark-check/runtime-check.js` pour
+# déclencher l'affichage réel du bandeau. Régénérable, pas un livrable.
+tools/watermark-check/.tmp/

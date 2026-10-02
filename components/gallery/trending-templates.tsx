@@ -9,6 +9,7 @@ import { compactCount } from '@/lib/gallery';
 import { kindSpec } from '@/lib/campaign-kinds';
 import { CreatorAvatar } from '@/components/gallery/creator-avatar';
 import { GalleryPreview } from '@/components/gallery/gallery-preview';
+import { shouldWatermark } from '@/lib/watermark-policy';
 import type { GalleryItem } from '@/lib/types';
 
 /**
@@ -101,7 +102,10 @@ function CompactTemplateCard({ item }: { item: GalleryItem }) {
             src={item.frame?.thumbnail_url ?? null}
             alt={`Aperçu de la campagne ${item.name}`}
             title={item.name}
-            watermark={item.creator?.watermark ?? true}
+            watermark={shouldWatermark({
+              access: 'public',
+              creatorWatermark: item.creator?.watermark ?? true,
+            })}
           />
         </div>
 

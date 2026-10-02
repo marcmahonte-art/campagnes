@@ -57,6 +57,7 @@ import {
 import { useHistory } from '@/components/editor/use-history';
 import { PHOTO_FILTER_PRESETS, type PhotoFilter } from '@/lib/photo-filters';
 import { blockedMessage, remaining } from '@/lib/quota';
+import { exportPlanFor, shouldWatermark } from '@/lib/watermark-policy';
 import type { CampaignQuota, GalleryItem } from '@/lib/types';
 
 /**
@@ -85,7 +86,14 @@ export function ParticipantJourney({
 }: {
   campaign: GalleryItem | null;
   loading: boolean;
-  /** Le partage social n'est proposé que sur le lien public. */
+  /**
+   * Le partage social n'est proposé que sur le lien public.
+   *
+   * Ce drapeau ne décrit pas qu'une affordance : il **identifie l'origine du
+   * parcours**, donc la règle commerciale du badge (voir `showWatermark`).
+   * `/c/:slug` partage → diffusion publique → badge toujours posé.
+   * `/d/:token` ne partage pas → diffusion choisie par le créateur → sa formule.
+   */
   sharing?: boolean;
 }) {
   /*
@@ -271,9 +279,30 @@ export function ParticipantJourney({
   /**
    * Le filigrane suit la formule du **créateur** — le participant n'en a pas.
    * La projection publique expose ce seul booléen, jamais la formule.
+   *
+   * La règle elle-même (« qui porte le badge ») vit dans
+   * `lib/watermark-policy.ts` : elle est appelée ici, par les vignettes de
+   * galerie et par l'export. Recopiée, elle finirait par diverger, et l'aperçu
+   * mentirait sur le fichier.
+   *
+   * En accès public (`/c/[slug]`), le badge est posé même pour un cadre Pro :
+   * c'est ce qui distingue une campagne *distribuée* par son créateur d'un cadre
+   * simplement publié, que n'importe qui peut réutiliser depuis la galerie.
    */
   const creatorWatermark = campaign?.creator?.watermark ?? true;
-  const exportPlan: PlanId = creatorWatermark ? 'free' : 'creator';
+  const watermarkInput = {
+    access: sharing ? ('public' as const) : ('distributed' as const),
+    creatorWatermark,
+  };
+  const showWatermark = shouldWatermark(watermarkInput);
+  const exportPlan: PlanId = exportPlanFor(watermarkInput);
+
+  /**
+   * Le badge vient-il **uniquement** de l'accès public — c'est-à-dire posé
+   * malgré un créateur Pro ? C'est ce cas qui change le texte de la bannière :
+   * promettre « une formule payante le retire » serait faux pour ce participant.
+   */
+  const fromPublicOnly = showWatermark && !creatorWatermark;
 
   /** Descripteur effectivement rendu : le cadre du créateur + les calques du participant. */
   const composed = useMemo(
@@ -458,7 +487,7 @@ export function ParticipantJourney({
                   photo={photo}
                   placement={placement}
                   style={style}
-                  watermark={creatorWatermark}
+                  watermark={showWatermark}
                   onPlacementChange={setPlacementFromCanvas}
                   onTextChange={setTextFromCanvas}
                 />
@@ -850,14 +879,20 @@ export function ParticipantJourney({
 
                   {/*
                     Bannière du filigrane.
-                    Elle dit la vérité, et rien de plus : le badge est posé par
-                    le créateur, pas par le participant, et seul un compte peut
-                    le retirer. On ne propose donc aucun bouton d'achat ici — le
-                    participant n'a pas de compte, et un bouton qui n'active rien
-                    serait un mensonge. Le lien mène à la page des formules, qui
-                    explique elle-même comment les obtenir.
+
+                    Elle dit la vérité, et rien de plus. Deux raisons distinctes
+                    posent le badge : la formule du créateur, ou le fait que ce
+                    visuel est obtenu sans lien de distribution. Le texte doit
+                    donc éviter de promettre que « seul le créateur peut le
+                    retirer » — c'est faux pour un cadre Pro accédé depuis la
+                    galerie.
+
+                    On ne propose aucun bouton d'achat : le participant n'a pas
+                    de compte, et un bouton qui n'active rien serait un mensonge.
+                    Le lien mène à la page des formules, qui explique elle-même
+                    ce qu'elles changent.
                   */}
-                  {creatorWatermark && (
+                  {showWatermark && (
                     <div className="mt-4 flex items-start gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3.5">
                       <BadgeCheck
                         className="mt-0.5 size-4 shrink-0 text-purple"
@@ -865,16 +900,33 @@ export function ParticipantJourney({
                         aria-hidden
                       />
                       <div>
-                        <p className="text-[13px] leading-relaxed text-gray-600">
-                          Ce visuel porte le badge « Créé avec Campagnes ». Il est ajouté par le
-                          créateur de la campagne : seul son compte peut le retirer.
-                        </p>
-                        <Link
-                          href="/tarifs"
-                          className="mt-1.5 inline-block text-[13px] font-medium text-ink underline underline-offset-2"
-                        >
-                          Voir ce que retire une formule payante
-                        </Link>
+                        {/*
+                          Une phrase par raison. `fromPublicOnly` : le badge est
+                          posé **malgré** la formule du créateur — donc annoncer
+                          « une formule payante le retire » serait faux, et le
+                          lien vers les formules n'aurait rien à y faire. Il
+                          n'apparaît que dans l'autre cas, où il dit vrai.
+                        */}
+                        {fromPublicOnly ? (
+                          <p className="text-[13px] leading-relaxed text-gray-600">
+                            Ce visuel porte le badge « Créé avec Campagnes » : il est obtenu
+                            depuis la galerie, sans lien de distribution. Seule une campagne
+                            distribuée par son créateur en est exemptée.
+                          </p>
+                        ) : (
+                          <>
+                            <p className="text-[13px] leading-relaxed text-gray-600">
+                              Ce visuel porte le badge « Créé avec Campagnes ». Il est ajouté par
+                              le créateur de la campagne : seul son compte peut le retirer.
+                            </p>
+                            <Link
+                              href="/tarifs"
+                              className="mt-1.5 inline-block text-[13px] font-medium text-ink underline underline-offset-2"
+                            >
+                              Voir ce que retire une formule payante
+                            </Link>
+                          </>
+                        )}
                       </div>
                     </div>
                   )}

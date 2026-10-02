@@ -7,6 +7,7 @@ import { LikeButton, UsageCount } from './like-button';
 import { kindSpec } from '@/lib/campaign-kinds';
 import { ratioSpec } from '@/lib/ratios';
 import { relativeDate } from '@/lib/gallery';
+import { shouldWatermark } from '@/lib/watermark-policy';
 import type { GalleryItem } from '@/lib/types';
 
 /**
@@ -89,10 +90,17 @@ export function GalleryCard({
               src={item.frame?.thumbnail_url ?? null}
               alt={`Aperçu de la campagne ${item.name}`}
               title={item.name}
-              // Créateur inconnu → on marque, comme partout ailleurs : mieux
-              // vaut un visuel marqué à tort qu'un visuel qui contourne la
-              // formule par accident.
-              watermark={item.creator?.watermark ?? true}
+              /*
+               * La vignette montre ce que le participant obtiendra. Elle est
+               * affichée **dans la galerie**, donc en accès public : la règle de
+               * `lib/watermark-policy.ts` y pose le badge même pour un cadre Pro.
+               * Sans cela, l'aperçu annoncerait un visuel sans marque et le
+               * fichier téléchargé en porterait une.
+               */
+              watermark={shouldWatermark({
+                access: 'public',
+                creatorWatermark: item.creator?.watermark ?? true,
+              })}
             />
           )}
         </div>

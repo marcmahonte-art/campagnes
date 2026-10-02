@@ -9,6 +9,7 @@ import { LikeButton } from './like-button';
 import { kindSpec } from '@/lib/campaign-kinds';
 import { ratioSpec } from '@/lib/ratios';
 import { compactCount, relativeDate } from '@/lib/gallery';
+import { shouldWatermark } from '@/lib/watermark-policy';
 import { useSession } from '@/lib/backend/session';
 import type { GalleryItem } from '@/lib/types';
 
@@ -87,7 +88,10 @@ export function TemplateDrawer({
               src={item.frame?.thumbnail_url ?? null}
               alt={`Aperçu de la campagne ${item.name}`}
               title={item.name}
-              watermark={item.creator?.watermark ?? true}
+              watermark={shouldWatermark({
+                access: 'public',
+                creatorWatermark: item.creator?.watermark ?? true,
+              })}
             />
           </div>
 
