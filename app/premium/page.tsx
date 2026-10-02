@@ -10,8 +10,8 @@ import {
   Share2,
   Sparkles,
 } from 'lucide-react';
-import { PremiumHeader } from '@/components/premium/premium-header';
-import { PremiumFooter } from '@/components/premium/premium-footer';
+import { SiteHeader } from '@/components/site-header';
+import { SiteFooter } from '@/components/site-footer';
 import { PremiumCard } from '@/components/premium/premium-card';
 import { PREMIUM_STEPS, SIAO, premiumCampaigns, readyCount } from '@/lib/premium';
 
@@ -80,8 +80,8 @@ export default function PremiumPage() {
   const ready = readyCount(campaigns);
 
   return (
-    <div className="min-h-dvh bg-white">
-      <PremiumHeader />
+    <>
+      <SiteHeader />
 
       <main>
         {/* ================= HERO =================
@@ -248,7 +248,7 @@ export default function PremiumPage() {
         </section>
       </main>
 
-      <PremiumFooter />
-    </div>
+      <SiteFooter />
+    </>
   );
 }
