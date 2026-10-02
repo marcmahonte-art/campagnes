@@ -131,13 +131,13 @@ function iconButtonClass(transparent: boolean): string {
  * Menu replié du mobile.
  *
  * Il porte **les mêmes destinations que la barre d'écran large**, plus une :
- * « Créer une campagne » pointe vers `/signup`. C'est la même page que
- * « Créer ma campagne » ci-dessus, nommée autrement pour tenir dans une ligne
- * de liste — pas une destination différente.
+ * « Créer ma campagne » pointe vers `/signup`. Le libellé est **identique** à
+ * celui de la barre large et du pied de page : un même bouton qui change de nom
+ * selon l'écran fait douter qu'il mène au même endroit.
  *
- * Les entrées disparaissent quand la session est chargée et qu'un compte est
- * ouvert : « Se connecter » et « Créer ma campagne » n'ont alors plus de sens.
- * Le bouton `•••` et « Mon dashboard » les remplacent.
+ * Les entrées de connexion disparaissent quand la session est chargée et qu'un
+ * compte est ouvert : « Se connecter » et « Créer ma campagne » n'ont alors plus
+ * de sens. « Mon dashboard » les remplace.
  */
 function MobileMenu({
   open,
@@ -161,7 +161,7 @@ function MobileMenu({
       ) : (
         <nav className="flex flex-col gap-1">
           <MenuLink href="/signup" onNavigate={onClose} emphasis>
-            Créer une campagne
+            Créer ma campagne
             <ArrowRight className="size-4" aria-hidden />
           </MenuLink>
           <MenuLink href="/galerie" onNavigate={onClose}>

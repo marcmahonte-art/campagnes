@@ -17,7 +17,7 @@ const COLUMNS = [
     title: 'Produit',
     links: [
       { href: '/galerie', label: 'Galerie' },
-      { href: '/signup', label: 'Créer une campagne' },
+      { href: '/signup', label: 'Créer ma campagne' },
       { href: '/tarifs', label: 'Tarifs' },
     ],
   },
