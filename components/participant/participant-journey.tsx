@@ -17,6 +17,9 @@ import {
   Type,
   Undo2,
   Video,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { Logo } from '@/components/ui/logo';

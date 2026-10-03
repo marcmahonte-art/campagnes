@@ -422,12 +422,19 @@ export function FrameEditor({
     const stage = stageRef.current;
     if (!canvas || !stage) return;
 
-    const available = stage.clientWidth;
-    if (available <= 0) return;
+    /*
+     * L'espace utile se lit dans le CSS plutôt que dans une constante : le
+     * paddings de la zone change avec le breakpoint, et un chiffre en dur
+     * ferait déborder le cadre sur mobile dès qu'on l'écran rétrécit.
+     */
+    const styles = getComputedStyle(stage);
+    const gutter = parseFloat(styles.paddingLeft) + parseFloat(styles.paddingRight);
+    const available = Math.max(stage.clientWidth - gutter, 80);
 
-    // La scène est l'élément dominant : elle prend la hauteur disponible.
-    const maxHeight = window.innerWidth < 768 ? 320 : 520;
-    const z = Math.min(available / specRef.current.width, maxHeight / specRef.current.height);
+    // Hauteur max adaptée selon le viewport : le cadre reste entier visible.
+    const isMobile = window.innerWidth < 768;
+    const maxH = isMobile ? 280 : 520;
+    const z = Math.min(available / specRef.current.width, maxH / specRef.current.height);
     setZoom(z);
     canvas.setDimensions({
       width: Math.round(specRef.current.width * z),
@@ -1464,7 +1471,7 @@ export function FrameEditor({
         {/* ---------------- Rail (tablette et bureau) ---------------- */}
         {!preview && (
           <nav
-            aria-label="Outils de l’éditeur"
+            aria-label="Outils de l'éditeur"
             className="hidden shrink-0 flex-col gap-1 md:flex"
           >
             {toolbar}
@@ -1475,6 +1482,13 @@ export function FrameEditor({
 
         {/* ---------------- Scène ---------------- */}
         <div className="min-w-0 flex-1">
+          {/*
+            Zone de travail style Photopea :
+            - fond gris neutre qui donne de la profondeur et isole le canvas
+            - canvas centré avec ombre légère et contours nets
+            - damier de transparence posé directement sous le canvas
+            - hauteur calculée dynamiquement selon le ratio du format
+          */}
           <div
             ref={stageRef}
             onDragOver={(e) => {
@@ -1487,37 +1501,52 @@ export function FrameEditor({
               setDragging(false);
               if (!preview) void addImageFile(e.dataTransfer.files?.[0]);
             }}
-            className={cn(
-              'relative flex min-h-[300px] items-center justify-center overflow-hidden rounded-lg border bg-gray-100 p-4 transition-colors md:min-h-[380px]',
-              dragging ? 'border-purple bg-purple/5' : 'border-gray-200',
-            )}
+            className="relative flex min-h-[240px] items-center justify-center overflow-hidden rounded-lg p-4 transition-colors md:min-h-[360px] md:p-8"
+            style={{
+              backgroundColor: '#787878',
+              /* Anneau bleu subtil quand on survole en mode drag */
+              outline: dragging ? '2px solid #a78bfa' : 'none',
+              outlineOffset: '-2px',
+            }}
           >
-            {/* Damier discret : matérialise la transparence du cadre. */}
+            {/* Canvas + damier de transparence en surimpression directe */}
             <div
-              aria-hidden
-              className="pointer-events-none absolute inset-0 opacity-[0.5]"
+              className="relative"
               style={{
-                backgroundImage:
-                  'linear-gradient(45deg, #e5e7eb 25%, transparent 25%, transparent 75%, #e5e7eb 75%), linear-gradient(45deg, #e5e7eb 25%, transparent 25%, transparent 75%, #e5e7eb 75%)',
-                backgroundSize: '16px 16px',
-                backgroundPosition: '0 0, 8px 8px',
+                lineHeight: 0,
+                /* Ombre portée nette — délimite le format sans border */
+                boxShadow: '0 4px 24px rgba(0,0,0,0.45), 0 1px 4px rgba(0,0,0,0.3)',
               }}
-            />
+            >
+              {/*
+                Damier de transparence posé DERRIÈRE le canvas.
+                Identique à Photopea : gris clair / gris légèrement plus foncé.
+                Il est strictement limité aux dimensions du canvas grâce au
+                positionnement absolu inset-0 sur le parent `relative`.
+              */}
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-0"
+                style={{
+                  backgroundImage:
+                    'linear-gradient(45deg, #c8c8c8 25%, transparent 25%, transparent 75%, #c8c8c8 75%), linear-gradient(45deg, #c8c8c8 25%, transparent 25%, transparent 75%, #c8c8c8 75%)',
+                  backgroundSize: '14px 14px',
+                  backgroundPosition: '0 0, 7px 7px',
+                  backgroundColor: '#f0f0f0',
+                }}
+              />
 
-            <div className="relative shadow-md" style={{ lineHeight: 0 }}>
-              <canvas ref={canvasElRef} role="img" aria-label="Cadre en cours d’édition" />
+              <canvas ref={canvasElRef} role="img" aria-label="Cadre en cours d'édition" />
 
               {/*
-                Contour du cadre. Comme les guides : en surimpression, jamais
-                sur le canvas. Un rectangle posé dans les objets serait relu
-                comme un calque par `emitFromCanvas` (une couche `image` sans
-                source), entrerait dans l'indexation de l'animation et dans
-                l'export.
+                Contour fin du format — en surimpression, jamais sur le canvas.
+                Couleur blanche semi-transparente pour rester visible sur tous fonds.
               */}
               {!preview && (
                 <span
                   aria-hidden
-                  className="pointer-events-none absolute inset-0 border-2 border-white"
+                  className="pointer-events-none absolute inset-0"
+                  style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.6)' }}
                 />
               )}
 
@@ -1539,24 +1568,35 @@ export function FrameEditor({
               )}
             </div>
 
+            {/* Format courant, en bas à droite : langage naturel, jamais une
+                résolution technique (§12 du design system). */}
+            {!preview && (
+              <span className="pointer-events-none absolute bottom-2 right-3 select-none text-[11px] font-medium text-white/70">
+                {spec.label}
+              </span>
+            )}
+
             {dragging && !preview && (
-              <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-white/70">
-                <span className="rounded-pill bg-ink px-4 py-2 text-[13px] font-medium text-white">
+              <div
+                className="pointer-events-none absolute inset-0 flex items-center justify-center"
+                style={{ backgroundColor: 'rgba(167,139,250,0.15)' }}
+              >
+                <span className="rounded-pill bg-ink px-5 py-2.5 text-[13px] font-medium text-white shadow-lg">
                   Déposez votre image
                 </span>
               </div>
             )}
 
             {busy && (
-              <div className="absolute inset-0 flex items-center justify-center bg-white/70">
-                <Loader2 className="size-5 animate-spin text-gray-500" aria-hidden />
+              <div className="absolute inset-0 flex items-center justify-center" style={{ backgroundColor: 'rgba(120,120,120,0.5)' }}>
+                <Loader2 className="size-5 animate-spin text-white" aria-hidden />
               </div>
             )}
           </div>
 
           {!preview && (
             <p className="mt-3 text-center text-[12px] leading-relaxed text-gray-500">
-              Glissez une image sur la scène, déplacez-la, redimensionnez-la. Le centre s’aligne
+              Glissez une image sur la scène, déplacez-la, redimensionnez-la. Le centre s�aligne
               tout seul. Supprimez avec la touche{' '}
               <kbd className="mx-1 rounded border border-gray-200 bg-white px-1.5 py-0.5 font-mono text-[10px]">
                 Suppr

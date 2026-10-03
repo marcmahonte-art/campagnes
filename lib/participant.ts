@@ -394,8 +394,10 @@ export function defaultParticipantText(zone: PhotoZone, ratio: Ratio): Participa
   return {
     content: '',
     color: TEXT_COLORS[0].id,
+    // Positionné en haut du cadre avec un petit padding
     x: Math.round(zone.x + zone.w * TEXT_INSET_RATIO),
-    y: Math.round(zone.y + (zone.h - height) / 2),
+    y: Math.round(zone.y + zone.h * TEXT_INSET_RATIO),
+    align: 'left',
   };
 }
 
@@ -414,7 +416,7 @@ export function participantTextLayer(
     font: 'Inter',
     size,
     color: text.color,
-    align: 'center',
+    align: text.align,
     // Le gras n'est pas décoratif : un texte fin disparaît sur une photo.
     weight: 'bold',
     style: 'normal',
