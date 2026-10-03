@@ -253,6 +253,8 @@ export interface ParticipantText {
   content: string;
   /** Couleur du texte, ou `brand-gradient`. */
   color: string;
+  /** Alignement du texte : left, center, right. */
+  align: 'left' | 'center' | 'right';
   /** Coin supérieur gauche, dans le repère du ratio. */
   x: number;
   y: number;
