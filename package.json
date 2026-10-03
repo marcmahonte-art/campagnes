@@ -13,7 +13,9 @@
     "check:history": "tsc -p tools/history-check/tsconfig.json && node tools/history-check/build/tools/history-check/check-history.js",
     "check:watermark": "tsc -p tools/watermark-check/tsconfig.json && node tools/watermark-check/build/tools/watermark-check/check-watermark.js",
     "check:templates": "tsc -p tools/templates-check/tsconfig.json && node tools/templates-check/build/tools/templates-check/check-templates.js",
-    "check:storage": "node tools/storage-check/listing-lockdown-check.js"
+    "check:storage": "node tools/storage-check/listing-lockdown-check.js",
+    "check:distribution": "node tools/distribution-check/distribution-check.js",
+    "check:distribution:contract": "tsc -p tools/distribution-check/tsconfig.json && node tools/distribution-check/build/tools/distribution-check/check-contract.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.2",

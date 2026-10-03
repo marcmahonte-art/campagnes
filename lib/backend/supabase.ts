@@ -17,6 +17,8 @@ import { MEDIA_BUCKET, REPORTS_BUCKET, SITE_URL } from './config';
 import type {
   Backend,
   CreateCampaignInput,
+  DistributionLink,
+  DistributionLinkStatus,
   Result,
   SignUpOutcome,
   UpdateProfilePatch,
@@ -619,6 +621,42 @@ export const supabaseBackend: Backend = {
       return { error: "Le lien privé n'a pas pu être créé." };
     }
     return { data };
+  },
+
+  /**
+   * Les liens déjà créés, **relus depuis la base** — c'est ce qui rend un jeton
+   * persistant : il survit au rechargement de la page.
+   *
+   * Une simple lecture, sans RPC : la policy `distribution_links_owner`
+   * (migration 0009) restreint déjà les lignes au propriétaire de la campagne.
+   * Ajouter un filtre `owner_id` ici ne protégerait rien de plus et laisserait
+   * croire que la sélection est l'affaire du navigateur. Un anonyme reçoit donc
+   * une liste vide par construction, jamais par politesse.
+   */
+  async listDistributionLinks(campaignId): Promise<Result<DistributionLink[]>> {
+    const { data, error } = await supabaseBrowser()
+      .from('distribution_links')
+      .select('id, token, quota_total, quota_used, status, expires_at, created_at')
+      .eq('campaign_id', campaignId)
+      .order('created_at', { ascending: false });
+
+    if (error) return { error: message(error, 'Impossible de lire les liens de distribution.') };
+
+    const rows = (data ?? []) as Row[];
+    return {
+      data: rows.map((row) => ({
+        id: String(row.id),
+        token: String(row.token),
+        quotaTotal: Number(row.quota_total ?? 0),
+        quotaUsed: Number(row.quota_used ?? 0),
+        // La colonne porte une contrainte `check` : toute valeur inconnue est
+        // impossible en base. On tombe sur `ACTIVE` par sécurité plutôt que de
+        // laisser un libellé vide à l'écran.
+        status: (String(row.status ?? 'ACTIVE') as DistributionLinkStatus) || 'ACTIVE',
+        expiresAt: (row.expires_at as string | null) ?? null,
+        createdAt: String(row.created_at ?? ''),
+      })),
+    };
   },
 
   /**

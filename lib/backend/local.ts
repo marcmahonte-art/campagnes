@@ -15,6 +15,7 @@ import { SHARE_EVENTS, type ShareEventType, type ShareStats } from '@/lib/share'
 import type {
   Backend,
   CreateCampaignInput,
+  DistributionLink,
   Result,
   SignUpOutcome,
   UpdateProfilePatch,
@@ -582,6 +583,18 @@ export const localBackend: Backend = {
    */
   async createDistributionLink(_campaignId, _quota, _expiresAt): Promise<Result<string>> {
     return { error: 'Les liens privés ne sont pas disponibles en mode démonstration.' };
+  },
+
+  /**
+   * Renvoie toujours une liste vide, et c'est exact.
+   *
+   * Le mode démonstration ne crée aucun jeton : il n'y en a donc aucun à
+   * relire. Dire `[]` plutôt qu'une erreur laisse la page s'afficher dans son
+   * état « aucun lien », qui est le vrai état de cette base de démonstration —
+   * l'alternative, un message d'échec, laisserait croire à une panne.
+   */
+  async listDistributionLinks(_campaignId): Promise<Result<DistributionLink[]>> {
+    return { data: [] };
   },
 
   async getPrivateCampaign(_token): Promise<GalleryItem | null> {

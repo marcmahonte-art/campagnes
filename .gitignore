@@ -68,3 +68,8 @@ tools/header-check/.tmp/
 # Charges utiles SQL et dumps de page fabriqués pour appliquer/vérifier une
 # migration. Sortie intermédiaire de diagnostic, jamais servie.
 .tmp-mig/
+
+# Jeton témoin de `tools/distribution-check/` : c'est un secret d'accès réel à
+# une campagne. Il ne doit JAMAIS entrer dans l'historique — le fichier
+# n'existe que le temps d'un contrôle d'étanchéité de la RLS.
+tools/distribution-check/.witness

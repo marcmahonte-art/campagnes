@@ -8,6 +8,7 @@ import {
   Check,
   Copy,
   ExternalLink,
+  Link2,
   Loader2,
   Share2,
   Trash2,
@@ -21,6 +22,7 @@ import { FrameEditor } from '@/components/frame/frame-editor';
 import { useHistory } from '@/components/editor/use-history';
 import { DescriptorViewer } from '@/components/campaign/descriptor-viewer';
 import { backend } from '@/lib/backend';
+import type { DistributionLink } from '@/lib/backend/types';
 import { distributionService } from '@/lib/distribution-service';
 import { useSession } from '@/lib/backend/session';
 import { parseDescriptor } from '@/lib/descriptor';
@@ -42,11 +44,16 @@ import {
   buildShareText,
   campaignHashtags,
   parseHashtagsInput,
+  privateDistributionUrl,
   publicCampaignUrl,
 } from '@/lib/share';
 import type { CampaignWithFrame, Descriptor, Ratio } from '@/lib/types';
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
+
+/** Format des nombres et des dates affichés pour les liens de distribution. */
+const fmtCount = new Intl.NumberFormat('fr-FR');
+const fmtDate = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
 
 export default function CampaignEditorPage() {
   const params = useParams<{ id: string }>();
@@ -70,8 +77,28 @@ export default function CampaignEditorPage() {
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [privateLink, setPrivateLink] = useState<string | null>(null);
+  /**
+   * Liens de distribution **déjà créés**, relus depuis la base.
+   *
+   * Ils ne vivent pas dans le composant : c'est précisément la différence entre
+   * un lien qui existe et un jeton qu'on a vu passer. Un rechargement doit
+   * rendre la même liste, puisque la base n'a rien perdu.
+   */
+  const [privateLinks, setPrivateLinks] = useState<DistributionLink[]>([]);
+  const [privateLinksLoading, setPrivateLinksLoading] = useState(true);
+  /** Échec de la lecture : on le montre plutôt que de laisser croire à « aucun lien ». */
+  const [privateLinksError, setPrivateLinksError] = useState<string | null>(null);
   const [privateLinkLoading, setPrivateLinkLoading] = useState(false);
+  /** Jeton fraîchement copié — « Copié » ne s'affiche que sur cette ligne-là. */
+  const [privateCopiedToken, setPrivateCopiedToken] = useState<string | null>(null);
+  /**
+   * Quota du **prochain** lien de distribution, saisi par le créateur.
+   *
+   * Il est **indépendant** du quota de la campagne : il compte les
+   * téléchargements d'une diffusion précise. La valeur initiale n'est qu'une
+   * commodité de saisie — elle ne copie rien, elle propose.
+   */
+  const [privateQuota, setPrivateQuota] = useState('1000');
   const [confirmDelete, setConfirmDelete] = useState(false);
   /** Aperçu : masque les outils d'édition et joue l'animation du cadre. */
   const [preview, setPreview] = useState(false);
@@ -149,6 +176,31 @@ export default function CampaignEditorPage() {
       alive = false;
     };
   }, [campaignId, user]);
+
+  /* ---------------- Liens de distribution ---------------- */
+  /**
+   * Recharge les liens depuis la base.
+   *
+   * C'est la lecture qui rend un lien **persistant** : l'écran ne retient rien
+   * pour lui, il affiche ce que la base contient. Appelée à l'ouverture puis
+   * après chaque création, elle garantit qu'un rechargement n'efface rien —
+   * un lien créé reste affiché, avec son quota, ses usages et son statut.
+   *
+   * Elle n'écrit jamais : ouvrir la page de gestion ne crée pas de lien.
+   */
+  const refreshPrivateLinks = useCallback(async () => {
+    if (!campaignId) return;
+    setPrivateLinksLoading(true);
+    const result = await distributionService.listDistributionLinks(campaignId);
+    setPrivateLinksError(result.error ?? null);
+    setPrivateLinks(result.data ?? []);
+    setPrivateLinksLoading(false);
+  }, [campaignId]);
+
+  useEffect(() => {
+    if (!campaignId || !user) return;
+    void refreshPrivateLinks();
+  }, [campaignId, user, refreshPrivateLinks]);
 
   /* ---------------- Autosave ---------------- */
   const persist = useCallback(
@@ -311,20 +363,66 @@ export default function CampaignEditorPage() {
     setTimeout(() => setShareState((s) => (s === 'saved' ? 'idle' : s)), 2000);
   }
 
-  // Generate a private distribution link
+  /**
+   * Traduit une erreur de création en phrase adressée à quelqu'un.
+   *
+   * Les messages en français viennent de la RPC elle-même (quota nul,
+   * campagne introuvable) : ils sont déjà écrits pour le créateur, on les
+   * tels quels. Tout le reste — `permission denied`, contrainte violée, nom de
+   * colonne — est du jargon de base de données : personne ne peut rien en
+   * faire à l'écran, et l'afficher donnerait l'impression d'un défaut
+   * qu'il faudrait comprendre pour s'en sortir.
+   */
+  function distributionError(raw: string | undefined): string {
+    const generic = 'Impossible de générer le lien. Veuillez réessayer.';
+    if (!raw) return generic;
+    const technical =
+      /permission denied|violat|constraint|foreign key|duplicate|column|relation|syntax|does not exist|schema/i;
+    return technical.test(raw) ? generic : raw;
+  }
+
+  /**
+   * Crée un jeton de distribution.
+   *
+   * Le quota est **saisi**, pas recopié de la campagne. Le contrat du backend
+   * est explicite là-dessus (`lib/backend/types.ts`) : le quota d'un lien privé
+   * compte les téléchargements d'une diffusion précise — un client, un
+   * événement — et n'a rien à voir avec le quota global de la campagne. Passer
+   * `participants_granted` par défaut aurait été commode et faux : les deux
+   * compteurs ne mesurent pas la même chose, et rien à l'écran n'aurait signalé
+   * la confusion.
+   *
+   * Après création, on **relit la liste** plutôt que de conserver le jeton
+   * renvoyé : l'écran affiche alors toujours la même chose qu'au
+   * rechargement, et le fait que le lien apparaisse prouve au passage qu'il est
+   * bien en base.
+   */
   async function generatePrivateLink() {
     if (!campaign) return;
+    const quota = Number.parseInt(privateQuota, 10);
+    if (!Number.isFinite(quota) || quota <= 0) {
+      setError('Indiquez un nombre d’utilisations supérieur à zéro pour ce lien.');
+      return;
+    }
+
     setPrivateLinkLoading(true);
-    const result = await distributionService.createDistributionLink(
-      campaign.id,
-      campaign.participants_granted,
-    );
+    setError(null);
+    const result = await distributionService.createDistributionLink(campaign.id, quota);
     if (result.error) {
-      setError(result.error);
+      setError(distributionError(result.error));
     } else {
-      setPrivateLink(result.data ?? null);
+      await refreshPrivateLinks();
     }
     setPrivateLinkLoading(false);
+  }
+
+  /** Copie un lien de distribution, jamais le lien public. */
+  async function copyPrivateLink(token: string) {
+    try {
+      await navigator.clipboard.writeText(privateDistributionUrl(token));
+      setPrivateCopiedToken(token);
+      setTimeout(() => setPrivateCopiedToken((t) => (t === token ? null : t)), 1800);
+    } catch {}
   }
 
 
@@ -403,10 +501,13 @@ export default function CampaignEditorPage() {
         <Field label="Nom de la campagne">
           <Input value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        <Field label="Adresse publique" hint="Le lien que vous partagerez.">
+        <Field
+          label="Slug"
+          hint="Ce qui suit campagnes.app/c/ dans l’adresse publique, éditable tant que la campagne existe."
+        >
           <InputPrefix prefix="campagnes.app/c/">
             <Input
-              aria-label="Adresse publique"
+              aria-label="Slug de la campagne"
               value={slug}
               onChange={(e) =>
                 setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-{2,}/g, '-'))
@@ -544,14 +645,21 @@ export default function CampaignEditorPage() {
         )}
       </section>
 
-      {/* ---------------- Lien public ---------------- */}
+      {/* ---------------- Adresse publique ---------------- */}
       <section className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white p-5">
         <div>
-          <h2 className="text-[15px] font-semibold">Lien de participation</h2>
+          <h2 className="text-[15px] font-semibold">Adresse publique</h2>
+          {/*
+            Une seule représentation du lien public sur cet écran : le champ
+            « Slug » ci-dessus en édite l'adresse, ce bloc l'affiche et la
+            partage. Ce titre était « Lien de participation » — même URL, autre
+            mot — et invitait à chercher un second lien qui n'existe pas.
+          */}
           <p className="mt-1 text-[13px] leading-relaxed text-gray-500">
+            Lien public de votre campagne.{' '}
             {campaign.status === 'published'
-              ? 'Partagez ce lien : chacun y dépose sa photo, la place dans votre cadre et repart avec son visuel — sans compte.'
-              : 'Le lien ne sera actif qu’après publication.'}
+              ? 'Chacun y dépose sa photo, la place dans votre cadre et repart avec son visuel, sans compte.'
+              : 'Il ne sera actif qu’après publication.'}
           </p>
         </div>
 
@@ -576,17 +684,162 @@ export default function CampaignEditorPage() {
               Ouvrir
             </ButtonLink>
           )}
+        </div>
+      </section>
+
+      {/* ---------------- Lien privé de distribution ---------------- */}
+      {/*
+        Deux liens, deux usages — et ils ne sont pas interchangeables :
+          * l'adresse publique ci-dessus est faite pour être partagée largement ;
+          * ces liens portent un jeton secret, chacun avec son propre quota. Le
+            partager publiquement revient à donner l'accès à tout le monde.
+
+        Ce bloc était parqué tant que la migration 0009 n'était pas appliquée.
+        Elle l'est : `create_distribution_link`, `resolve_distribution` et la RLS
+        sur `distribution_links` sont en place, et `npm run check:distribution`
+        le vérifie à chaque exécution — un anonyme ne peut ni créer ni lire.
+
+        La liste est **relue depuis la base** à chaque ouverture : le jeton n'est
+        pas une valeur d'affichage retenue par le composant, c'est ce que la
+        table contient. Un rechargement ne cache donc rien.
+      */}
+      <section className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white p-5">
+        <div>
+          <h2 className="text-[15px] font-semibold">Lien privé de distribution</h2>
+          <p className="mt-1 text-[13px] leading-relaxed text-gray-500">
+            Distribuez votre campagne à un public déterminé, sans la rendre publique.
+            Un lien à jeton, à envoyer à un client ou à une liste précise : il ouvre le
+            même parcours que l’adresse publique, mais avec son propre quota
+            d’utilisations et sans partage social. Un jeton est un secret — ne le
+            publiez pas.
+          </p>
+        </div>
+
+        {privateLinksError && <InlineError>{privateLinksError}</InlineError>}
+
+        {privateLinksLoading ? (
+          <div className="flex items-center gap-2 text-[13px] text-gray-500">
+            <Loader2 className="size-4 animate-spin" aria-hidden />
+            Chargement des liens…
           </div>
-          {/*
-            Lien privé de distribution — parqué.
-            L'affordance est masquée tant que la migration 0009 n'est pas
-            appliquée : `create_distribution_link` n'existe pas encore en base,
-            le bouton ne pourrait donc qu'échouer. Un bouton qui ne peut pas
-            aboutir n'a rien à faire à l'écran.
-            Le code est conservé ci-dessus (`generatePrivateLink`, `privateLink`)
-            et le service `distributionService` passe désormais par la façade :
-            réafficher ce bloc suffira une fois la migration passée.
-          */}
+        ) : (
+          <ul className="flex flex-col gap-3">
+            {privateLinks.map((link) => {
+              const url = privateDistributionUrl(link.token);
+              // La base bascule elle-même sur `EXPIRED` au prochain accès, mais
+              // entre-temps la colonne dit encore `ACTIVE` : une échéance passée
+              // doit être lue comme telle, sinon l'écran proposerait d'ouvrir un
+              // lien que `resolve_distribution` va rejeter.
+              const expired =
+                link.status === 'EXPIRED' ||
+                (link.expiresAt !== null && Date.parse(link.expiresAt) < Date.now());
+              const usable = link.status === 'ACTIVE' && !expired;
+              const state =
+                link.status === 'REVOKED'
+                  ? 'Lien révoqué'
+                  : expired
+                    ? 'Lien expiré'
+                    : link.status === 'QUOTA_EXCEEDED'
+                      ? 'Quota épuisé'
+                      : null;
+
+              return (
+                <li
+                  key={link.id}
+                  className="flex flex-col gap-2 rounded-md border border-gray-200 bg-gray-50 p-3"
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <code className="min-w-0 flex-1 truncate rounded-md border border-gray-200 bg-white px-3 py-2.5 font-mono text-[12px] text-gray-700">
+                      {url}
+                    </code>
+                    <Button
+                      variant="ghost"
+                      onClick={() => void copyPrivateLink(link.token)}
+                      disabled={!usable}
+                    >
+                      {privateCopiedToken === link.token ? (
+                        <>
+                          <Check className="size-4 text-success" aria-hidden /> Copié
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="size-4" strokeWidth={1.75} aria-hidden /> Copier
+                        </>
+                      )}
+                    </Button>
+                    {usable ? (
+                      <ButtonLink href={url} variant="secondary">
+                        <ExternalLink className="size-4" strokeWidth={1.75} aria-hidden />
+                        Ouvrir
+                      </ButtonLink>
+                    ) : (
+                      <Button variant="secondary" disabled>
+                        <ExternalLink className="size-4" strokeWidth={1.75} aria-hidden />
+                        Ouvrir
+                      </Button>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-gray-500">
+                    <span className="font-medium text-gray-700">
+                      {fmtCount.format(link.quotaTotal)} utilisation
+                      {link.quotaTotal > 1 ? 's' : ''}
+                    </span>
+                    <span>
+                      {fmtCount.format(link.quotaUsed)} / {fmtCount.format(link.quotaTotal)} utilisées
+                    </span>
+                    <span>
+                      {link.expiresAt
+                        ? `Expire le ${fmtDate.format(new Date(link.expiresAt))}`
+                        : 'Sans expiration'}
+                    </span>
+                    {state && <span className="font-medium text-error">{state}</span>}
+                  </div>
+
+                  <p className="text-[12px] leading-relaxed text-gray-500">
+                    Ce lien distribue la campagne selon le quota défini — indépendant du
+                    quota de la campagne.
+                  </p>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        {/* Création : toujours proposée, un lien n'en ferme pas un autre. */}
+        <div className="flex flex-wrap items-end gap-3 border-t border-gray-100 pt-3">
+          <Field
+            label="Nombre d’utilisations"
+            htmlFor="private-quota"
+            hint="Téléchargements autorisés pour chaque lien que vous créez."
+            className="w-44"
+          >
+            <Input
+              id="private-quota"
+              type="number"
+              min={1}
+              step={1}
+              value={privateQuota}
+              onChange={(e) => setPrivateQuota(e.target.value)}
+            />
+          </Field>
+          <Button
+            variant="secondary"
+            onClick={() => void generatePrivateLink()}
+            disabled={privateLinkLoading}
+          >
+            {privateLinkLoading ? (
+              <>
+                <Loader2 className="size-4 animate-spin" aria-hidden /> Génération…
+              </>
+            ) : (
+              <>
+                <Link2 className="size-4" strokeWidth={1.75} aria-hidden />
+                {privateLinks.length === 0 ? 'Générer le lien privé' : 'Générer un autre lien'}
+              </>
+            )}
+          </Button>
+        </div>
       </section>
 
       {/* ---------------- Partage social ---------------- */}

@@ -86,6 +86,21 @@ export function publicCampaignUrl(slug: string): string {
   return `${currentOrigin()}/c/${slug}`;
 }
 
+/**
+ * Adresse privée de distribution, construite à partir d'un jeton.
+ *
+ * Elle **ne se partage pas** : le jeton *est* le secret d'accès. La route
+ * `/d/[token]` désactive d'ailleurs volontairement le partage social, pour
+ * qu'un lien privé ne devienne jamais public sans décision explicite.
+ *
+ * Comme `publicCampaignUrl`, elle part de `window.location.origin` : un lien
+ * privé pointant vers `localhost` serait indétectable jusqu'au jour où un
+ * client s'en plaindrait.
+ */
+export function privateDistributionUrl(token: string): string {
+  return `${currentOrigin()}/d/${token}`;
+}
+
 /** Garantit qu'une chaîne saisie commence par `#`. */
 function withHash(value: string): string {
   const trimmed = value.trim().replace(/^#+/, '');

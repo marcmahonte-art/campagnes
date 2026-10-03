@@ -67,6 +67,37 @@ export interface ReportInput {
 }
 
 /**
+ * États d'un lien de distribution, tels qu'ils sont écrits en base
+ * (contrainte `check` de la migration 0008).
+ *
+ * `ACTIVE` seul est ouvert : `EXPIRED` et `QUOTA_EXCEEDED` sont calculés par
+ * la base elle-même au fil des accès, `REVOKED` est un arrêt définitif.
+ */
+export type DistributionLinkStatus = 'ACTIVE' | 'EXPIRED' | 'QUOTA_EXCEEDED' | 'REVOKED';
+
+/**
+ * Un lien de distribution privé déjà créé, tel qu'il vit en base.
+ *
+ * Ce type est la **preuve de persistance** du parcours : le créateur affiche un
+ * lien qu'il a pu recharger, pas un jeton gardé en mémoire. Le token en fait
+ * partie parce qu'il n'est jamais exposé ailleurs qu'à ce créateur — la RLS de
+ * `distribution_links` en interdit toute lecture à un anonyme, et
+ * `resolve_distribution` ne rend jamais le jeton, seulement l'id de campagne.
+ */
+export interface DistributionLink {
+  id: string;
+  token: string;
+  /** Téléchargements autorisés par ce lien — indépendant du quota de campagne. */
+  quotaTotal: number;
+  /** Téléchargements déjà réservés par ce lien. */
+  quotaUsed: number;
+  status: DistributionLinkStatus;
+  /** `null` = aucun périmètre de validité. */
+  expiresAt: string | null;
+  createdAt: string;
+}
+
+/**
  * Contrat unique de la couche données.
  * Deux implémentations : Supabase (réelle) et locale (démonstration).
  * Les écrans n'appellent que cette interface.
@@ -191,6 +222,24 @@ export interface Backend {
     quota: number,
     expiresAt?: string | null,
   ): Promise<Result<string>>;
+
+  /**
+   * Les liens de distribution déjà créés pour une campagne, du plus récent au
+   * plus ancien.
+   *
+   * C'est cette lecture qui rend un lien **persistant**. Sans elle, le jeton ne
+   * vit que dans l'état du composant : un rechargement le fait disparaître de
+   * l'écran alors qu'il continue de fonctionner en base — un lien actif mais
+   * introuvable, pire qu'un lien absent. Ici il est relu depuis la source de
+   * vérité, avec son quota, ses usages, son statut et son échéance.
+   *
+   * Renvoie la liste telle que la RLS la rend : un créateur ne voit que les
+   * liens de ses campagnes, un anonyme rien du tout. Aucun filtre n'est donc
+   * ajouté dans le navigateur — il ne protégerait rien de plus.
+   *
+   * Jamais d'écriture ici : charger la page ne doit pas créer de lien.
+   */
+  listDistributionLinks(campaignId: string): Promise<Result<DistributionLink[]>>;
 
   /**
    * Résout un jeton privé vers sa campagne, **sans consommer de quota**.

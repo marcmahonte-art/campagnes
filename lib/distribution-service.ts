@@ -1,5 +1,5 @@
 import { backend } from '@/lib/backend';
-import type { Result } from '@/lib/backend/types';
+import type { DistributionLink, Result } from '@/lib/backend/types';
 
 /**
  * Point d'entrée des liens privés de distribution.
@@ -12,9 +12,10 @@ import type { Result } from '@/lib/backend/types';
  *
  * Le côté base vit dans la migration 0009 : `create_distribution_link` (création
  * du jeton, contrôle du propriétaire) et `resolve_distribution` (résolution du
- * jeton sans consommer de quota), plus la RLS sur `distribution_links`. Tant que
- * cette migration n'est pas appliquée, l'appel échoue proprement — il ne renvoie
- * jamais un jeton que rien ne saurait ensuite résoudre.
+ * jeton sans consommer de quota), plus la RLS sur `distribution_links`. Ces
+ * trois pièces sont appliquées et vérifiées par `npm run check:distribution` :
+ * la création refuse un anonyme, la résolution rend `null` pour un jeton
+ * inconnu, et la table n'est lisible par personne d'autre que son propriétaire.
  */
 export const distributionService = {
   createDistributionLink(
@@ -23,5 +24,19 @@ export const distributionService = {
     expiresAt?: string | null,
   ): Promise<Result<string>> {
     return backend.createDistributionLink(campaignId, quota, expiresAt);
+  },
+
+  /**
+   * Les liens déjà créés pour une campagne, du plus récent au plus ancien.
+   *
+   * C'est la lecture qui fait qu'un lien **existe après un rechargement** : le
+   * jeton n'est pas une valeur d'affichage conservée dans le composant, il est
+   * relu depuis la base à chaque ouverture de l'écran. Le composant n'a donc
+   * qu'à demander, jamais à retenir.
+   *
+   * N'écrit rien : ouvrir la page de gestion ne doit pas créer de lien.
+   */
+  listDistributionLinks(campaignId: string): Promise<Result<DistributionLink[]>> {
+    return backend.listDistributionLinks(campaignId);
   },
 };
