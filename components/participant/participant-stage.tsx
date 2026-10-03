@@ -7,7 +7,7 @@ import { ratioSpec } from '@/lib/ratios';
 import { photoZone } from '@/lib/descriptor';
 import { createImageObject } from '@/lib/fabric-image';
 import { createShapeObject } from '@/lib/fabric-shape';
-import { createTextObject, resolveTextFill, setTextContent } from '@/lib/fabric-text';
+import { createBrandGradient, createTextObject, resolveTextFill, setTextContent } from '@/lib/fabric-text';
 import {
   DEFAULT_PARTICIPANT_STYLE,
   clampPlacement,
@@ -108,6 +108,11 @@ export function ParticipantStage({
     `${p.zoom.toFixed(4)}|${Math.round(p.x)}|${Math.round(p.y)}`;
 
   const textActive = style.text !== null;
+  const textSize = style.text?.size ?? 24;
+  const textBold = style.text?.bold ?? false;
+  const textItalic = style.text?.italic ?? false;
+  const textFont = style.text?.font ?? 'Inter';
+  const textOpacity = style.text?.opacity ?? 1;
 
   /* ---------------- Zoom adaptatif ---------------- */
   const fitToView = useCallback(() => {
@@ -163,13 +168,18 @@ export function ParticipantStage({
       const safe = clampTextPosition(
         size,
         { w: spec.width, h: spec.height },
-        object.left ?? current.x,
-        object.top ?? current.y,
+        object.left ?? (current as ParticipantText & { x?: number; y?: number }).x ?? 0,
+        object.top ?? (current as ParticipantText & { x?: number; y?: number }).y ?? 0,
       );
 
       object.set({ left: safe.x, top: safe.y });
       object.setCoords();
-      onTextChange?.({ ...current, x: Math.round(safe.x), y: Math.round(safe.y) });
+      onTextChange?.({
+        ...current,
+        x: Math.round(safe.x),
+        y: Math.round(safe.y),
+        rotation: Math.round(object.angle ?? current.rotation ?? 0),
+      } as ParticipantText);
     },
     [onTextChange, spec.width, spec.height],
   );
@@ -230,16 +240,27 @@ export function ParticipantStage({
       }
 
       /*
-       * 1bis. Le texte du participant, au-dessus de sa photo et sous le cadre.
+       * 1bis. Le texte du participant, AU-DESSUS de sa photo ET du cadre.
        *
-       * Il est inséré à l'index 1 alors que seuls la photo et lui sont sur le
-       * canvas : les calques du cadre, ajoutés ensuite, passent donc par-dessus.
-       * L'ordre d'empilement reproduit exactement celui du descripteur.
+       * Il est inséré en dernier (au-dessus de tout) pour que le texte
+       * du participant recouvre les calques du cadre — c'est la promesse
+       * produit : le texte se lit par-dessus le cadre.
        */
       const text = await buildTextObject();
       if (disposed) return;
       if (text) {
-        canvas.insertAt(1, text);
+        text.set({
+          hasControls: true,
+          hasBorders: true,
+          borderColor: '#ef4444',
+          cornerColor: '#ffffff',
+          cornerStrokeColor: '#9ca3af',
+          cornerSize: 10,
+          cornerStyle: 'circle',
+          transparentCorners: false,
+          lockRotation: false,
+        });
+        canvas.insertAt(canvas.getObjects().length - 1, text);
         textObjectRef.current = text;
       }
 
@@ -305,6 +326,12 @@ export function ParticipantStage({
           return;
         }
 
+        if (object === textObjectRef.current) emitText(object);
+      });
+
+      canvas.on('object:rotating', (event) => {
+        const object = event.target;
+        if (!object) return;
         if (object === textObjectRef.current) emitText(object);
       });
 
@@ -406,6 +433,17 @@ export function ParticipantStage({
       const photoIndex = photoObjectRef.current
         ? target.getObjects().indexOf(photoObjectRef.current)
         : -1;
+      object.set({
+        hasControls: true,
+        hasBorders: true,
+        borderColor: '#ef4444',
+        cornerColor: '#ffffff',
+        cornerStrokeColor: '#9ca3af',
+        cornerSize: 10,
+        cornerStyle: 'circle',
+        transparentCorners: false,
+        lockRotation: false,
+      });
       target.insertAt(photoIndex + 1, object);
       textObjectRef.current = object;
       target.requestRenderAll();
@@ -416,9 +454,10 @@ export function ParticipantStage({
     };
   }, [textActive, ready, buildTextObject]);
 
-  /* ---------------- Le contenu ou la couleur du texte change ---------------- */
+  /* ---------------- Le contenu, la couleur, la taille, le style, l'opacité du texte change ---------------- */
   const textContent = style.text?.content ?? '';
   const textColor = style.text?.color ?? '';
+  const textAlign = style.text?.align ?? 'left';
 
   useEffect(() => {
     const object = textObjectRef.current;
@@ -430,9 +469,25 @@ export function ParticipantStage({
     void (async () => {
       const fill = await resolveTextFill(current.color);
       if (!alive) return;
-      object.set({ fill: fill as string });
-      // Le budget de largeur est réappliqué ici : sans lui, un texte qui
-      // s'allonge pendant la frappe finirait par dépasser le cadre.
+      object.set({
+        fill: fill as string,
+        fontSize: current.size,
+        fontWeight: current.bold ? 'bold' : 'normal',
+        fontStyle: current.italic ? 'italic' : 'normal',
+        underline: Boolean(current.underline),
+        linethrough: Boolean(current.strikethrough),
+        angle: current.rotation ?? 0,
+        fontFamily: current.font,
+        opacity: current.opacity,
+        textAlign: current.align,
+      });
+      // Reconstruire la police Google si nécessaire
+      if (current.font !== 'Inter' && typeof document !== 'undefined') {
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(current.font.replace(/ /g, '+'))}&display=swap`;
+        document.head.appendChild(link);
+      }
       setTextContent(object, current.content, participantTextWidth(zone));
       canvas.requestRenderAll();
     })();
@@ -440,13 +495,19 @@ export function ParticipantStage({
     return () => {
       alive = false;
     };
-    /*
-     * La position n'est pas une dépendance : dès que l'objet existe, elle
-     * appartient au canvas, et c'est `emitText` qui la remonte au parent.
-     * L'inclure ici ferait combattre l'état du parent contre le doigt du
-     * participant.
-     */
-  }, [textContent, textColor, zone]);
+  }, [
+    textContent,
+    textColor,
+    textAlign,
+    style.text?.size,
+    style.text?.bold,
+    style.text?.italic,
+    style.text?.underline,
+    style.text?.strikethrough,
+    style.text?.rotation,
+    style.text?.font,
+    zone,
+  ]);
 
   /* ---------------- Le parent change le placement (curseur de zoom) ---------------- */
   useEffect(() => {
@@ -479,11 +540,40 @@ export function ParticipantStage({
       ref={stageRef}
       className={cn(
         'relative flex min-h-[280px] items-center justify-center overflow-hidden',
-        'rounded-lg border border-gray-200 bg-gray-100 p-3',
+        'rounded-lg p-4 md:min-h-[380px] md:p-6',
       )}
+      style={{
+        backgroundColor: '#787878',
+      }}
     >
-      <div className="relative shadow-md" style={{ lineHeight: 0 }}>
-        <canvas ref={canvasElRef} />
+      <div
+        className="relative"
+        style={{
+          lineHeight: 0,
+          boxShadow: '0 4px 24px rgba(0,0,0,0.45), 0 1px 4px rgba(0,0,0,0.3)',
+        }}
+      >
+        {/* Damier de transparence sous le canvas (style Twibbonize / Photopea) */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0"
+          style={{
+            backgroundImage:
+              'linear-gradient(45deg, #c8c8c8 25%, transparent 25%, transparent 75%, #c8c8c8 75%), linear-gradient(45deg, #c8c8c8 25%, transparent 25%, transparent 75%, #c8c8c8 75%)',
+            backgroundSize: '14px 14px',
+            backgroundPosition: '0 0, 7px 7px',
+            backgroundColor: '#f0f0f0',
+          }}
+        />
+
+        <canvas ref={canvasElRef} role="img" aria-label="Cadre de campagne avec votre photo" />
+
+        {/* Contour subtil du cadre */}
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-0"
+          style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.4)' }}
+        />
       </div>
 
       <span className="sr-only">

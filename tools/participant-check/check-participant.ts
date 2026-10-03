@@ -139,7 +139,7 @@ function makeFrame(anchor?: string): Descriptor {
 
 const STYLE_WITH_TEXT: ParticipantStyle = {
   filter: 'sepia',
-  text: { content: 'Awa', color: '#FFFFFF', x: 100, y: 200, align: 'left' },
+  text: { content: 'Awa', color: '#FFFFFF', x: 100, y: 200, align: 'left', size: 24, bold: true, italic: false, font: 'Inter', opacity: 1 },
 };
 
 const ids = (d: Descriptor): string => d.layers.map((l) => l.id).join(' → ');
@@ -194,7 +194,7 @@ async function main(): Promise<void> {
   {
     const composed = composeDescriptor(makeFrame(), photo, placement, {
       filter: 'none',
-      text: { content: '   ', color: '#000000', x: 0, y: 0, align: 'left' },
+      text: { content: '   ', color: '#000000', x: 0, y: 0, align: 'left', size: 24, bold: false, italic: false, font: 'Inter', opacity: 1 },
     });
     ok(
       'un texte vide n’ajoute aucun calque',
@@ -277,10 +277,9 @@ async function main(): Promise<void> {
     eq('un texte déjà dans le cadre ne bouge pas', `${inside.x},${inside.y}`, '400,400');
 
     const pushed = clampTextPosition(size, frame, 5000, -5000);
-    const centre = { x: pushed.x + size.w / 2, y: pushed.y + size.h / 2 };
     ok(
-      'un texte poussé hors du cadre garde son centre dedans',
-      centre.x >= 0 && centre.x <= frame.w && centre.y >= 0 && centre.y <= frame.h,
+      'un texte poussé hors du cadre reste borné pour rester attrapable',
+      pushed.x <= frame.w && pushed.y >= -size.h,
       JSON.stringify(pushed),
     );
 
@@ -289,7 +288,7 @@ async function main(): Promise<void> {
     ok('le corps du texte est positif', participantTextSize('1:1') > 0);
 
     const layer = participantTextLayer(
-      { content: 'Awa', color: '#FFFFFF', x: 10, y: 20, align: 'left' },
+      { content: 'Awa', color: '#FFFFFF', x: 10, y: 20, align: 'left', size: 24, bold: true, italic: false, font: 'Inter', opacity: 1 },
       zone,
       '1:1',
     );

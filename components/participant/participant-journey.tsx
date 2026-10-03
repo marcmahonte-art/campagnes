@@ -20,6 +20,11 @@ import {
   AlignLeft,
   AlignCenter,
   AlignRight,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  ChevronDown,
+  Pipette,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { Logo } from '@/components/ui/logo';
@@ -62,7 +67,14 @@ import { useHistory } from '@/components/editor/use-history';
 import { PHOTO_FILTER_PRESETS, type PhotoFilter } from '@/lib/photo-filters';
 import { blockedMessage, privateLinkBlockedMessage, remaining } from '@/lib/quota';
 import { exportPlanFor, shouldWatermark } from '@/lib/watermark-policy';
+import { FONTS } from '@/lib/fonts';
 import type { CampaignQuota, GalleryItem } from '@/lib/types';
+
+const TWIBBON_COLOR_PAGES: readonly string[][] = [
+  ['#000000', '#374151', '#64748b', '#94a3b8', '#ffffff', '#ef4444'],
+  ['#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6'],
+  ['#ec4899', '#78350f', '#14532d', '#1e3a8a', '#581c87', '#881337'],
+];
 
 /**
  * Parcours participant — l'écran que voit la communauté du créateur.
@@ -231,6 +243,7 @@ export function ParticipantJourney({
 
   const [reading, setReading] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [colorPage, setColorPage] = useState(0);
 
   const [exporting, setExporting] = useState<'png' | 'video' | null>(null);
   const [progress, setProgress] = useState(0);
@@ -782,7 +795,8 @@ export function ParticipantJourney({
                   </div>
 
                   {style.text ? (
-                    <div className="mt-3 flex flex-col gap-3">
+                    <div className="mt-3 flex flex-col gap-3 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                      {/* 1. Saisie directe du texte */}
                       <Input
                         value={style.text.content}
                         onChange={(e) =>
@@ -798,80 +812,251 @@ export function ParticipantJourney({
                               : current,
                           )
                         }
-                        placeholder="Votre nom, un slogan…"
+                        placeholder="Enter your text"
                         maxLength={TEXT_MAX_LENGTH}
+                        className="rounded-xl border-gray-200 bg-gray-50/70 text-center font-medium text-ink focus:bg-white"
                         aria-label="Votre texte"
                       />
 
-                      <div className="flex items-center gap-3">
-                        <span className="text-[13px] text-gray-500">Couleur</span>
-                        {TEXT_COLORS.map((colour) => {
-                          const active = style.text?.color === colour.id;
-                          return (
-                            <button
-                              key={colour.id}
-                              type="button"
-                              aria-label={colour.label}
-                              aria-pressed={active}
-                              onClick={() =>
-                                setStyle((current) =>
-                                  current.text
-                                    ? { ...current, text: { ...current.text, color: colour.id } }
-                                    : current,
-                                )
-                              }
-                              className={cn(
-                                'flex size-8 items-center justify-center rounded-pill border transition-colors',
-                                active ? 'border-ink' : 'border-gray-200 hover:border-gray-400',
-                              )}
-                            >
-                              <span
-                                className={cn(
-                                  'size-5 rounded-pill border border-gray-200',
-                                  colour.id === 'brand-gradient' && 'bg-brand-gradient',
-                                )}
-                                style={
-                                  colour.id === 'brand-gradient'
-                                    ? undefined
-                                    : { backgroundColor: colour.id }
-                                }
-                              />
-                            </button>
-                          );
-                        })}
+                      {/* 2. Ligne 1 : Sélecteur de Police < Roboto > */}
+                      <div className="flex items-center justify-between rounded-xl border border-gray-200 bg-white px-3 py-2">
+                        <button
+                          type="button"
+                          aria-label="Police précédente"
+                          onClick={() => {
+                            const idx = FONTS.findIndex((f) => f.value === (style.text?.font ?? 'Inter'));
+                            const prev = FONTS[(idx - 1 + FONTS.length) % FONTS.length];
+                            setStyle((current) =>
+                              current.text ? { ...current, text: { ...current.text, font: prev.value } } : current,
+                            );
+                          }}
+                          className="flex size-7 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 active:scale-95"
+                        >
+                          <ChevronLeft className="size-4" />
+                        </button>
+                        <span className="text-sm font-semibold text-gray-800">
+                          {FONTS.find((f) => f.value === (style.text?.font ?? 'Inter'))?.label ?? 'Inter'}
+                        </span>
+                        <button
+                          type="button"
+                          aria-label="Police suivante"
+                          onClick={() => {
+                            const idx = FONTS.findIndex((f) => f.value === (style.text?.font ?? 'Inter'));
+                            const next = FONTS[(idx + 1) % FONTS.length];
+                            setStyle((current) =>
+                              current.text ? { ...current, text: { ...current.text, font: next.value } } : current,
+                            );
+                          }}
+                          className="flex size-7 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 active:scale-95"
+                        >
+                          <ChevronRight className="size-4" />
+                        </button>
                       </div>
 
-                      <div className="flex items-center gap-3">
-                        <span className="text-[13px] text-gray-500">Alignement</span>
-                        <div className="flex gap-1.5">
-                          {(['left', 'center', 'right'] as const).map((a) => (
+                      {/* 3. Ligne 2 : Contrôleur de taille numérique + Barre [ B | I | U | S ] */}
+                      <div className="flex items-center gap-2">
+                        {/* Contrôleur numérique de taille */}
+                        <div className="flex h-10 w-28 items-center justify-between rounded-xl border border-gray-200 bg-white px-2.5">
+                          <input
+                            type="number"
+                            min={8}
+                            max={160}
+                            value={style.text.size}
+                            onChange={(e) => {
+                              const val = parseInt(e.target.value, 10);
+                              if (!isNaN(val) && val > 0) {
+                                setStyle((current) =>
+                                  current.text ? { ...current, text: { ...current.text, size: val } } : current,
+                                );
+                              }
+                            }}
+                            className="w-12 border-0 p-0 text-center text-sm font-semibold text-gray-800 focus:outline-none focus:ring-0"
+                            aria-label="Taille du texte"
+                          />
+                          <div className="flex flex-col gap-0.5">
                             <button
-                              key={a}
                               type="button"
-                              aria-pressed={style.text?.align === a}
+                              aria-label="Agrandir"
                               onClick={() =>
                                 setStyle((current) =>
                                   current.text
-                                    ? { ...current, text: { ...current.text, align: a } }
+                                    ? { ...current, text: { ...current.text, size: Math.min(160, current.text.size + 2) } }
                                     : current,
                                 )
                               }
-                              className={cn(
-                                'flex size-8 items-center justify-center rounded-pill border text-[13px] transition-colors',
-                                style.text?.align === a
-                                  ? 'border-ink bg-ink text-white'
-                                  : 'border-gray-200 text-gray-700 hover:border-gray-400',
-                              )}
+                              className="flex size-3.5 items-center justify-center text-gray-500 hover:text-ink active:scale-90"
                             >
-                              {a === 'left' ? 'L' : a === 'center' ? 'C' : 'R'}
+                              <ChevronUp className="size-3" />
                             </button>
+                            <button
+                              type="button"
+                              aria-label="Diminuer"
+                              onClick={() =>
+                                setStyle((current) =>
+                                  current.text
+                                    ? { ...current, text: { ...current.text, size: Math.max(8, current.text.size - 2) } }
+                                    : current,
+                                )
+                              }
+                              className="flex size-3.5 items-center justify-center text-gray-500 hover:text-ink active:scale-90"
+                            >
+                              <ChevronDown className="size-3" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Barre d'outils unifiée [ B | I | U | S ] */}
+                        <div className="flex h-10 flex-1 items-center justify-around rounded-xl border border-gray-200 bg-white p-1">
+                          <button
+                            type="button"
+                            aria-label="Gras"
+                            aria-pressed={style.text.bold}
+                            onClick={() =>
+                              setStyle((current) =>
+                                current.text ? { ...current, text: { ...current.text, bold: !current.text.bold } } : current,
+                              )
+                            }
+                            className={cn(
+                              'flex size-8 items-center justify-center rounded-lg text-sm font-bold transition-all',
+                              style.text.bold ? 'bg-ink text-white' : 'text-gray-600 hover:bg-gray-100',
+                            )}
+                          >
+                            B
+                          </button>
+                          <button
+                            type="button"
+                            aria-label="Italique"
+                            aria-pressed={style.text.italic}
+                            onClick={() =>
+                              setStyle((current) =>
+                                current.text ? { ...current, text: { ...current.text, italic: !current.text.italic } } : current,
+                              )
+                            }
+                            className={cn(
+                              'flex size-8 items-center justify-center rounded-lg text-sm italic font-serif transition-all',
+                              style.text.italic ? 'bg-ink text-white' : 'text-gray-600 hover:bg-gray-100',
+                            )}
+                          >
+                            I
+                          </button>
+                          <button
+                            type="button"
+                            aria-label="Souligné"
+                            aria-pressed={style.text.underline}
+                            onClick={() =>
+                              setStyle((current) =>
+                                current.text ? { ...current, text: { ...current.text, underline: !current.text.underline } } : current,
+                              )
+                            }
+                            className={cn(
+                              'flex size-8 items-center justify-center rounded-lg text-sm underline font-medium transition-all',
+                              style.text.underline ? 'bg-ink text-white' : 'text-gray-600 hover:bg-gray-100',
+                            )}
+                          >
+                            U
+                          </button>
+                          <button
+                            type="button"
+                            aria-label="Barré"
+                            aria-pressed={style.text.strikethrough}
+                            onClick={() =>
+                              setStyle((current) =>
+                                current.text ? { ...current, text: { ...current.text, strikethrough: !current.text.strikethrough } } : current,
+                              )
+                            }
+                            className={cn(
+                              'flex size-8 items-center justify-center rounded-lg text-sm line-through font-medium transition-all',
+                              style.text.strikethrough ? 'bg-ink text-white' : 'text-gray-600 hover:bg-gray-100',
+                            )}
+                          >
+                            S
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* 4. Ligne 3 : Palette de couleurs carrousel */}
+                      <div className="flex flex-col gap-1.5 pt-1">
+                        <div className="flex items-center gap-2">
+                          {/* Pipette / Sélecteur de couleur */}
+                          <label className="relative flex size-8 cursor-pointer items-center justify-center rounded-full border border-gray-200 bg-white text-gray-700 shadow-xs hover:border-gray-400 active:scale-95">
+                            <Pipette className="size-4 text-gray-700" />
+                            <input
+                              type="color"
+                              value={style.text.color}
+                              onChange={(e) =>
+                                setStyle((current) =>
+                                  current.text ? { ...current, text: { ...current.text, color: e.target.value } } : current,
+                                )
+                              }
+                              className="absolute inset-0 cursor-pointer opacity-0"
+                              aria-label="Pipette couleur"
+                            />
+                          </label>
+
+                          {/* Pastilles de couleur de la page active */}
+                          <div className="flex flex-1 items-center justify-between gap-1.5">
+                            {TWIBBON_COLOR_PAGES[colorPage].map((color) => {
+                              const isSelected = style.text?.color?.toLowerCase() === color.toLowerCase();
+                              return (
+                                <button
+                                  key={color}
+                                  type="button"
+                                  aria-label={`Couleur ${color}`}
+                                  onClick={() =>
+                                    setStyle((current) =>
+                                      current.text ? { ...current, text: { ...current.text, color } } : current,
+                                    )
+                                  }
+                                  className={cn(
+                                    'size-7 rounded-full border transition-all active:scale-90',
+                                    isSelected
+                                      ? 'ring-2 ring-ink ring-offset-2 scale-105 shadow-sm'
+                                      : 'border-black/10 hover:scale-105',
+                                  )}
+                                  style={{ backgroundColor: color }}
+                                />
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        {/* Pagination carrousel de couleurs ● ○ ○ */}
+                        <div className="flex items-center justify-center gap-1.5 pt-1">
+                          {TWIBBON_COLOR_PAGES.map((_, idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              aria-label={`Page de couleurs ${idx + 1}`}
+                              onClick={() => setColorPage(idx)}
+                              className={cn(
+                                'h-1.5 rounded-full transition-all',
+                                colorPage === idx ? 'bg-gray-800 w-3.5' : 'bg-gray-300 w-1.5 hover:bg-gray-400',
+                              )}
+                            />
                           ))}
                         </div>
                       </div>
 
-                      <p className="text-[13px] text-gray-500">
-                        Faites glisser le texte sur l’aperçu pour le placer.
-                      </p>
+                      {/* 5. Ligne 4 : Boutons Discard et Done */}
+                      <div className="flex items-center gap-3 pt-2">
+                        <button
+                          type="button"
+                          onClick={() => setStyle((current) => ({ ...current, text: null }))}
+                          className="flex-1 rounded-full border border-gray-200 bg-white py-2.5 text-center text-sm font-medium text-gray-700 shadow-xs transition-colors hover:bg-gray-50 active:scale-98"
+                        >
+                          Discard
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const exportEl = document.getElementById('export-section');
+                            exportEl?.scrollIntoView({ behavior: 'smooth' });
+                          }}
+                          className="flex-1 rounded-full bg-[#00D09E] py-2.5 text-center text-sm font-bold text-white shadow-sm transition-transform hover:brightness-105 active:scale-98"
+                        >
+                          Done
+                        </button>
+                      </div>
                     </div>
                   ) : (
                     <div className="mt-3">
@@ -892,7 +1077,7 @@ export function ParticipantJourney({
                   )}
                 </div>
 
-                <div className="mt-6 rounded-lg border border-gray-200 bg-white p-5">
+                <div id="export-section" className="mt-6 rounded-lg border border-gray-200 bg-white p-5">
                   <span className="text-[13px] font-semibold text-gray-700">
                     Enregistrer mon visuel
                   </span>

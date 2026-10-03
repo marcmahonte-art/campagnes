@@ -153,6 +153,8 @@ export async function createTextObject(
     fontSize: layer.size,
     fontWeight: layer.weight === 'bold' ? 'bold' : 'normal',
     fontStyle: layer.style === 'italic' ? 'italic' : 'normal',
+    underline: Boolean(layer.underline),
+    linethrough: Boolean(layer.strikethrough),
     fill: (await resolveTextFill(layer.color)) as string,
     textAlign: layer.align,
     charSpacing: layer.letterSpacing,

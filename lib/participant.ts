@@ -40,7 +40,7 @@ import {
 } from './descriptor';
 import { ratioSpec } from './ratios';
 import type { PhotoFilter } from './photo-filters';
-import type { Descriptor, ImageLayer, Layer, Ratio, TextLayer } from './types';
+import type { Descriptor, ImageLayer, Layer, Ratio, TextLayer, TextFont } from './types';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -64,9 +64,13 @@ export interface PhotoPlacement {
   y: number;
 }
 
-/** En deçà de 1, un trou apparaîtrait : c'est une borne produit, pas un réglage. */
-export const MIN_ZOOM = 1;
-export const MAX_ZOOM = 4;
+/**
+ * Zoom minimum et maximum.
+ * Style Twibbonize : le participant peut dézoomer en-dessous de 1 (jusqu'à 0.2×)
+ * pour réduire son image ou l'agrandir jusqu'à 5×.
+ */
+export const MIN_ZOOM = 0.2;
+export const MAX_ZOOM = 5;
 
 /**
  * Part de la photo laissée au-dessus du centre de la zone quand on la pose pour
@@ -99,9 +103,9 @@ export function photoSize(
 /**
  * Domaine autorisé du coin supérieur gauche de la photo.
  *
- * Les bornes sont celles de la zone : la photo peut déborder de la zone, jamais
- * y laisser un vide. Un axe dont le domaine est réduit à un point est verrouillé
- * — c'est le cas quand le zoom vaut 1 sur l'axe qui contraint la couverture.
+ * Style Twibbonize : l'image peut être déplacée librement et déborder largement
+ * hors de la zone de travail / du cadre. On conserve seulement une marge de 30 px
+ * pour que l'image reste toujours saisissable au doigt ou à la souris.
  */
 export function placementBounds(
   photo: ParticipantPhoto,
@@ -110,14 +114,14 @@ export function placementBounds(
 ): { minX: number; maxX: number; minY: number; maxY: number } {
   const { w, h } = photoSize(photo, zone, zoom);
   return {
-    minX: zone.x + zone.w - w,
-    maxX: zone.x,
-    minY: zone.y + zone.h - h,
-    maxY: zone.y,
+    minX: zone.x - w + 30,
+    maxX: zone.x + zone.w - 30,
+    minY: zone.y - h + 30,
+    maxY: zone.y + zone.h - 30,
   };
 }
 
-/** Ramène un placement dans le domaine autorisé (couverture de la zone garantie). */
+/** Ramène un placement dans le domaine autorisé (déplacement libre avec marge minimale). */
 export function clampPlacement(
   photo: ParticipantPhoto,
   zone: PhotoZone,
@@ -132,11 +136,11 @@ export function clampPlacement(
   };
 }
 
-/** Placement de départ : couverture minimale, centré sur la zone, légèrement remonté. */
+/** Placement de départ : couverture initiale optimale (zoom 1), centré sur la zone. */
 export function initialPlacement(photo: ParticipantPhoto, zone: PhotoZone): PhotoPlacement {
-  const { w, h } = photoSize(photo, zone, MIN_ZOOM);
+  const { w, h } = photoSize(photo, zone, 1);
   return {
-    zoom: MIN_ZOOM,
+    zoom: 1,
     x: zone.x + (zone.w - w) / 2,
     y: zone.y + (zone.h - h) * INITIAL_VERTICAL_BIAS,
   };
@@ -165,27 +169,20 @@ export function zoomAroundCenter(
   });
 }
 
-/** Indique si la photo peut encore bouger sur chaque axe, pour guider l'interface. */
+/** Indique si la photo peut encore bouger sur chaque axe : toujours vrai (Twibbonize). */
 export function movableAxes(
-  photo: ParticipantPhoto,
-  zone: PhotoZone,
-  zoom: number,
+  _photo: ParticipantPhoto,
+  _zone: PhotoZone,
+  _zoom: number,
 ): { x: boolean; y: boolean } {
-  const bounds = placementBounds(photo, zone, zoom);
-  return { x: bounds.minX < bounds.maxX, y: bounds.minY < bounds.maxY };
+  return { x: true, y: true };
 }
 
 /**
- * Ramène un texte à l'intérieur du cadre.
+ * Ramène un texte avec une marge minimale.
  *
- * Le texte n'a rien à couvrir — contrairement à la photo, il n'est pas contraint
- * à la zone, et il n'a pas de domaine autorisé : le participant le pose où il
- * veut. Mais il ne doit jamais pouvoir **sortir du cadre** : la scène ne se
- * déplace pas, donc un texte poussé hors du visuel serait irrécupérable, et le
- * participant ne comprendrait pas où il est passé.
- *
- * On garde donc son **centre** à l'intérieur du cadre. Le texte reste toujours à
- * moitié visible, donc toujours attrapable.
+ * Style Twibbonize : le texte peut être déplacé librement hors de la zone de travail
+ * ou du cadre, avec une marge de 30 px pour qu'il reste attrapable.
  */
 export function clampTextPosition(
   size: { w: number; h: number },
@@ -194,8 +191,8 @@ export function clampTextPosition(
   y: number,
 ): { x: number; y: number } {
   return {
-    x: Math.min(frame.w - size.w / 2, Math.max(-size.w / 2, x)),
-    y: Math.min(frame.h - size.h / 2, Math.max(-size.h / 2, y)),
+    x: Math.min(frame.w - 30, Math.max(-size.w + 30, x)),
+    y: Math.min(frame.h - 30, Math.max(-size.h + 30, y)),
   };
 }
 
@@ -255,9 +252,26 @@ export interface ParticipantText {
   color: string;
   /** Alignement du texte : left, center, right. */
   align: 'left' | 'center' | 'right';
-  /** Coin supérieur gauche, dans le repère du ratio. */
-  x: number;
-  y: number;
+  /** Taille en px. */
+  size: number;
+  /** Gras. */
+  bold: boolean;
+  /** Italique. */
+  italic: boolean;
+  /** Police. */
+  font: TextFont;
+  /** Opacité 0–1. */
+  opacity: number;
+  /** Souligné. */
+  underline?: boolean;
+  /** Barré (strikethrough). */
+  strikethrough?: boolean;
+  /** Rotation en degrés. */
+  rotation?: number;
+  /** Coordonnée X dans le repère natif. */
+  x?: number;
+  /** Coordonnée Y dans le repère natif. */
+  y?: number;
 }
 
 /** Tout ce que le participant peut régler sur son propre visuel. */
@@ -334,8 +348,17 @@ function sameStyle(a: ParticipantStyle, b: ParticipantStyle): boolean {
   return (
     a.text.content === b.text.content &&
     a.text.color === b.text.color &&
-    Math.abs(a.text.x - b.text.x) < 0.5 &&
-    Math.abs(a.text.y - b.text.y) < 0.5
+    a.text.align === b.text.align &&
+    a.text.size === b.text.size &&
+    a.text.bold === b.text.bold &&
+    a.text.italic === b.text.italic &&
+    a.text.font === b.text.font &&
+    Math.abs(a.text.opacity - b.text.opacity) < 0.01 &&
+    (a.text.underline ?? false) === (b.text.underline ?? false) &&
+    (a.text.strikethrough ?? false) === (b.text.strikethrough ?? false) &&
+    Math.abs((a.text.rotation ?? 0) - (b.text.rotation ?? 0)) < 0.5 &&
+    Math.abs((a.text.x ?? 0) - (b.text.x ?? 0)) < 0.5 &&
+    Math.abs((a.text.y ?? 0) - (b.text.y ?? 0)) < 0.5
   );
 }
 
@@ -367,7 +390,10 @@ const TEXT_MAX_WIDTH_RATIO = 0.8;
  * caractères il deviendrait trop petit pour être lu sur un téléphone. Mieux vaut
  * arrêter la saisie que de laisser écrire un paragraphe illisible.
  */
-export const TEXT_MAX_LENGTH = 40;
+export const TEXT_MAX_LENGTH = 200;
+
+/** Nombre max de lignes autorisées avant blocage du retour à la ligne. */
+const TEXT_MAX_LINES = 12;
 
 /** Corps du texte pour un format donné, en unités du ratio. */
 export function participantTextSize(ratio: Ratio): number {
@@ -394,10 +420,14 @@ export function defaultParticipantText(zone: PhotoZone, ratio: Ratio): Participa
   return {
     content: '',
     color: TEXT_COLORS[0].id,
-    // Positionné en haut du cadre avec un petit padding
-    x: Math.round(zone.x + zone.w * TEXT_INSET_RATIO),
-    y: Math.round(zone.y + zone.h * TEXT_INSET_RATIO),
     align: 'left',
+    size: participantTextSize(ratio),
+    bold: false,
+    italic: false,
+    font: 'Inter',
+    opacity: 1,
+    x: Math.round(zone.x + zone.w * 0.1),
+    y: Math.round(zone.y + (zone.h - height) / 2),
   };
 }
 
@@ -408,28 +438,29 @@ export function participantTextLayer(
   ratio: Ratio,
   z = 0,
 ): TextLayer {
-  const size = participantTextSize(ratio);
+  const size = text.size ?? participantTextSize(ratio);
   return {
     id: PARTICIPANT_TEXT_ID,
     type: 'text',
     text: text.content,
-    font: 'Inter',
+    font: text.font ?? 'Inter',
     size,
     color: text.color,
-    align: text.align,
-    // Le gras n'est pas décoratif : un texte fin disparaît sur une photo.
-    weight: 'bold',
-    style: 'normal',
+    align: text.align ?? 'left',
+    weight: text.bold ? 'bold' : 'normal',
+    style: text.italic ? 'italic' : 'normal',
+    underline: text.underline ?? false,
+    strikethrough: text.strikethrough ?? false,
     letterSpacing: 0,
     lineHeight: DEFAULT_LINE_HEIGHT,
     curve: 0,
-    x: text.x,
-    y: text.y,
+    x: text.x ?? 0,
+    y: text.y ?? 0,
     w: participantTextWidth(zone),
-    h: Math.round(size * 1.3),
-    rotation: 0,
+    h: Math.round(size * DEFAULT_LINE_HEIGHT * 1.2),
+    rotation: text.rotation ?? 0,
     z,
-    opacity: 1,
+    opacity: text.opacity ?? 1,
   };
 }
 

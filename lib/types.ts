@@ -53,6 +53,17 @@ export interface CreatorProfile {
 export type LayerType = 'image' | 'text' | 'shape';
 export type TextAlign = 'left' | 'center' | 'right';
 
+/** Polices disponibles dans l'éditeur et le parcours participant. */
+export type TextFont =
+  | 'Inter'
+  | 'Playfair Display'
+  | 'Montserrat'
+  | 'Poppins'
+  | 'Roboto'
+  | 'Lora'
+  | 'Bebas Neue'
+  | 'Satisfy';
+
 /** Polices disponibles dans l'éditeur — toutes libres de droits (Google Fonts). */
 export type FontFamily =
   | 'Inter'
@@ -132,6 +143,10 @@ export interface TextLayer extends LayerBase {
    * jamais une image aplatie.
    */
   curve: number;
+  /** Souligné. */
+  underline?: boolean;
+  /** Barré (strikethrough). */
+  strikethrough?: boolean;
 }
 
 /**
