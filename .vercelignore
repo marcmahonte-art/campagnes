@@ -1,0 +1,11 @@
+# Le dépôt suit le code, pas les sorties : Vercel compile de son côté, et
+# téléverser `.next` (≈190 Mo) ferait dépasser la limite de 100 Mo.
+.next
+
+# Données de travail déjà hors historique (voir .gitignore) : aucune influence
+# sur le build, et elles pèsent des centaines de Mo.
+.premium-shots/
+.tmp-mig/
+.workbuddy-ai/
+docs/
+*.ai
