@@ -755,6 +755,15 @@ export const supabaseBackend: Backend = {
     return { data: undefined };
   },
 
+  async revokeDistributionLink(token): Promise<Result<boolean>> {
+    const { data, error } = await supabaseBrowser().rpc('revoke_distribution_link', {
+      p_token: token,
+    });
+    if (error) return { error: message(error, 'Impossible de révoquer le lien.') };
+    return { data: Boolean(data) };
+  },
+
+
   /* --- Signalements de contenu -------------------------------------- */
   /**
    * Tout est revalidé en base par `submit_report` : motif, longueurs, format de

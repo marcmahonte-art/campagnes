@@ -49,11 +49,15 @@ begin
     return null;
   end if;
 
+  -- Quota épuisé : on bascule le statut pour l'affichage créateur, mais on
+  -- laisse le participant VOIR la campagne. Le blocage intervient au moment
+  -- de l'export (`claim_distribution`), pas à l'ouverture — sinon le
+  -- participant croirait que son lien n'existe pas, là où il est simplement
+  -- épuisé. L'écran de blocage privé lui explique la situation.
   if v_link.quota_used >= v_link.quota_total then
     update public.distribution_links
        set status = 'QUOTA_EXCEEDED', updated_at = now()
      where id = v_link.id;
-    return null;
   end if;
 
   return jsonb_build_object(

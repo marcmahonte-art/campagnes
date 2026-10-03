@@ -206,6 +206,19 @@ export interface Backend {
   ): Promise<Result<void>>;
 
   /**
+   * Révoque un lien de distribution privé.
+   *
+   * La révocation est définitive : un lien révoqué ne peut pas être réactivé.
+   * C'est un choix produit — un jeton qui a pu être copié et partagé ne doit
+   * pas reprendre vie silencieusement.
+   *
+   * Renvoie `true` si la révocation a eu lieu (ou si le lien était déjà
+   * révoqué), `false` si le lien n'existe pas ou n'appartient pas au créateur.
+   */
+  revokeDistributionLink(token: string): Promise<Result<boolean>>;
+
+
+  /**
    * Quota lisible sans être le propriétaire — pour l'écran de blocage.
    *
    * N'expose ni nom, ni slug, ni propriétaire : le participant doit voir que

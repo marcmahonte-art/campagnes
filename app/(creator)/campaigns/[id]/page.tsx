@@ -694,11 +694,6 @@ export default function CampaignEditorPage() {
           * ces liens portent un jeton secret, chacun avec son propre quota. Le
             partager publiquement revient à donner l'accès à tout le monde.
 
-        Ce bloc était parqué tant que la migration 0009 n'était pas appliquée.
-        Elle l'est : `create_distribution_link`, `resolve_distribution` et la RLS
-        sur `distribution_links` sont en place, et `npm run check:distribution`
-        le vérifie à chaque exécution — un anonyme ne peut ni créer ni lire.
-
         La liste est **relue depuis la base** à chaque ouverture : le jeton n'est
         pas une valeur d'affichage retenue par le composant, c'est ce que la
         table contient. Un rechargement ne cache donc rien.
@@ -709,8 +704,8 @@ export default function CampaignEditorPage() {
           <p className="mt-1 text-[13px] leading-relaxed text-gray-500">
             Distribuez votre campagne à un public déterminé, sans la rendre publique.
             Un lien à jeton, à envoyer à un client ou à une liste précise : il ouvre le
-            même parcours que l’adresse publique, mais avec son propre quota
-            d’utilisations et sans partage social. Un jeton est un secret — ne le
+            même parcours que l&apos;adresse publique, mais avec son propre quota
+            d&apos;utilisations et sans partage social. Un jeton est un secret — ne le
             publiez pas.
           </p>
         </div>
@@ -726,10 +721,6 @@ export default function CampaignEditorPage() {
           <ul className="flex flex-col gap-3">
             {privateLinks.map((link) => {
               const url = privateDistributionUrl(link.token);
-              // La base bascule elle-même sur `EXPIRED` au prochain accès, mais
-              // entre-temps la colonne dit encore `ACTIVE` : une échéance passée
-              // doit être lue comme telle, sinon l'écran proposerait d'ouvrir un
-              // lien que `resolve_distribution` va rejeter.
               const expired =
                 link.status === 'EXPIRED' ||
                 (link.expiresAt !== null && Date.parse(link.expiresAt) < Date.now());
@@ -778,6 +769,26 @@ export default function CampaignEditorPage() {
                         Ouvrir
                       </Button>
                     )}
+                    {/* Révocation : définitive. Un lien mort reste visible pour la
+                        traçabilité, mais ne sera plus résolvable. */}
+                    {usable && (
+                      <Button
+                        variant="ghost"
+                        onClick={async () => {
+                          if (!confirm('Révoquer ce lien ? Cette action est définitive.')) return;
+                          const result = await distributionService.revokeDistributionLink(link.token);
+                          if (result.error) {
+                            setError(result.error);
+                          } else {
+                            await refreshPrivateLinks();
+                          }
+                        }}
+                        className="text-error hover:text-error/80"
+                      >
+                        <Trash2 className="size-4" strokeWidth={1.75} aria-hidden />
+                        Révoquer
+                      </Button>
+                    )}
                   </div>
 
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-gray-500">
@@ -787,6 +798,9 @@ export default function CampaignEditorPage() {
                     </span>
                     <span>
                       {fmtCount.format(link.quotaUsed)} / {fmtCount.format(link.quotaTotal)} utilisées
+                    </span>
+                    <span>
+                      Créé le {fmtDate.format(new Date(link.createdAt))}
                     </span>
                     <span>
                       {link.expiresAt
@@ -805,9 +819,9 @@ export default function CampaignEditorPage() {
                       placeholder="https://…"
                       defaultValue={link.clientLogoUrl ?? ''}
                       onBlur={async (e) => {
-                        const url = e.target.value.trim() || null;
-                        if (url === (link.clientLogoUrl ?? null)) return;
-                        await distributionService.updateClientLogo(link.token, url);
+                        const val = e.target.value.trim() || null;
+                        if (val === (link.clientLogoUrl ?? null)) return;
+                        await distributionService.updateClientLogo(link.token, val);
                         await refreshPrivateLinks();
                       }}
                       className="h-8 text-[12px]"
@@ -827,7 +841,7 @@ export default function CampaignEditorPage() {
         {/* Création : toujours proposée, un lien n'en ferme pas un autre. */}
         <div className="flex flex-wrap items-end gap-3 border-t border-gray-100 pt-3">
           <Field
-            label="Nombre d’utilisations"
+            label="Nombre d'utilisations"
             htmlFor="private-quota"
             hint="Téléchargements autorisés pour chaque lien que vous créez."
             className="w-44"
@@ -853,12 +867,13 @@ export default function CampaignEditorPage() {
             ) : (
               <>
                 <Link2 className="size-4" strokeWidth={1.75} aria-hidden />
-                {privateLinks.length === 0 ? 'Générer le lien privé' : 'Générer un autre lien'}
+                Générer le lien
               </>
             )}
           </Button>
         </div>
       </section>
+
 
       {/* ---------------- Partage social ---------------- */}
       <section className="flex flex-col gap-4 rounded-lg border border-gray-200 bg-white p-5">

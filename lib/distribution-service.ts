@@ -63,4 +63,15 @@ export const distributionService = {
   updateClientLogo(token: string, url: string | null): Promise<Result<void>> {
     return backend.updateDistributionLink(token, { client_logo_url: url });
   },
+
+  /**
+   * Révoque un lien privé. La révocation est définitive.
+   *
+   * Un jeton qui a été copié et partagé ne doit pas reprendre vie
+   * silencieusement : si un client a cessé d'utiliser le lien, le créateur le
+   * ferme, et en crée un autre si nécessaire.
+   */
+  revokeDistributionLink(token: string): Promise<Result<boolean>> {
+    return backend.revokeDistributionLink(token);
+  },
 };

@@ -618,6 +618,11 @@ export const localBackend: Backend = {
     return { data: undefined };
   },
 
+  async revokeDistributionLink(): Promise<Result<boolean>> {
+    return { data: true };
+  },
+
+
   /* --- Signalements de contenu -------------------------------------- */
   /**
    * Le mode démonstration n'a ni table de signalements ni espace de stockage
