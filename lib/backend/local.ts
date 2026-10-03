@@ -16,6 +16,7 @@ import type {
   Backend,
   CreateCampaignInput,
   DistributionLink,
+  ParticipationClaim,
   Result,
   SignUpOutcome,
   UpdateProfilePatch,
@@ -599,6 +600,22 @@ export const localBackend: Backend = {
 
   async getPrivateCampaign(_token): Promise<GalleryItem | null> {
     return null;
+  },
+
+  /**
+   * Aucun jeton n'existe en démonstration, donc aucune unité à réserver.
+   *
+   * On renvoie un refus **et non** une erreur : le refus est la vraie réponse
+   * pour un lien qui ne peut pas exister, et c'est la même forme que celle
+   * rendue par la fonction SQL pour un jeton inconnu. Une erreur ferait croire
+   * à une panne là où il n'y a simplement rien à consommer.
+   */
+  async claimDistribution(_token): Promise<Result<ParticipationClaim>> {
+    return { data: { granted: false, used: 0, quota: 0 } };
+  },
+
+  async updateDistributionLink(): Promise<Result<void>> {
+    return { data: undefined };
   },
 
   /* --- Signalements de contenu -------------------------------------- */

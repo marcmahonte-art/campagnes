@@ -312,5 +312,180 @@ ok(
   'partager depuis /d/:token publierait le secret d’accès',
 );
 
+/* ------------------------------------------------------------------ */
+/* 9. Consommation réelle du quota (migration 0014)                    */
+/* ------------------------------------------------------------------ */
+
+console.log('\n=== 9. Consommation réelle — `claim_distribution` ===');
+
+const journey = read('components/participant/participant-journey.tsx');
+const UI = stripComments(journey);
+
+ok(
+  'le contrat déclare la réservation d’un lien privé',
+  /claimDistribution\(\s*token:\s*string\):\s*Promise<Result<ParticipationClaim>>/.test(types),
+);
+ok(
+  'l’implémentation Supabase appelle la RPC, et rien d’autre',
+  /async claimDistribution\(/.test(supabase) && /rpc\('claim_distribution'/.test(supabase),
+);
+ok(
+  'l’implémentation locale aussi — même contrat, pas de trou dans la démo',
+  /async claimDistribution\(/.test(local),
+);
+ok(
+  'le service délègue au contrat',
+  /claimDistribution\(token:\s*string\)/.test(service) && /backend\.claimDistribution\(/.test(service),
+);
+ok(
+  'l’écran participant passe par le SERVICE, jamais par la RPC en direct',
+  /distributionService\.claimDistribution\(/.test(journey) &&
+    !/rpc\(['"]claim_distribution/.test(journey),
+  'une RPC appelée depuis un composant court-circuiterait le contrat',
+);
+ok(
+  'le jeton choisit la porte : lien privé sinon campagne',
+  /distributionToken\s*\n?\s*\?\s*await distributionService\.claimDistribution/.test(journey) ||
+    /distributionToken\s*\?\s*await distributionService\.claimDistribution/.test(journey),
+  'sans ce branchement, un lien privé consommerait l’enveloppe du créateur',
+);
+
+/* ------------------------------------------------------------------ */
+/* 10. Compteur calculé, jamais colonne maintenue                      */
+/* ------------------------------------------------------------------ */
+
+console.log('\n=== 10. Compteur calculé ===');
+
+const mig14 = readFileSync(join(ROOT, 'supabase/migrations', '0014_distribution_usage.sql'), 'utf8');
+
+ok(
+  'la vue `distribution_stats` existe et compte les lignes d’usage',
+  /create view public\.distribution_stats/.test(mig14) && /count\(\*\)/.test(mig14),
+  'un `count(*)` ne dérive pas ; une colonne incrémentée, si',
+);
+ok(
+  'la vue respecte les policies RLS de ses tables',
+  /security_invoker\s*=\s*on/.test(mig14),
+);
+ok(
+  'aucune colonne `uses_count` n’est stockée dans `distribution_links`',
+  !/alter table public\.distribution_links[\s\S]{0,200}uses_count/.test(mig14),
+  'stocker le compte le rendrait falsifiable et divergent',
+);
+ok(
+  'la réservation ET sa trace s’écrivent dans la même fonction',
+  /insert into public\.distribution_usages/.test(mig14),
+  'un quota décrémenté sans trace est invisible, l’inverse est un mensonge',
+);
+
+/* ------------------------------------------------------------------ */
+/* 11. Refus INDISCERNABLES — garde-fou de la fuite corrigée           */
+/* ------------------------------------------------------------------ */
+
+console.log('\n=== 11. Refus indiscernables ===');
+
+/*
+ * PIÈGE DÉJÀ RENCONTRÉ. La première version renvoyait le vrai couple
+ * `(quota_used, quota_total)` sur chaque refus : un jeton inventé rendait
+ * « 0/0 », un jeton épuisé « 2/2 ». La différence confirmait l'existence du
+ * jeton — alors qu'un jeton est un secret — et livrait au passage la
+ * consommation d'un lien privé, qui est une donnée d'affaires.
+ *
+ * Le garde-fou porte sur la FORME, pas sur une liste de cas : tout refus doit
+ * sortir la ligne vide, quelle que soit la raison ajoutée plus tard.
+ */
+const refusals = mig14.match(/return query select\s+false[^;]*;/g) ?? [];
+
+ok(
+  'la fonction refuse explicitement dans plusieurs cas',
+  refusals.length >= 4,
+  `${refusals.length} refus trouvés — en manque-t-il un ?`,
+);
+ok(
+  'AUCUN refus ne renvoie les vrais compteurs du lien',
+  refusals.every((r) => !/v_link\.|quota_used|quota_total/.test(r)),
+  refusals
+    .filter((r) => /v_link\.|quota_used|quota_total/.test(r))
+    .map((r) => r.replace(/\s+/g, ' '))
+    .join(' | '),
+);
+ok(
+  'tous les refus rendent la même ligne vide',
+  refusals.length > 0 && refusals.every((r) => /false,\s*0,\s*0,\s*null::uuid/.test(r.replace(/\s+/g, ' '))),
+  refusals.map((r) => r.replace(/\s+/g, ' ')).join(' | '),
+);
+
+/* ------------------------------------------------------------------ */
+/* 12. L’écran de blocage ne dit pas la même chose selon la porte       */
+/* ------------------------------------------------------------------ */
+
+console.log('\n=== 12. Écran de blocage — deux portes, deux messages ===');
+
+/** Bloc JSX suivant un marqueur, sur une profondeur bornée. */
+function blockAfter(source: string, marker: RegExp, length = 900): string {
+  const i = source.search(marker);
+  return i < 0 ? '' : source.slice(i, i + length);
+}
+
+const privateBlock = blockAfter(journey, /blocked && distributionToken && \(/);
+const publicBlock = blockAfter(journey, /blocked && !distributionToken && \(/);
+
+ok(
+  'un refus de lien privé a son propre écran',
+  privateBlock.length > 0,
+  'sans lui, le participant verrait l’écran de la campagne',
+);
+ok(
+  'l’écran privé N’AFFICHE PAS le compteur du lien',
+  privateBlock.length > 0 && !/quota\.used/.test(privateBlock),
+  'afficher « utilisée N fois » révélerait la consommation d’un lien privé',
+);
+ok(
+  'l’écran privé ne nomme pas la campagne comme si elle était épuisée',
+  privateBlock.length > 0 && !/campaign\.name/.test(privateBlock),
+  'c’est le LIEN qui est épuisé ; la campagne peut être largement ouverte',
+);
+ok(
+  'l’écran public garde le compteur de la campagne, lui',
+  publicBlock.length > 0 && /quota\.used/.test(publicBlock),
+  'une campagne est publique : son compteur n’est pas un secret',
+);
+ok(
+  'le reliquat « gratuit » n’est annoncé que sur la voie publique',
+  /!blocked && !distributionToken && left !== null/.test(journey),
+  'un client qui a acheté une diffusion ne consomme pas une enveloppe offerte',
+);
+
+/* ------------------------------------------------------------------ */
+/* 13. Le refus ferme l’export                                          */
+/* ------------------------------------------------------------------ */
+
+console.log('\n=== 13. Un quota refusé ferme l’export ===');
+
+ok(
+  'la réservation précède le rendu, jamais l’inverse',
+  // `exportPng` apparaît déjà dans les imports : viser l'APPEL, pas le nom.
+  journey.indexOf('claimDistribution') < journey.indexOf('await exportPng('),
+  'un rendu coûteux que personne ne récupérerait ne doit pas consommer de place',
+);
+ok(
+  'un refus lève avant tout export',
+  /if \(!result\.granted\)[\s\S]{0,700}?throw new Error\(/.test(journey),
+  'sinon le fichier sortirait sans que le quota ait été accordé',
+);
+ok(
+  'le message privé ne dit pas « ce lien n’existe pas »',
+  // Commentaires retirés : `lib/quota.ts` explique justement pourquoi il ne
+  // faut PAS le dire, et cette explication contient l'expression interdite.
+  /privateLinkBlockedMessage\(\)/.test(journey) &&
+    !/n[’']existe pas/.test(stripComments(read('lib/quota.ts'))),
+  'confirmer l’inexistence d’un jeton, c’est révéler un secret',
+);
+ok(
+  'les boutons d’export sont désactivés quand la réservation est refusée',
+  (UI.match(/disabled=\{exporting !== null \|\| blocked/g) ?? []).length >= 2,
+  'un bouton actif derrière un quota épuisé est un droit décoratif',
+);
+
 console.log(`\n=== ${passed} réussis / ${failed} échoués ===`);
 process.exit(failed === 0 ? 0 : 1);

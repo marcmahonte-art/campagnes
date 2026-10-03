@@ -19,6 +19,7 @@ import type {
   CreateCampaignInput,
   DistributionLink,
   DistributionLinkStatus,
+  ParticipationClaim,
   Result,
   SignUpOutcome,
   UpdateProfilePatch,
@@ -636,7 +637,7 @@ export const supabaseBackend: Backend = {
   async listDistributionLinks(campaignId): Promise<Result<DistributionLink[]>> {
     const { data, error } = await supabaseBrowser()
       .from('distribution_links')
-      .select('id, token, quota_total, quota_used, status, expires_at, created_at')
+      .select('id, token, quota_total, quota_used, status, expires_at, created_at, client_logo_url')
       .eq('campaign_id', campaignId)
       .order('created_at', { ascending: false });
 
@@ -655,6 +656,7 @@ export const supabaseBackend: Backend = {
         status: (String(row.status ?? 'ACTIVE') as DistributionLinkStatus) || 'ACTIVE',
         expiresAt: (row.expires_at as string | null) ?? null,
         createdAt: String(row.created_at ?? ''),
+        clientLogoUrl: (row.client_logo_url as string | null) ?? null,
       })),
     };
   },
@@ -670,7 +672,21 @@ export const supabaseBackend: Backend = {
     const { data, error } = await sb.rpc('resolve_distribution', { p_token: token });
     if (error || !data) return null;
 
-    const campaignId = typeof data === 'string' ? data : null;
+    /*
+     * La migration 0015 a changé le retour de `resolve_distribution` :
+     * avant `uuid`, maintenant `jsonb { campaign_id, client_logo_url }`.
+     * On accepte les deux formes pour ne pas casser en cas de désynchronisation
+     * temporaire entre le client et la base.
+     */
+    let campaignId: string | null = null;
+    let clientLogoUrl: string | null = null;
+    if (typeof data === 'string') {
+      campaignId = data;
+    } else if (data && typeof data === 'object') {
+      const obj = data as Record<string, unknown>;
+      campaignId = typeof obj.campaign_id === 'string' ? obj.campaign_id : null;
+      clientLogoUrl = typeof obj.client_logo_url === 'string' ? obj.client_logo_url : null;
+    }
     if (!campaignId) return null;
 
     const { data: row } = await sb
@@ -697,7 +713,46 @@ export const supabaseBackend: Backend = {
       usageCount: campaign.participants_used ?? 0,
       likesCount: await likeCount(sb, campaign.id),
       likedByMe: await likedByMe(sb, campaign.id),
+      clientLogoUrl,
     };
+  },
+
+  /**
+   * Réserve une unité sur le quota d'un lien privé.
+   *
+   * La fonction SQL écrit la trace d'usage dans la même transaction que la
+   * décrémentation (migration 0014) : le navigateur n'a aucun droit d'écriture
+   * direct sur `distribution_usages`, il ne fait que demander la réservation.
+   *
+   * Un refus n'est PAS une erreur : `granted: false` avec `data` renseigné.
+   * Seule une panne réseau ou une fonction absente passe par `error`.
+   */
+  async claimDistribution(token): Promise<Result<ParticipationClaim>> {
+    const { data, error } = await supabaseBrowser().rpc('claim_distribution', {
+      p_token: token,
+    });
+    if (error) return { error: message(error, 'Impossible de réserver cet accès.') };
+
+    // La RPC renvoie un ensemble d'une ligne (ou de zéro).
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) return { error: 'Impossible de réserver cet accès.' };
+
+    return {
+      data: {
+        granted: Boolean(row.granted),
+        used: Number(row.used ?? 0),
+        quota: Number(row.quota ?? 0),
+      },
+    };
+  },
+
+  async updateDistributionLink(token, patch): Promise<Result<void>> {
+    const { error } = await supabaseBrowser()
+      .from('distribution_links')
+      .update({ client_logo_url: patch.client_logo_url })
+      .eq('token', token);
+    if (error) return { error: message(error, 'Impossible de modifier le lien.') };
+    return { data: undefined };
   },
 
   /* --- Signalements de contenu -------------------------------------- */

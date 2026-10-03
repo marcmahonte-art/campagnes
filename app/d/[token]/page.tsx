@@ -42,5 +42,21 @@ export default function PrivateParticipantPage() {
     };
   }, [token]);
 
-  return <ParticipantJourney campaign={campaign} loading={loading} sharing={false} />;
+  /*
+   * Le jeton est transmis au parcours, et à lui seul : c'est ce qui lui permet
+   * de consommer le quota du LIEN plutôt que celui de la campagne.
+   *
+   * Il ne transite que vers le bas. Le composant ne l'affiche nulle part, ne le
+   * copie pas et ne le partage pas — `sharing={false}` ferme déjà le partage
+   * social, et le jeton n'apparaît dans aucune URL fabriquée par l'écran.
+   */
+  return (
+    <ParticipantJourney
+      campaign={campaign}
+      loading={loading}
+      sharing={false}
+      distributionToken={token}
+      clientLogoUrl={campaign?.clientLogoUrl ?? null}
+    />
+  );
 }

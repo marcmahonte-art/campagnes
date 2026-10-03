@@ -796,6 +796,24 @@ export default function CampaignEditorPage() {
                     {state && <span className="font-medium text-error">{state}</span>}
                   </div>
 
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[11px] font-medium text-gray-500">
+                      Logo client (URL)
+                    </label>
+                    <Input
+                      type="url"
+                      placeholder="https://…"
+                      defaultValue={link.clientLogoUrl ?? ''}
+                      onBlur={async (e) => {
+                        const url = e.target.value.trim() || null;
+                        if (url === (link.clientLogoUrl ?? null)) return;
+                        await distributionService.updateClientLogo(link.token, url);
+                        await refreshPrivateLinks();
+                      }}
+                      className="h-8 text-[12px]"
+                    />
+                  </div>
+
                   <p className="text-[12px] leading-relaxed text-gray-500">
                     Ce lien distribue la campagne selon le quota défini — indépendant du
                     quota de la campagne.

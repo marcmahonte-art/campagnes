@@ -1,5 +1,5 @@
 import { backend } from '@/lib/backend';
-import type { DistributionLink, Result } from '@/lib/backend/types';
+import type { DistributionLink, ParticipationClaim, Result } from '@/lib/backend/types';
 
 /**
  * Point d'entrée des liens privés de distribution.
@@ -38,5 +38,29 @@ export const distributionService = {
    */
   listDistributionLinks(campaignId: string): Promise<Result<DistributionLink[]>> {
     return backend.listDistributionLinks(campaignId);
+  },
+
+  /**
+   * Réserve une unité sur le quota d'un lien privé.
+   *
+   * Appelé au moment où le participant **produit réellement son visuel**, pas à
+   * l'ouverture de la page : le quota vendu est un quota d'images livrées, pas
+   * de vues. Un simple coup d'œil ne doit rien coûter.
+   *
+   * La fonction SQL écrit la trace d'usage dans la même transaction. Le
+   * navigateur ne peut ni tricher sur le compteur ni écrire la trace lui-même.
+   */
+  claimDistribution(token: string): Promise<Result<ParticipationClaim>> {
+    return backend.claimDistribution(token);
+  },
+
+  /**
+   * Modifie le logo client d'un lien existant.
+   *
+   * L'URL pointe vers le bucket `media` public : le participant la charge sans
+   * session. Une URL absente ou vide retire le logo.
+   */
+  updateClientLogo(token: string, url: string | null): Promise<Result<void>> {
+    return backend.updateDistributionLink(token, { client_logo_url: url });
   },
 };

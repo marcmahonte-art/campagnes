@@ -99,6 +99,22 @@ export function blockedMessage(campaignName: string): string {
   );
 }
 
+/**
+ * Message quand un LIEN PRIVÉ refuse un accès.
+ *
+ * Volontairement muet sur la cause. Un jeton est un secret : annoncer « ce lien
+ * n'existe pas » ou « il est révoqué » confirmerait son existence à quelqu'un
+ * qui ne devrait rien savoir. La fonction SQL rend d'ailleurs toutes ces causes
+ * indiscernables — l'écran n'a pas à les distinguer, et ne le peut pas.
+ *
+ * Il ne dit pas non plus « votre lien est expiré » : le participant n'a pas
+ * commandé ce lien, il l'a reçu. La seule chose utile à lui dire, c'est
+ * qu'il doit se rapprocher de qui le lui a envoyé.
+ */
+export function privateLinkBlockedMessage(): string {
+  return "Ce lien a atteint sa limite d'utilisations. Contactez la personne qui vous l'a envoyé.";
+}
+
 /** Adresse de contact pour l'extension. */
 export const QUOTA_CONTACT_EMAIL = 'bonjour@campagnes.app';
 

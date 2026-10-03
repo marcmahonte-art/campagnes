@@ -27,6 +27,7 @@ import { InlineError, Spinner } from '@/components/ui/feedback';
 import { ParticipantStage } from '@/components/participant/participant-stage';
 import { SharePanel } from '@/components/participant/share-panel';
 import { backend } from '@/lib/backend';
+import { distributionService } from '@/lib/distribution-service';
 import { frameZone, photoZone } from '@/lib/descriptor';
 import { ratioSpec } from '@/lib/ratios';
 import type { PlanId } from '@/lib/plans';
@@ -56,7 +57,7 @@ import {
 } from '@/lib/participant';
 import { useHistory } from '@/components/editor/use-history';
 import { PHOTO_FILTER_PRESETS, type PhotoFilter } from '@/lib/photo-filters';
-import { blockedMessage, remaining } from '@/lib/quota';
+import { blockedMessage, privateLinkBlockedMessage, remaining } from '@/lib/quota';
 import { exportPlanFor, shouldWatermark } from '@/lib/watermark-policy';
 import type { CampaignQuota, GalleryItem } from '@/lib/types';
 
@@ -83,6 +84,8 @@ export function ParticipantJourney({
   campaign,
   loading,
   sharing = true,
+  distributionToken = null,
+  clientLogoUrl = null,
 }: {
   campaign: GalleryItem | null;
   loading: boolean;
@@ -95,6 +98,20 @@ export function ParticipantJourney({
    * `/d/:token` ne partage pas → diffusion choisie par le créateur → sa formule.
    */
   sharing?: boolean;
+  /**
+   * Jeton du lien privé, quand le parcours est servi par `/d/[token]`.
+   *
+   * Sa présence décide **quel quota est consommé** : le lien privé a son propre
+   * plafond, distinct de celui de la campagne. Sans ce jeton, le parcours privé
+   * consommait le quota global et le plafond vendu au client n'était jamais
+   * opposable.
+   *
+   * Il n'est jamais affiché, jamais copié, jamais partagé : c'est le secret
+   * d'accès.
+   */
+  distributionToken?: string | null;
+  /** Logo du client, affiché uniquement sur `/d/[token]`. */
+  clientLogoUrl?: string | null;
 }) {
   /*
    * Un seul état, un seul historique.
@@ -357,8 +374,15 @@ export function ParticipantJourney({
          * coûteux que personne ne pourrait récupérer ne doit pas consommer une
          * place. La réservation est atomique côté base, donc deux participants
          * simultanés ne peuvent pas prendre deux fois la dernière place.
+         *
+         * Quel quota ? Celui du **lien privé** quand le parcours est servi par
+         * `/d/[token]`, celui de la campagne sinon. Les deux compteurs sont
+         * indépendants par construction : le lien mesure la diffusion vendue à
+         * un client, la campagne mesure l'enveloppe globale du créateur.
          */
-        const claim = await backend.claimParticipation(campaign.id);
+        const claim = distributionToken
+          ? await distributionService.claimDistribution(distributionToken)
+          : await backend.claimParticipation(campaign.id);
         if (claim.error) throw new Error(claim.error);
         // La fonction renvoie toujours une ligne, mais le type ne peut pas le
         // garantir : on ne rend jamais un export sur une réservation incertaine.
@@ -368,7 +392,16 @@ export function ParticipantJourney({
         setQuota({ used: result.used, quota: result.quota, open: result.granted });
 
         if (!result.granted) {
-          throw new Error(blockedMessage(campaign.name));
+          /*
+           * Réponse fermée par défaut : un lien épuisé, expiré ou révoqué
+           * n'annonce pas « erreur », il ferme l'export avec un état explicite.
+           * Et la fonction SQL rend un jeton inconnu INDISCERNABLE d'un quota
+           * atteint — on ne confirme jamais qu'un jeton existe, puisque c'est un
+           * secret. Le message ne dit donc pas « votre lien n'existe pas ».
+           */
+          throw new Error(
+            distributionToken ? privateLinkBlockedMessage() : blockedMessage(campaign.name),
+          );
         }
 
         if (kind === 'png') {
@@ -402,7 +435,7 @@ export function ParticipantJourney({
         setProgress(0);
       }
     },
-    [campaign, composed, exportPlan],
+    [campaign, composed, distributionToken, exportPlan],
   );
 
   /* ---------------- États transitoires ---------------- */
@@ -464,6 +497,13 @@ export function ParticipantJourney({
               <ShieldCheck className="size-3.5" aria-hidden />
               Votre photo reste sur votre appareil
             </span>
+            {clientLogoUrl && (
+              <img
+                src={clientLogoUrl}
+                alt="Logo client"
+                className="mx-auto mt-4 block max-h-12 w-auto object-contain"
+              />
+            )}
             <h1 className="mt-4 text-[28px] font-bold leading-tight md:text-[38px]">
               {campaign.name}
             </h1>
@@ -976,12 +1016,37 @@ export function ParticipantJourney({
             )}
 
             {/*
-              Écran de blocage — apparaît quand les 10 téléchargements offerts
-              sont consommés. Il remplace les boutons d'export, pas l'écran
-              entier : le participant garde la vue de son visuel, et comprend
-              que la limite est atteinte plutôt que de croire à une panne.
+              Écran de blocage — apparaît quand la réservation est refusée. Il
+              remplace les boutons d'export, pas l'écran entier : le participant
+              garde la vue de son visuel, et comprend que la limite est atteinte
+              plutôt que de croire à une panne.
+
+              DEUX écrans, pas un : la limite franchie n'est pas la même selon
+              la porte d'entrée. Sur `/d/[token]`, c'est le LIEN qui est épuisé
+              — la campagne, elle, peut encore être largement ouverte. Afficher
+              « {campaign.name} a été utilisée N fois » serait donc faux, et
+              révélerait au passage la consommation d'un lien privé, qui est une
+              donnée d'affaires entre le créateur et son client.
             */}
-            {blocked && (
+            {blocked && distributionToken && (
+              <div
+                role="status"
+                className="mt-6 flex flex-col items-start gap-3 rounded-lg border border-gray-200 bg-gray-50 p-5"
+              >
+                <span className="text-[13px] font-semibold text-ink">
+                  Ce lien a atteint sa limite
+                </span>
+                <p className="text-[13px] leading-relaxed text-gray-600">
+                  {privateLinkBlockedMessage()}
+                </p>
+                <p className="text-xs leading-relaxed text-gray-400">
+                  Vous pouvez continuer à composer votre visuel : seul le téléchargement est
+                  momentanément indisponible.
+                </p>
+              </div>
+            )}
+
+            {blocked && !distributionToken && (
               <div
                 role="status"
                 className="mt-6 flex flex-col items-start gap-3 rounded-lg border border-gray-200 bg-gray-50 p-5"
@@ -1001,8 +1066,13 @@ export function ParticipantJourney({
               </div>
             )}
 
-            {/* Compteur restant, une fois connu et tant que le lien reste ouvert. */}
-            {!blocked && left !== null && left <= 3 && (
+            {/*
+              Compteur restant — campagne publique seulement. Sur un lien privé,
+              le reliquat affiché serait celui du lien, et « gratuit » serait
+              faux : le client a acheté une diffusion, il ne consomme pas une
+              enveloppe offerte.
+            */}
+            {!blocked && !distributionToken && left !== null && left <= 3 && (
               <p className="mt-5 text-center text-xs text-gray-400">
                 Il reste {left} téléchargement{left > 1 ? 's' : ''} gratuit{left > 1 ? 's' : ''}{' '}
                 sur cette campagne.

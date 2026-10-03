@@ -295,6 +295,11 @@ export interface GalleryItem extends CampaignWithFrame {
    * invite à se connecter plutôt que d'afficher un cœur vide sans raison.
    */
   likedByMe?: boolean;
+  /**
+   * Logo du client affiché sur `/d/[token]`. Ne sort que d'un lien de
+   * distribution privé ; la galerie publique ne le connaît pas.
+   */
+  clientLogoUrl?: string | null;
 }
 
 /* ------------------------------------------------------------------ */

@@ -76,6 +76,15 @@ export interface ReportInput {
 export type DistributionLinkStatus = 'ACTIVE' | 'EXPIRED' | 'QUOTA_EXCEEDED' | 'REVOKED';
 
 /**
+ * Réexport de `ParticipationClaim`.
+ *
+ * Il vient de `@/lib/types` mais il est **rendu par ce contrat** (`claimParticipation`,
+ * `claimDistribution`) : le réexporter ici évite aux implémentations d'aller
+ * chercher ailleurs une réponse qu'elles produisent au nom de cette interface.
+ */
+export type { ParticipationClaim };
+
+/**
  * Un lien de distribution privé déjà créé, tel qu'il vit en base.
  *
  * Ce type est la **preuve de persistance** du parcours : le créateur affiche un
@@ -95,6 +104,8 @@ export interface DistributionLink {
   /** `null` = aucun périmètre de validité. */
   expiresAt: string | null;
   createdAt: string;
+  /** Logo du client, affiché sur `/d/[token]`. */
+  clientLogoUrl?: string | null;
 }
 
 /**
@@ -162,6 +173,37 @@ export interface Backend {
    * moment où la campagne a simplement atteint sa limite.
    */
   claimParticipation(campaignId: string): Promise<Result<ParticipationClaim>>;
+
+  /**
+   * Réserve une unité sur le quota d'un **lien privé** de distribution.
+   *
+   * C'est l'appel qui rend le plafond vendu à un client réellement opposable.
+   * Sans lui, un participant venu par `/d/[token]` consommait le quota de la
+   * campagne et celui du lien restait à 0 indéfiniment : le compteur affiché au
+   * créateur était faux, et le plafond pouvait être dépassé sans que rien ne le
+   * signale.
+   *
+   * `granted: false` signifie « lien épuisé, expiré, révoqué ou inconnu » —
+   * **jamais** une erreur technique. Et surtout, la fonction SQL rend ces cas
+   * INDISCERNABLES entre eux : un jeton est un secret, on ne confirme jamais
+   * son existence. Une vraie panne passe par `Result.error`.
+   *
+   * L'appel écrit sa trace d'usage dans la même transaction (migration 0014) :
+   * un quota décrémenté sans trace est impossible.
+   */
+  claimDistribution(token: string): Promise<Result<ParticipationClaim>>;
+
+  /**
+   * Modifie un lien de distribution existant.
+   *
+   * Seul le créateur de la campagne peut modifier ses liens — la RLS de
+   * `distribution_links` en garante. Le retour `void` signale que la ligne a
+   * été mise à jour, pas ce qu'elle contient : l'écran relit la liste.
+   */
+  updateDistributionLink(
+    token: string,
+    patch: { client_logo_url?: string | null },
+  ): Promise<Result<void>>;
 
   /**
    * Quota lisible sans être le propriétaire — pour l'écran de blocage.
