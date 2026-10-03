@@ -527,9 +527,14 @@ export function composeDescriptor(
   const text = style.text && style.text.content.trim().length > 0 ? style.text : null;
 
   /*
-   * Les `z` sont répartis dans l'interstice : la photo en premier, le texte
-   * ensuite. Avec un seul calque, la répartition redonne exactement l'ancien
-   * calcul (`below + (above - below) / 2`).
+   * Calques du participant : la photo en premier (derrière), le texte
+   * APRÈS tous les calques du créateur (devant tout).
+   *
+   * On insère la photo juste avant `insertAt` (entre créateur et
+   * calques postérieurs, là où elle est visible dans le cadre), mais
+   * le texte va TOUT EN HAUT du z-index pour qu'il recouvre le
+   * cadre lui-même — c'est la promesse produit : le texte du
+   * participant se lit par-dessus le cadre.
    */
   const { below, above } = gapBounds(sorted, insertAt);
   const count = text ? 2 : 1;
@@ -538,9 +543,25 @@ export function composeDescriptor(
   const participant: Layer[] = [photoLayer(photo, zone, safe, below + step, style.filter)];
   if (text) participant.push(participantTextLayer(text, zone, frame.ratio, below + 2 * step));
 
+  const frameLayers = [
+    ...sorted.slice(0, insertAt),
+    ...participant,
+    ...sorted.slice(insertAt),
+  ];
+
+  /* Le texte participant passe au-dessus de tout (y compris les
+     calques du créateur qui le suivraient) : son z vaut le max + 1. */
+  if (text) {
+    const maxZ = frameLayers.reduce((m, l) => Math.max(m, l.z), 0);
+    const idx = frameLayers.findIndex((l) => l.id === PARTICIPANT_TEXT_ID);
+    if (idx !== -1) {
+      frameLayers[idx] = { ...frameLayers[idx], z: maxZ + 1 };
+    }
+  }
+
   return {
     ...frame,
-    layers: [...sorted.slice(0, insertAt), ...participant, ...sorted.slice(insertAt)],
+    layers: frameLayers,
     // Les calques ajoutés décalent les positions : on leur réserve un mouvement
     // neutre pour que les calques du créateur gardent très exactement le leur.
     motion: insertNeutralMotion(frame.motion, insertAt, frame.layers.length, participant.length),

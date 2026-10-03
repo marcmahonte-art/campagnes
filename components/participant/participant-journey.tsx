@@ -841,6 +841,34 @@ export function ParticipantJourney({
                         })}
                       </div>
 
+                      <div className="flex items-center gap-3">
+                        <span className="text-[13px] text-gray-500">Alignement</span>
+                        <div className="flex gap-1.5">
+                          {(['left', 'center', 'right'] as const).map((a) => (
+                            <button
+                              key={a}
+                              type="button"
+                              aria-pressed={style.text?.align === a}
+                              onClick={() =>
+                                setStyle((current) =>
+                                  current.text
+                                    ? { ...current, text: { ...current.text, align: a } }
+                                    : current,
+                                )
+                              }
+                              className={cn(
+                                'flex size-8 items-center justify-center rounded-pill border text-[13px] transition-colors',
+                                style.text?.align === a
+                                  ? 'border-ink bg-ink text-white'
+                                  : 'border-gray-200 text-gray-700 hover:border-gray-400',
+                              )}
+                            >
+                              {a === 'left' ? 'L' : a === 'center' ? 'C' : 'R'}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
                       <p className="text-[13px] text-gray-500">
                         Faites glisser le texte sur l’aperçu pour le placer.
                       </p>
