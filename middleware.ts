@@ -2,15 +2,12 @@ import { NextResponse, type NextRequest } from 'next/server';
 import type { CookieOptions } from '@supabase/ssr';
 
 /**
- * Deux responsabilités :
+ * Sécurité + session Supabase :
  *
- * 1. `campagnes.app/@pseudo` → `/u/pseudo`
- *    En App Router, un dossier nommé `@pseudo` serait interprété comme un slot de
- *    route parallèle. On garde donc `/u/[username]` comme route canonique et on
- *    réécrit l'URL publique promise au créateur.
- *
- * 2. Rafraîchissement de la session Supabase (le token est renouvelé sur chaque
- *    navigation pour éviter les déconnexions silencieuses).
+ * 1. En-têtes de sécurité (HSTS, CSP, X-Frame-Options, X-Content-Type-Options,
+ *    Referrer-Policy, Permissions-Policy) sur toutes les réponses HTML.
+ * 2. `/@pseudo` → `/u/pseudo` (rewrite).
+ * 3. Rafraîchissement de session Supabase.
  */
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -25,16 +22,50 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  // 2. Session Supabase — uniquement si le projet est configuré.
+  let response = NextResponse.next({ request });
+
+  // 2. En-têtes de sécurité (sur toutes les réponses HTML)
+  const isHtml =
+    request.headers.get('accept')?.includes('text/html') ||
+    pathname === '/' ||
+    pathname.startsWith('/u/') ||
+    pathname.startsWith('/c/') ||
+    pathname.startsWith('/d/');
+  if (isHtml) {
+    response.headers.set('X-Content-Type-Options', 'nosniff');
+    response.headers.set('X-Frame-Options', 'DENY');
+    response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+    response.headers.set(
+      'Permissions-Policy',
+      'camera=(), microphone=(), geolocation=()',
+    );
+    // CSP stricte : scripts/style autorisés uniquement inline (Next.js) + self
+    response.headers.set(
+      'Content-Security-Policy',
+      [
+        "default-src 'self'",
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data: blob: https:",
+        "font-src 'self' data:",
+        "connect-src 'self' https://*.supabase.co https://*.supabase.in",
+        "frame-src 'none'",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+      ].join('; '),
+    );
+  }
+
+  // 3. Session Supabase — uniquement si le projet est configuré.
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
   if (!supabaseUrl || !supabaseKey) {
-    return NextResponse.next();
+    return response;
   }
 
-  let response = NextResponse.next({ request });
-
+  let sessionResponse = response;
   const { createServerClient } = await import('@supabase/ssr');
   const supabase = createServerClient(supabaseUrl, supabaseKey, {
     cookies: {
@@ -43,16 +74,16 @@ export async function middleware(request: NextRequest) {
       },
       setAll(cookiesToSet: { name: string; value: string; options: CookieOptions }[]) {
         cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
-        response = NextResponse.next({ request });
+        sessionResponse = NextResponse.next({ request });
         cookiesToSet.forEach(({ name, value, options }) =>
-          response.cookies.set(name, value, options),
+          sessionResponse.cookies.set(name, value, options),
         );
       },
     },
   });
 
   await supabase.auth.getUser();
-  return response;
+  return sessionResponse;
 }
 
 export const config = {

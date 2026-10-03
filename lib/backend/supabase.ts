@@ -862,13 +862,20 @@ export const supabaseBackend: Backend = {
     const { data } = await sb.auth.getUser();
     if (!data.user) return { error: 'Non connecté.' };
 
-    const ext = (file.name.split('.').pop() || 'png').toLowerCase();
+    // Validation stricte : extension + MIME réel (pas de confiance sur file.type)
+    const allowedExts = new Set(['png','jpg','jpeg','webp']);
+    const ext = (file.name.split('.').pop() || '').toLowerCase();
+    if (!allowedExts.has(ext)) return { error: 'Format non autorisé. Utilisez PNG, JPG ou WebP.' };
+    const mime = file.type || 'image/png';
+    const allowedMime = new Set(['image/png','image/jpeg','image/webp']);
+    if (!allowedMime.has(mime)) return { error: 'Type MIME non autorisé.' };
+
     const path = `${data.user.id}/${folder}/${crypto.randomUUID()}.${ext}`;
 
     const { error } = await sb.storage.from(MEDIA_BUCKET).upload(path, file, {
       cacheControl: '31536000',
       upsert: false,
-      contentType: file.type || 'image/png',
+      contentType: mime,
     });
     if (error) return { error: message(error, 'Le téléversement a échoué.') };
 

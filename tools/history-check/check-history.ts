@@ -224,12 +224,12 @@ function main(): void {
     clock += 1000;
     h.set((c) => ({
       ...c,
-      style: { ...c.style, text: { content: 'Bonjour', color: '#FFFFFF', x: 10, y: 10 } },
+      style: { ...c.style, text: { content: 'Bonjour', color: '#FFFFFF', x: 10, y: 10, align: 'left' } },
     }));
     clock += 1000;
     h.set((c) => ({
       ...c,
-      style: { ...c.style, text: { content: 'Bonjour', color: '#FFFFFF', x: 10, y: 10 }, filter: 'sepia' as const },
+      style: { ...c.style, text: { content: 'Bonjour', color: '#FFFFFF', x: 10, y: 10, align: 'left' }, filter: 'sepia' as const },
     }));
 
     report('trois actions distinctes empilées', h.depth === 3, `${h.depth} entrée(s)`);
@@ -274,8 +274,8 @@ function main(): void {
     report('un bruit de 0,2 unité est ignoré', isSameParticipantState(a, d), 'ok');
 
     // Texte identique en contenu mais position décalée.
-    const e: ParticipantState = { ...a, style: { filter: 'none', text: { content: 'X', color: '#FFF', x: 0, y: 0 } } };
-    const f: ParticipantState = { ...a, style: { filter: 'none', text: { content: 'X', color: '#FFF', x: 60, y: 0 } } };
+    const e: ParticipantState = { ...a, style: { filter: 'none', text: { content: 'X', color: '#FFF', x: 0, y: 0, align: 'left' } } };
+    const f: ParticipantState = { ...a, style: { filter: 'none', text: { content: 'X', color: '#FFF', x: 60, y: 0, align: 'left' } } };
     report('un texte déplacé de 60 unités est vu', !isSameParticipantState(e, f), 'ok');
   }
 

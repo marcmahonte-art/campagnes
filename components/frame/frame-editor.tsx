@@ -1596,7 +1596,7 @@ export function FrameEditor({
 
           {!preview && (
             <p className="mt-3 text-center text-[12px] leading-relaxed text-gray-500">
-              Glissez une image sur la scène, déplacez-la, redimensionnez-la. Le centre s�aligne
+              Glissez une image sur la scène, déplacez-la, redimensionnez-la. Le centre s�aligne
               tout seul. Supprimez avec la touche{' '}
               <kbd className="mx-1 rounded border border-gray-200 bg-white px-1.5 py-0.5 font-mono text-[10px]">
                 Suppr

@@ -139,7 +139,7 @@ function makeFrame(anchor?: string): Descriptor {
 
 const STYLE_WITH_TEXT: ParticipantStyle = {
   filter: 'sepia',
-  text: { content: 'Awa', color: '#FFFFFF', x: 100, y: 200 },
+  text: { content: 'Awa', color: '#FFFFFF', x: 100, y: 200, align: 'left' },
 };
 
 const ids = (d: Descriptor): string => d.layers.map((l) => l.id).join(' → ');
@@ -194,7 +194,7 @@ async function main(): Promise<void> {
   {
     const composed = composeDescriptor(makeFrame(), photo, placement, {
       filter: 'none',
-      text: { content: '   ', color: '#000000', x: 0, y: 0 },
+      text: { content: '   ', color: '#000000', x: 0, y: 0, align: 'left' },
     });
     ok(
       'un texte vide n’ajoute aucun calque',
@@ -289,7 +289,7 @@ async function main(): Promise<void> {
     ok('le corps du texte est positif', participantTextSize('1:1') > 0);
 
     const layer = participantTextLayer(
-      { content: 'Awa', color: '#FFFFFF', x: 10, y: 20 },
+      { content: 'Awa', color: '#FFFFFF', x: 10, y: 20, align: 'left' },
       zone,
       '1:1',
     );
