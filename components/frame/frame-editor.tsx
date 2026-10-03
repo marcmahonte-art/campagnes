@@ -328,11 +328,31 @@ export function FrameEditor({
     async (source: Descriptor) => {
       const canvas = canvasRef.current;
       if (!canvas) return;
-      const { FabricImage } = await import('fabric');
+      const { FabricImage, Rect } = await import('fabric');
 
       building.current = true;
       canvas.clear();
       canvas.backgroundColor = 'transparent';
+      /*
+       * Masque au bord exact du format : ce qui déborde n'existe pas pour le
+       * participant, donc pas pour l'export non plus. `fill` doit peindre —
+       * une chaîne vide laisse la cache vide, et Fabric découperait alors la
+       * scène entière.
+       *
+       * Il est recréé à chaque reconstruction parce que `clear()` ne touche
+       * pas `clipPath` : le masque suivrait sinon l'ancien format après un
+       * changement de ratio.
+       */
+      const frame = specRef.current;
+      canvas.clipPath = new Rect({
+        left: 0,
+        top: 0,
+        width: frame.width,
+        height: frame.height,
+        fill: '#000',
+        selectable: false,
+        evented: false,
+      });
 
       for (const layer of [...source.layers].sort((a, b) => a.z - b.z)) {
         try {
@@ -432,6 +452,7 @@ export function FrameEditor({
         backgroundColor: 'transparent',
         controlsAboveOverlay: true,
       });
+
       canvasRef.current = canvas;
 
       canvas.on('selection:created', () => {
@@ -1485,6 +1506,20 @@ export function FrameEditor({
 
             <div className="relative shadow-md" style={{ lineHeight: 0 }}>
               <canvas ref={canvasElRef} role="img" aria-label="Cadre en cours d’édition" />
+
+              {/*
+                Contour du cadre. Comme les guides : en surimpression, jamais
+                sur le canvas. Un rectangle posé dans les objets serait relu
+                comme un calque par `emitFromCanvas` (une couche `image` sans
+                source), entrerait dans l'indexation de l'animation et dans
+                l'export.
+              */}
+              {!preview && (
+                <span
+                  aria-hidden
+                  className="pointer-events-none absolute inset-0 border-2 border-white"
+                />
+              )}
 
               {/*
                 Guides de centrage. Dessinés en surimpression, jamais sur le
