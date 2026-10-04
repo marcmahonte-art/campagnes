@@ -73,3 +73,15 @@ tools/header-check/.tmp/
 # une campagne. Il ne doit JAMAIS entrer dans l'historique — le fichier
 # n'existe que le temps d'un contrôle d'étanchéité de la RLS.
 tools/distribution-check/.witness
+
+# Matériel de référence téléchargé depuis des sites tiers (bundles JS, CSS,
+# archives, images) : ce n'est pas du code du projet, seulement des brouillons
+# de veille. Seul le livrable rédigé (`docs/monétisation/ui/audit-ui-tarifs.md`)
+# est versionné.
+docs/**/*.téléchargement
+docs/**/*_files/
+
+# Captures de vérification de l'audit d'interface : livrables de mesure, suivis
+# volontairement (forcés par `git add -f`), donc pas concernés par la règle
+# `docs/**/*.png` ci-dessus.
+!docs/monétisation/ui/captures/*.png

@@ -58,19 +58,21 @@ const ORGANIZATION_FEATURES: PlanFeature[] = [
   'reports',
 ];
 
+import { PRICING_PLANS, formatFcfaPrice } from '@/lib/pricing/config';
+
 export const PLANS: Record<PlanId, Plan> = {
   free: {
     id: 'free',
-    name: 'Free',
-    priceFcfa: 0,
+    name: 'Gratuit',
+    priceFcfa: PRICING_PLANS.free.monthlyPriceFcfa,
     tagline: 'Je crée gratuitement.',
     audience: ['Particuliers', 'Associations', 'Petites campagnes'],
     features: [],
   },
   creator: {
     id: 'creator',
-    name: 'Creator',
-    priceFcfa: 4900,
+    name: 'Créateur',
+    priceFcfa: PRICING_PLANS.creator.monthlyPriceFcfa,
     tagline: 'Je paie un abonnement pour avoir les outils professionnels.',
     audience: [
       'Agences de communication',
@@ -82,12 +84,12 @@ export const PLANS: Record<PlanId, Plan> = {
       'PME et petites marques',
     ],
     features: CREATOR_FEATURES,
-    highlight: true,
+    highlight: false,
   },
   organization: {
     id: 'organization',
-    name: 'Organisation',
-    priceFcfa: 19900,
+    name: 'Organisations & ONG',
+    priceFcfa: PRICING_PLANS.organization.monthlyPriceFcfa,
     tagline: 'Je paie un abonnement pour gérer mes campagnes et mon équipe.',
     audience: [
       'ONG',
@@ -98,6 +100,7 @@ export const PLANS: Record<PlanId, Plan> = {
       'Grandes campagnes',
     ],
     features: ORGANIZATION_FEATURES,
+    highlight: true,
   },
 };
 
@@ -174,9 +177,9 @@ export const FEATURE_LABELS: Record<PlanFeature, string> = {
   support_priority: 'Support prioritaire',
 };
 
-/** `4900` → `« 4 900 FCFA »` (espace insécable fine, convention française). */
+/** Formate un montant en FCFA avec espace insécable fine (ex: 3 000 FCFA). */
 export function formatFcfa(amount: number): string {
-  return `${new Intl.NumberFormat('fr-FR').format(amount).replace(/\u202f|\u00a0/g, ' ')} FCFA`;
+  return formatFcfaPrice(amount);
 }
 
 export function formatPlanPrice(plan: Plan): string {
@@ -217,7 +220,27 @@ export interface ComparisonRow {
 }
 
 export const COMPARISON: ComparisonRow[] = [
-  { group: 'Général', label: 'Prix mensuel', free: '0 FCFA', creator: '4 900 FCFA', organization: '19 900 FCFA' },
+  {
+    group: 'Général',
+    label: 'Prix mensuel',
+    free: '0 FCFA',
+    creator: formatFcfa(PRICING_PLANS.creator.monthlyPriceFcfa),
+    organization: formatFcfa(PRICING_PLANS.organization.monthlyPriceFcfa),
+  },
+  {
+    group: 'Général',
+    label: 'Distributions incluses / mois',
+    free: '25 à vie',
+    creator: '100 / mois',
+    organization: '1 000 / mois',
+  },
+  {
+    group: 'Général',
+    label: 'Coût par participant inclus',
+    free: '—',
+    creator: '30 FCFA',
+    organization: '5 FCFA',
+  },
   { group: 'Général', label: 'Campagnes', free: true, creator: true, organization: true },
   { group: 'Général', label: 'Galerie', free: true, creator: true, organization: true },
   { group: 'Général', label: 'Utiliser une campagne existante', free: true, creator: true, organization: true },

@@ -22,7 +22,7 @@ import { LayersPanel } from '@/components/editor/layers-panel';
 import { applyTemplate, type FrameTemplate } from '@/lib/templates';
 import { cn } from '@/lib/cn';
 import { ratioSpec } from '@/lib/ratios';
-import { DEFAULT_LINE_HEIGHT, effectiveMotion, makeLayerId } from '@/lib/descriptor';
+import { DEFAULT_LINE_HEIGHT, effectiveMotion, makeLayerId, nextZ } from '@/lib/descriptor';
 import { applyCurve, createTextObject } from '@/lib/fabric-text';
 import { applyShapePaint, createShapeObject } from '@/lib/fabric-shape';
 import { shapeSpec } from '@/lib/shapes';
@@ -184,8 +184,54 @@ export function FrameEditor({
   const [error, setError] = useState<string | null>(null);
   const [guides, setGuides] = useState<{ v: boolean; h: boolean }>({ v: false, h: false });
   const [locked, setLocked] = useState(true);
+  /**
+   * Identifiant du texte en cours d'édition **sur le canvas**.
+   *
+   * Ce n'est pas un réglage du descripteur : c'est un état d'interface, comme
+   * la sélection. Il sert à faire apparaître le bouton « Valider », qui referme
+   * l'édition — sans lui, un texte édité à la souris ne pourrait se terminer
+   * qu'en cliquant ailleurs, ce qui n'est dit nulle part.
+   */
+  const [editingTextId, setEditingTextId] = useState<string | null>(null);
   /** Modèles : ouverts depuis le panneau « Mon cadre ». */
   
+
+  /**
+   * Ouvre l'édition d'un texte directement sur le visuel.
+   *
+   * `enterEditing()` de Fabric exige que l'objet soit l'élément actif **et**
+   * visible : on le sélectionne, on sort du panneau le temps de la frappe, puis
+   * on ouvre l'édition. Le `requestAnimationFrame` laisse passer le rendu du
+   * calque qui vient d'être ajouté — sans lui, Fabric tenterait d'entrer en
+   * édition sur un objet pas encore peint, et la saisie ne prendrait pas.
+   */
+  const focusTextForEditing = useCallback((id: string) => {
+    requestAnimationFrame(() => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const object = (canvas.getObjects() as TaggedObject[]).find((obj) => obj.layerId === id);
+      if (!object || object.layerKind !== 'text' || object.visible === false) return;
+      canvas.setActiveObject(object);
+      (object as unknown as { enterEditing: () => void }).enterEditing();
+      // Le curseur doit clignoter au bon endroit : on sélectionne le contenu
+      // existant pour qu'une frappe le remplace, comme dans un champ de saisie.
+      (object as unknown as { selectAll?: () => void }).selectAll?.();
+      canvas.requestRenderAll();
+      setEditingTextId(id);
+    });
+  }, []);
+
+  /** Referme l'édition en cours — le geste du bouton « Valider ». */
+  const commitTextEditing = useCallback(() => {
+    const canvas = canvasRef.current;
+    const active = canvas?.getActiveObject() as TaggedObject | undefined;
+    if (canvas && active) {
+      const typing = active as unknown as { isEditing?: boolean; exitEditing?: () => void };
+      if (typing.isEditing) typing.exitEditing?.();
+    }
+    setEditingTextId(null);
+    canvas?.requestRenderAll();
+  }, []);
 
   /* ---------------- Émission vers le parent ---------------- */
   const emitFromCanvas = useCallback(
@@ -470,7 +516,20 @@ export function FrameEditor({
       });
       canvas.on('selection:cleared', () => {
         setSelectedId(null);
+        // La sélection tombe (clic ailleurs, Échap) : l'édition est terminée.
+        setEditingTextId(null);
         setGuides({ v: false, h: false });
+      });
+      /*
+       * Fabric signale lui-même l'entrée et la sortie d'édition (double-clic,
+       * clic ailleurs, Échap). On s'y abonne plutôt que de deviner : c'est ce
+       * qui garde le bouton « Valider » aligné sur l'état réel du canvas.
+       */
+      canvas.on('text:editing:entered', (event) => {
+        setEditingTextId((event.target as TaggedObject | undefined)?.layerId ?? null);
+      });
+      canvas.on('text:editing:exited', () => {
+        setEditingTextId(null);
       });
 
       /* ---- Aimantation centrale : les seules lignes du produit ---- */
@@ -771,7 +830,7 @@ export function FrameEditor({
         h,
         x: Math.round((spec.width - w) / 2),
         y: Math.round((spec.height - h) / 2),
-        z: descriptor.layers.length * 10 + 10,
+        z: nextZ(descriptor.layers),
         label: file.name,
       });
 
@@ -786,6 +845,15 @@ export function FrameEditor({
     }
   }
 
+  /**
+   * Ajoute un calque **au-dessus de tout le cadre**.
+   *
+   * `nextZ()` est la seule autorité du « prochain z » : il lit le sommet réel
+   * du descripteur, là où l'ancien calcul `layers.length * 10 + 10` produisait
+   * un `z` déjà occupé après une suppression. Un calque ajouté — texte, image
+   * ou forme — passe donc devant, sans exception : c'est la règle « le dernier
+   * ajouté est devant », et pour un texte c'est une exigence absolue.
+   */
   async function addText() {
     if (layerLimitReached) {
       setError(`La formule Free limite à ${maxLayers} éléments par cadre.`);
@@ -794,7 +862,7 @@ export function FrameEditor({
     const { makeTextLayer } = await import('@/lib/descriptor');
     const layer = makeTextLayer('Votre texte', descriptor.ratio, {
       size: Math.round(spec.width * 0.09),
-      z: descriptor.layers.length * 10 + 10,
+      z: nextZ(descriptor.layers),
     });
     const next = { ...descriptor, layers: [...descriptor.layers, layer] };
     await buildObjects(next);
@@ -802,6 +870,9 @@ export function FrameEditor({
     setSelectedId(layer.id);
     setTab('cadre');
     onChange(next);
+    // Le texte s'ouvre directement à l'édition, sur le visuel : l'utilisateur
+    // écrit sans double-clic préalable.
+    focusTextForEditing(layer.id);
   }
 
   /**
@@ -818,7 +889,7 @@ export function FrameEditor({
     }
     const { makeShapeLayer } = await import('@/lib/descriptor');
     const layer = makeShapeLayer(kind, descriptor.ratio, {
-      z: descriptor.layers.length * 10 + 10,
+      z: nextZ(descriptor.layers),
     });
     const next = { ...descriptor, layers: [...descriptor.layers, layer] };
     await buildObjects(next);
@@ -1081,10 +1152,21 @@ export function FrameEditor({
         visible: undefined,
         locked: undefined,
         /*
-         * Juste au-dessus de l'original, pour que le clone se voie. L'original
-         * reste dessous : un duplicata displaced, pas une substitution.
+         * Le clone passe **devant** : c'est la seule place que le descripteur
+         * peut lui garantir.
+         *
+         * L'ancien `source.z + 1` voulait dire « juste au-dessus de l'original »,
+         * mais ce `z` était de toute façon écrasé au premier `emitFromCanvas`,
+         * qui le recalcule depuis l'**index** dans le tableau Fabric. Or le clone
+         * est ajouté en fin de tableau : il finissait donc au sommet, pas au-dessus
+         * de sa source — le clone d'un calque du fond passait devant le texte.
+         * Pire, `source.z + 1` pouvait égaler un `z` voisin (10, 11, 20…) et
+         * produire un `z` dupliqué, exactement ce que `nextZ` a été écrit pour
+         * éviter.
+         *
+         * `nextZ` est la seule autorité du « prochain z » : il lit le sommet réel.
          */
-        z: source.z + 1,
+        z: nextZ(descriptorRef.current.layers),
       };
 
       const next: Descriptor = {
@@ -1567,6 +1649,22 @@ export function FrameEditor({
                 />
               )}
             </div>
+
+            {/*
+              Barre « Valider » : elle n'existe que pendant l'édition d'un texte.
+              Le geste est explicite plutôt qu'implicite (cliquer ailleurs) ;
+              c'est aussi ce qui termine l'édition au doigt, sans clavier.
+            */}
+            {editingTextId && !preview && (
+              <div className="absolute left-1/2 top-2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-pill bg-ink/95 px-2 py-1 shadow-lg backdrop-blur">
+                <span className="pl-2 text-[12px] font-medium text-white/80">
+                  Modification du texte
+                </span>
+                <Button size="sm" onClick={commitTextEditing}>
+                  Valider
+                </Button>
+              </div>
+            )}
 
             {/* Format courant, en bas à droite : langage naturel, jamais une
                 résolution technique (§12 du design system). */}

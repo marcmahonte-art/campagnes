@@ -115,58 +115,45 @@ export function privateLinkBlockedMessage(): string {
   return "Ce lien a atteint sa limite d'utilisations. Contactez la personne qui vous l'a envoyé.";
 }
 
-/** Adresse de contact pour l'extension. */
+/** Adresse de contact commerciale — devis au-delà de la grille des paliers. */
 export const QUOTA_CONTACT_EMAIL = 'bonjour@campagnes.app';
 
 /**
- * Demande d'extension, pré-remplie.
+ * Demande de devis, pré-remplie — pour ce qui sort de l'échelle des paliers.
  *
- * Même mécanisme que `quoteHref()` dans `lib/distribution.ts` : tant qu'aucun
- * prestataire de paiement n'est branché, l'extension s'obtient par un contact.
- * Un bouton « payer » qui ne débite rien serait un mensonge.
+ * L'extension **dans la grille** passe désormais par un paiement Mobile Money en
+ * ligne (`TopupButton` → `DISTRIBUTION_PACKS`). Le revirement est assumé : tant
+ * qu'aucun prestataire n'était branché, un bouton « payer » qui ne débitait rien
+ * aurait été un mensonge ; maintenant que pawaPay répond, c'est le `mailto:` qui
+ * le serait.
  *
- * `tier` est optionnel : sans lui, la demande reste ouverte et le volume est
- * proposé au devis. Avec lui, le volume et le prix sont annoncés, ce qui évite
- * un aller-retour de correspondance.
+ * Ce helper ne survit donc que pour le **sur devis** : au-dessus de
+ * `QUOTE_THRESHOLD`, ou pour un pack dont le prix n'est pas publié
+ * (`pack_custom`, 10 000 et plus). Là, un contact humain est la seule voie
+ * honnête.
  */
-export function topupHref(params: {
+export function topupQuoteHref(params: {
   campaignName: string;
   campaignSlug: string;
   used: number;
   quota: number;
-  tier?: TopupTier;
 }): string {
-  const { campaignName, campaignSlug, used, quota, tier } = params;
+  const { campaignName, campaignSlug, used, quota } = params;
   const rest = remaining(used, quota);
 
-  // La campagne sort-elle de l'échelle affichable ? Le message change alors de
-  // nature : ce n'est plus un palier, c'est un devis.
-  const beyondQuote = quota >= QUOTE_THRESHOLD;
-
-  const subject = beyondQuote
-    ? `Extension de campagne sur devis — ${campaignName}`
-    : `Extension de campagne — ${campaignName}`;
+  const subject = `Extension de campagne sur devis — ${campaignName}`;
 
   const lines = [
     'Bonjour,',
     '',
-    beyondQuote
-      ? `La campagne « ${campaignName} » (${campaignSlug}) dépasse le volume de la grille : ${used} téléchargements, ${rest} restant.`
-      : `La campagne « ${campaignName} » (${campaignSlug}) a atteint son quota : ${used} téléchargements sur ${quota}.`,
+    `La campagne « ${campaignName} » (${campaignSlug}) dépasse le volume de la grille : ${used} téléchargements, ${rest} restant.`,
+    '',
+    'Volume souhaité : ________ téléchargements.',
+    '',
+    "Nom de l'organisation : ",
+    'Lien de la campagne : ',
     '',
   ];
-
-  if (tier) {
-    lines.push(
-      `Je souhaite la prolonger de ${tier.downloads} téléchargements (${formatFcfaTier(tier.priceFcfa)}).`,
-    );
-  } else {
-    lines.push(
-      'Volume souhaité : ________ téléchargements (100 pour 2 500 FCFA, 500 pour 5 000, 1 000 pour 7 500, 5 000 pour 20 000).',
-    );
-  }
-
-  lines.push("Nom de l'organisation : ", 'Lien de la campagne : ', '');
 
   return `mailto:${QUOTA_CONTACT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(lines.join('\n'))}`;
 }

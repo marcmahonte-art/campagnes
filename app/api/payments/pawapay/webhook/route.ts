@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { isSupabaseConfigured } from '@/lib/backend/config';
+import { confirmPayment } from '@/lib/pawapay-confirm';
 
 interface PawaPayWebhookPayload {
   depositId: string;
@@ -53,42 +54,33 @@ export async function POST(request: NextRequest) {
       console.log(`[PawaPay Webhook] Traitement depositId=${depositId}, status=${status}`);
 
       if (status === 'COMPLETED') {
-        // Tentative d'exécution de la procédure atomique de la migration 0017
-        const { error: rpcError } = await admin.rpc('complete_payment_and_activate_plan', {
-          p_deposit_id: depositId,
-          p_provider: provider,
-          p_phone: phoneNumber,
+        /*
+         * Confirmation via le point unique (`lib/pawapay-confirm.ts`) : il
+         * choisit entre crédit de quota de campagne et activation de formule
+         * selon la ligne `payments`. Les deux fonctions SQL sont idempotentes,
+         * donc un webhook rejoué par pawaPay ne crédite jamais deux fois.
+         */
+        const result = await confirmPayment(admin, {
+          depositId,
+          provider,
+          phone: phoneNumber,
         });
 
-        if (rpcError) {
-          console.warn('[PawaPay Webhook] RPC complete_payment_and_activate_plan a échoué, repli manuel :', rpcError.message);
-
-          // Repli direct : mise à jour de la table et activation du plan
-          const { data: payment, error: fetchErr } = await admin
-            .from('payments')
-            .select('user_id, plan')
-            .eq('deposit_id', depositId)
-            .maybeSingle();
-
-          if (!fetchErr && payment) {
-            await admin
-              .from('payments')
-              .update({
-                status: 'completed',
-                provider: provider ?? undefined,
-                phone_number: phoneNumber ?? undefined,
-                updated_at: new Date().toISOString(),
-              })
-              .eq('deposit_id', depositId);
-
-            await admin.rpc('set_user_plan', {
-              p_user_id: payment.user_id,
-              p_plan: payment.plan,
-            });
-          }
+        if (!result.ok) {
+          /*
+           * On journalise sans jeter : un 5xx ferait rejouer pawaPay
+           * indéfiniment sur une erreur qui ne se résoudra pas toute seule
+           * (paiement introuvable, volume invalide). On répond 200 pour
+           * acquitter, et l'exploitant voit l'anomalie dans les logs.
+           */
+          console.warn(
+            `[PawaPay Webhook] Confirmation NON aboutie (depositId=${depositId}, nature=${result.kind}) : ${result.error}`,
+          );
+        } else {
+          console.log(
+            `[PawaPay Webhook] Succès (${result.kind}) pour depositId=${depositId}`,
+          );
         }
-
-        console.log(`[PawaPay Webhook] Succès : compte activé pour depositId=${depositId}`);
       } else if (status === 'FAILED') {
         const failureCode = item.failureReason?.failureCode ?? 'UNKNOWN_FAILURE';
         const failureMessage = item.failureReason?.failureMessage ?? 'Le paiement a échoué.';

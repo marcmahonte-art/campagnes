@@ -1,8 +1,13 @@
 /**
  * Distribution — grille tarifaire.
  *
- * La diffusion se facture par volume, sur devis. Aucun solde, aucun paiement en
- * ligne : le créateur annonce le volume visé, nous établissons le devis.
+ * La diffusion se facture **par volume**. Les paliers publiés (100 → 5 000) se
+ * règlent désormais en ligne par Mobile Money (`TopupButton` → pawaPay) ; ce qui
+ * sort de la grille — 10 000 et plus — reste **sur devis** (`quoteHref()`).
+ *
+ * Pas de solde, pas de crédit prépayé transférable : ce qui est acheté est
+ * immédiatement rattaché à une campagne (`credit_campaign_quota`, migration
+ * 0018). Un paiement ne dort jamais dans un porte-monnaie.
  *
  * Ce que la grille ne couvre PAS : le décompte. Une campagne ouvre avec un
  * quota de téléchargements, et c'est le produit qui le consomme — voir

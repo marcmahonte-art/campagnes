@@ -21,6 +21,8 @@ import { InlineError, Spinner } from '@/components/ui/feedback';
 import { FrameEditor } from '@/components/frame/frame-editor';
 import { useHistory } from '@/components/editor/use-history';
 import { DescriptorViewer } from '@/components/campaign/descriptor-viewer';
+import { TopupButton } from '@/components/campaign/topup-button';
+import { TopupReturnNotice } from '@/components/campaign/topup-return-notice';
 import { backend } from '@/lib/backend';
 import type { DistributionLink } from '@/lib/backend/types';
 import { distributionService } from '@/lib/distribution-service';
@@ -34,7 +36,6 @@ import {
   formatFcfaTier,
   remaining,
   shouldInviteToTopup,
-  topupHref,
 } from '@/lib/quota';
 import { maxLayers } from '@/lib/plans';
 import { isValidSlug } from '@/lib/slug';
@@ -574,6 +575,12 @@ export default function CampaignEditorPage() {
 
         <QuotaMeter used={campaign.participants_used} quota={campaign.participants_granted} />
 
+        {/*
+          Réconciliation du retour pawaPay (`?depositId=…`) — montée UNE fois,
+          pas dans chaque bouton : l'écran en affiche quatre.
+        */}
+        <TopupReturnNotice campaignName={campaign.name} />
+
         {blocked || shouldInviteToTopup(campaign.participants_used, campaign.participants_granted) ? (
           <div className="flex flex-col gap-4 rounded-md border border-gray-200 bg-gray-50 p-4">
             <p className="text-[13px] leading-relaxed text-gray-600">
@@ -602,19 +609,17 @@ export default function CampaignEditorPage() {
 
             {/*
               Les paliers reprennent la grille de `/tarifs` : mêmes volumes,
-              mêmes prix. Un créateur qui a lu               l'une reconnaît l'autre — il n'y a pas deux grilles concurrentes.
+              mêmes prix, et le même catalogue (`DISTRIBUTION_PACKS`) des deux
+              côtés. Un créateur qui a lu l'une reconnaît l'autre — il n'y a pas
+              deux grilles concurrentes.
             */}
             <div className="grid gap-2 sm:grid-cols-2">
               {TOPUP_TIERS.map((tier) => (
-                <a
+                <TopupButton
                   key={tier.downloads}
-                  href={topupHref({
-                    campaignName: campaign.name,
-                    campaignSlug: campaign.slug,
-                    used: campaign.participants_used,
-                    quota: campaign.participants_granted,
-                    tier,
-                  })}
+                  campaignId={campaign.id}
+                  campaignName={campaign.name}
+                  tier={tier}
                   className={
                     tier === DEFAULT_TIER
                       ? 'flex items-center justify-between gap-3 rounded-md border border-transparent bg-ink px-3 py-2.5 text-[13px] font-medium text-white transition-opacity hover:opacity-90'
@@ -627,20 +632,22 @@ export default function CampaignEditorPage() {
                   <span className={tier === DEFAULT_TIER ? 'text-white/80' : 'text-gray-500'}>
                     {formatFcfaTier(tier.priceFcfa)}
                   </span>
-                </a>
+                </TopupButton>
               ))}
             </div>
 
             <p className="text-[12px] leading-relaxed text-gray-500">
-              L’extension s’obtient par demande de devis — aucun paiement en ligne pour l’instant.
-              Au-delà de {new Intl.NumberFormat('fr-FR').format(QUOTE_THRESHOLD)} téléchargements,
-              c’est traité directement au devis.
+              Paiement par Mobile Money, traité par pawaPay. Le quota est crédité dès la
+              confirmation du paiement. Au-delà de{' '}
+              {new Intl.NumberFormat('fr-FR').format(QUOTE_THRESHOLD)} téléchargements, c’est
+              traité directement au devis.
             </p>
           </div>
         ) : (
           <p className="text-[12px] leading-relaxed text-gray-500">
             Chaque téléchargement de votre visuel est compté. À {campaign.participants_granted}, le
-            lien se bloque et vous pourrez le prolonger sur devis.
+            lien se bloque — vous pourrez alors le prolonger par Mobile Money, ou au devis au-delà de{' '}
+            {new Intl.NumberFormat('fr-FR').format(QUOTE_THRESHOLD)} téléchargements.
           </p>
         )}
       </section>

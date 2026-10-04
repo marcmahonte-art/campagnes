@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { isSupabaseConfigured } from '@/lib/backend/config';
 import { checkDepositStatus, isPawaPayConfigured } from '@/lib/pawapay';
+import { confirmPayment } from '@/lib/pawapay-confirm';
 
 export async function GET(request: NextRequest) {
   try {
@@ -28,7 +29,7 @@ export async function GET(request: NextRequest) {
     // 1. Consultation en base de données locale
     const { data: payment, error: dbError } = await admin
       .from('payments')
-      .select('deposit_id, user_id, plan, amount, currency, status, failure_code, failure_message')
+      .select('deposit_id, user_id, plan, campaign_id, amount, currency, status, failure_code, failure_message')
       .eq('deposit_id', depositId)
       .maybeSingle();
 
@@ -50,6 +51,7 @@ export async function GET(request: NextRequest) {
         depositId,
         status: payment.status,
         plan: payment.plan,
+        campaignId: payment.campaign_id,
         failureCode: payment.failure_code,
         failureMessage: payment.failure_message,
       });
@@ -61,17 +63,24 @@ export async function GET(request: NextRequest) {
         const remoteStatus = await checkDepositStatus(depositId);
 
         if (remoteStatus && remoteStatus.status === 'COMPLETED') {
-          // Activer le compte
-          await admin.rpc('complete_payment_and_activate_plan', {
-            p_deposit_id: depositId,
-            p_provider: remoteStatus.payer?.accountDetails?.provider ?? null,
-            p_phone: remoteStatus.payer?.accountDetails?.phoneNumber ?? null,
+          /*
+           * Même point unique que le webhook : il décide entre crédit de quota
+           * de campagne et activation de formule, et reste idempotent. Sans
+           * cela, un webhook déjà passé puis un `/check` créditeraient deux
+           * fois la campagne.
+           */
+          const result = await confirmPayment(admin, {
+            depositId,
+            provider: remoteStatus.payer?.accountDetails?.provider ?? null,
+            phone: remoteStatus.payer?.accountDetails?.phoneNumber ?? null,
           });
 
           return NextResponse.json({
             depositId,
-            status: 'completed',
+            status: result.ok ? 'completed' : payment.status,
             plan: payment.plan,
+            campaignId: payment.campaign_id,
+            ...(result.ok ? {} : { error: result.error }),
           });
         } else if (remoteStatus && remoteStatus.status === 'FAILED') {
           const failureCode = remoteStatus.failureReason?.failureCode ?? 'FAILED';
@@ -103,6 +112,7 @@ export async function GET(request: NextRequest) {
       depositId,
       status: payment.status,
       plan: payment.plan,
+      campaignId: payment.campaign_id,
     });
   } catch (err: unknown) {
     console.error('[PawaPay Check] Erreur :', err);

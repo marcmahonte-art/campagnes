@@ -141,8 +141,8 @@ ok(
 );
 
 ok(
-  'la formule payante affiche « 4 900 FCFA / mois »',
-  PLANS.creator.priceFcfa === 4900,
+  'la formule payante affiche « 3 000 FCFA / mois »',
+  PLANS.creator.priceFcfa === 3000,
   `réel = ${PLANS.creator.priceFcfa}`,
 );
 

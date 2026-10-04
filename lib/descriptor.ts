@@ -74,8 +74,21 @@ export function withMotion(descriptor: Descriptor, motion: MotionPlan | null): D
   return { ...descriptor, motion };
 }
 
+/**
+ * Le `z` du prochain calque ajouté : **strictement au-dessus du sommet**.
+ *
+ * C'est le seul calcul autorisé pour poser un nouveau calque devant. Il lit le
+ * `z` **maximal** du cadre, jamais son nombre de calques : après une
+ * suppression, `layers.length` retombe et le calcul `length * 10 + 10` rend un
+ * `z` déjà occupé — le nouveau calque partage alors sa place avec un ancien, et
+ * le moindre rejeu d'ordre (emit → reconstruction) peut les inverser.
+ *
+ * La constante `10` garde la lisibilité du descripteur (10, 20, 30…) ; la
+ * garantie, elle, est l'inégalité stricte : `nextZ > max(z)`.
+ */
 export function nextZ(layers: Layer[]): number {
-  return layers.reduce((max, l) => Math.max(max, l.z ?? 0), 0) + 10;
+  const top = layers.reduce((max, l) => Math.max(max, l.z ?? 0), 0);
+  return top + 10;
 }
 
 /* ------------------------------------------------------------------ */
@@ -183,7 +196,17 @@ export function makeImageLayer(
     w: Math.round(w),
     h: Math.round(h),
     rotation: opts.rotation ?? 0,
-    z: opts.z ?? 10,
+    /*
+     * Le `z` par défaut est l'index d'ajout, pas un nombre fixe.
+     *
+     * Un défaut codé en dur est un piège : deux fabriques qui en posent un
+     * différent (l'image 10, le texte 20, la forme 30) créent un ordre
+     * d'empilement **implicite** entre types, qu'aucune règle ne justifie — et
+     * qui contredit la règle « le dernier ajouté est devant ». `nextZ` laisse
+     * l'appelant qui connaît le cadre poser le sommet réel ; un appelant qui
+     * l'ignore obtient un calque neutre, jamais une position qui écrase autrui.
+     */
+    z: opts.z ?? 0,
     opacity: opts.opacity ?? 1,
   };
 }
@@ -214,7 +237,13 @@ export function makeTextLayer(
     w,
     h,
     rotation: opts.rotation ?? 0,
-    z: opts.z ?? 20,
+    /*
+     * Voir `makeImageLayer` : le `z` par défaut n'est pas un nombre fixe. Un
+     * texte **ajouté** doit être au-dessus de tout — c'est l'appelant qui le
+     * pose via `nextZ(layers)`, et le défaut neutre évite qu'un texte oublié
+     * écrase silencieusement un calque existant.
+     */
+    z: opts.z ?? 0,
     opacity: opts.opacity ?? 1,
   };
 }
@@ -259,7 +288,13 @@ export function makeShapeLayer(
     w: Math.round(w),
     h: Math.round(h),
     rotation: opts.rotation ?? 0,
-    z: opts.z ?? 30,
+    /*
+     * Voir `makeImageLayer`. En particulier : le défaut d'une forme ne doit
+     * **jamais** dépasser celui d'un texte. C'était le cas (forme 30, texte 20),
+     * si bien qu'une forme posée sans `z` explicite passait devant les textes —
+     * exactement ce que la règle « les textes au-dessus » interdit.
+     */
+    z: opts.z ?? 0,
     opacity: opts.opacity ?? 1,
   };
 }

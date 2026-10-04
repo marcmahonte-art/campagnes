@@ -10,12 +10,14 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "check:shapes": "tsc -p tools/shape-check/tsconfig.json && node tools/shape-check/run.js",
-    "check:history": "tsc -p tools/history-check/tsconfig.json && node tools/history-check/build/tools/history-check/check-history.js",
+    "check:text": "tsc -p tools/text-check/tsconfig.json && node tools/text-check/build/tools/text-check/check-text.js",    "check:history": "tsc -p tools/history-check/tsconfig.json && node tools/history-check/build/tools/history-check/check-history.js",
     "check:watermark": "tsc -p tools/watermark-check/tsconfig.json && node tools/watermark-check/build/tools/watermark-check/check-watermark.js",
     "check:templates": "tsc -p tools/templates-check/tsconfig.json && node tools/templates-check/build/tools/templates-check/check-templates.js",
     "check:storage": "node tools/storage-check/listing-lockdown-check.js",
     "check:distribution": "node tools/distribution-check/distribution-check.js",
-    "check:distribution:contract": "tsc -p tools/distribution-check/tsconfig.json && node tools/distribution-check/build/tools/distribution-check/check-contract.js"
+    "check:distribution:contract": "tsc -p tools/distribution-check/tsconfig.json && node tools/distribution-check/build/tools/distribution-check/check-contract.js",
+    "check:topup": "tsc -p tools/topup-check/tsconfig.json && node tools/topup-check/build/tools/topup-check/check-topup.js",
+    "check:clone": "tsc -p tools/clone-check/tsconfig.json && node tools/clone-check/build/tools/clone-check/check-clone.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.2",
@@ -25,13 +27,15 @@
     "next": "^15.5.27",
     "qrcode": "^1.5.4",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "uuid": "^14.0.2"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.0.4",
     "@types/react-dom": "^19.0.2",
+    "@types/uuid": "^10.0.0",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",

@@ -65,9 +65,11 @@ multi-utilisateurs, galerie privée, rendu serveur, modération des photos parti
 
 ## Formules
 
-| | Free | Creator | Organisation |
+| | Gratuit | Créateur | Organisations & ONG |
 |---|---|---|---|
-| Prix | 0 FCFA | 4 900 FCFA / mois | 19 900 FCFA / mois |
+| Prix | 0 FCFA | 3 000 FCFA / mois | 5 000 FCFA / mois |
+| Distributions incluses | 25 à vie | 100 / mois | 1 000 / mois |
+| Coût unitaire / participant | — | 30 FCFA | 5 FCFA |
 | Watermark | Oui | Non | Non |
 | Frame Pro · Motion · Analytics · QR · Branding | — | ✅ | ✅ |
 | Domaine · Multi-utilisateurs · Galerie privée · Rapports | — | — | ✅ |
