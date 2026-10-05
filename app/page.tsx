@@ -111,7 +111,7 @@ export default function HomePage() {
 
           <p className="mt-8 flex items-center gap-2 text-[13px] text-white/45">
             <Sparkles className="size-3.5" aria-hidden />
-            Animation assistée et export vidéo inclus dans Creator.
+            Animation assistée et export vidéo inclus dans Créateur.
           </p>
         </div>
       </section>
@@ -202,7 +202,13 @@ export default function HomePage() {
                   <ChevronRight className="size-4 text-gray-400" aria-hidden />
                 </div>
               </div>
-            </div>
+                      <div className="mt-6 text-center md:text-left">
+            <ButtonLink href="/premium" variant="primary" size="md">
+              Découvrir Premium
+              <ArrowRight className="size-4" aria-hidden />
+            </ButtonLink>
+          </div>
+          </div>
           </div>
         </div>
       </section>

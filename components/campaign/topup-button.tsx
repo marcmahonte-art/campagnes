@@ -9,7 +9,7 @@ import type { TopupTier } from '@/lib/quota';
  * Bouton d'achat d'une extension de quota — paiement Mobile Money en ligne.
  *
  * Un bouton, un palier, une action : **acheter**. Il ouvre la confirmation,
- * puis appelle la route serveur (qui seule connaît pawaPay et le jeton d'API)
+ * puis appelle la route serveur (qui seule connaît le prestataire et le jeton d'API)
  * et redirige vers la page de paiement hébergée.
  *
  * Ce que ce composant ne fait **pas** :
@@ -55,7 +55,7 @@ export function TopupButton({
         setError(data.error ?? 'L’initiation du paiement a échoué. Réessayez dans un instant.');
         return;
       }
-      // Redirection vers la page de paiement hébergée par pawaPay.
+      // Redirection vers la page de paiement hébergée (Mobile Money).
       window.location.href = data.redirectUrl;
     } catch {
       setError('Connexion impossible au service de paiement. Vérifiez votre réseau.');

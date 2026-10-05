@@ -4,8 +4,11 @@
  * Documentation officielle : https://docs.pawapay.io/v2/docs/how_to_start
  *
  * Utilise le mode Hosted Payment Page (/v2/paymentpage) pour permettre aux utilisateurs
- * de payer par Mobile Money (Orange, MTN, Moov, Wave, Airtel, etc.) dans une interface
- * optimisée, sécurisée et multi-pays.
+ * de payer par Mobile Money dans une interface optimisée et sécurisée.
+ *
+ * Marché cible : Burkina Faso — deux opérateurs, `ORANGE_BFA` et `MOOV_BFA`.
+ * La passerelle en sait d'autres, mais les annoncer ici prometrait un moyen de
+ * paiement qui ne fonctionne pas pour l'utilisateur.
  */
 
 export const PAWAPAY_BASE_URL =

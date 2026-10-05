@@ -2,24 +2,34 @@
  * Source unique de vérité pour la tarification Campagnes.
  *
  * Devise : FCFA (XOF) · Marché : UEMOA
- * Conforme à : `docs/monétisation/grille-tarifaire.md` et `docs/monétisation/monetisation-campagnes.md`
+ * Conforme à : `docs/monétisation/ui/grille-tarifaire.md`
  *
- * Règle N3 : Aucun montant en dur ne doit exister dans un composant.
+ * Règle N3 : Aucun montant ne doit exister en dur dans un composant.
  * Règle N5 : Aucune fonctionnalité non développée n'est affichée comme disponible.
+ *
+ * Les listes `features` ci-dessous ont été passées au crible de N5 (phase U1) :
+ * chaque ligne renvoie à du code réellement livré. Ce qui n'existe pas encore
+ * (domaine personnalisé, galerie privée, rapports PDF, multi-utilisateurs,
+ * export haute définition, support prioritaire) n'apparaît QUE dans le bloc
+ * « Sur devis » de la page, jamais dans une carte.
  */
 
 export type BillingDuration = '1m' | '6m' | '12m';
 
 export interface PlanPricingPeriod {
-  /** Montant total prépayé pour la période en FCFA */
+  /** Montant total prépayé pour la période en FCFA. */
   totalFcfa: number;
-  /** Montant total barré au prorata mensuel simple (mensuel × mois) */
+  /** Total au prorata mensuel simple (mensuel × mois) — le prix barré. */
   strikethroughTotalFcfa?: number;
-  /** Équivalent mensuel pour l'affichage */
+  /** Équivalent mensuel, affiché en petit sous le total. */
   monthlyEquivalentFcfa: number;
-  /** Argument commercial explicite (ex: « 1 mois offert », « 3 mois offerts ») */
+  /** Argument commercial (ex: « 1 mois offert »), jamais un pourcentage. */
   savingsLabel?: string;
-  /** Pourcentage de réduction (≤ 25 %) */
+  /**
+   * Réduction en pourcentage, **plafonnée à 25 %** par la grille.
+   * Valeur informative : l'interface n'affiche JAMAIS ce pourcentage
+   * (les acheteurs sont des ONG qui doivent justifier la dépense ligne à ligne).
+   */
   discountPercent?: number;
 }
 
@@ -28,14 +38,20 @@ export interface PricingPlanConfig {
   name: string;
   tagline: string;
   monthlyPriceFcfa: number;
-  /** Distributions mensuelles incluses (25 à vie pour Gratuit) */
+  /** Distributions incluses par mois. */
   includedDistributions: number;
+  /** Le quota gratuit est à vie, pas mensuel. */
   isLifetimeQuota?: boolean;
-  /** Coût indicatif par participant inclus */
+  /** « 100 distributions incluses par mois » / « 25 exports à vie ». */
+  quotaLabel: string;
+  /** Coût par participant inclus — l'argument le plus fort de la page. */
   costPerParticipantFcfa?: number;
+  /** « soit 30 FCFA par participant ». */
   costPerParticipantLabel?: string;
-  /** Périodes de facturation (prépaiements) */
+  /** Prérequis de l'export sans filigrane, pour la matrice. */
+  watermarkLabel: string;
   periods: Record<BillingDuration, PlanPricingPeriod>;
+  /** Uniquement des fonctionnalités développées (N5). */
   features: string[];
   highlight?: boolean;
   highlightLabel?: string;
@@ -50,41 +66,44 @@ export const PRICING_PERIODS: {
 }[] = [
   { id: '1m', label: '1 mois', months: 1 },
   { id: '6m', label: '6 mois', months: 6, badge: '1 mois offert' },
-  { id: '12m', label: '1 an (12 mois)', months: 12, badge: '3 mois offerts' },
+  { id: '12m', label: '12 mois', months: 12, badge: '3 mois offerts' },
 ];
 
 export const PRICING_PLANS: Record<'free' | 'creator' | 'organization', PricingPlanConfig> = {
   free: {
     id: 'free',
     name: 'Gratuit',
-    tagline: 'Découverte — pour tester et lancer ses premières campagnes sans frais.',
+    tagline: 'Pour tester et lancer ses premières campagnes, sans frais.',
     monthlyPriceFcfa: 0,
     includedDistributions: 25,
     isLifetimeQuota: true,
+    quotaLabel: '25 exports à vie',
+    watermarkLabel: 'Filigrane Campagnes',
     periods: {
       '1m': { totalFcfa: 0, monthlyEquivalentFcfa: 0 },
       '6m': { totalFcfa: 0, monthlyEquivalentFcfa: 0 },
       '12m': { totalFcfa: 0, monthlyEquivalentFcfa: 0 },
     },
     features: [
-      'Création et hébergement de campagnes',
+      'Création de campagnes et hébergement',
       'Accès à la galerie publique',
-      'Éditeur photo + détourage & filtres',
-      'Aperçu en direct',
-      'Partage sur WhatsApp & réseaux',
-      '25 exports inclus à vie (filigranés)',
-      'Achat de packs de distribution permanent',
+      'Éditeur photo + arrière-plan',
+      'Prévisualisation avant publication',
+      'Partage WhatsApp et réseaux',
+      'Achat de crédits de distribution',
     ],
     ctaText: 'Commencer gratuitement',
   },
   creator: {
     id: 'creator',
     name: 'Créateur',
-    tagline: 'Pour graphistes, agences, créateurs et organisateurs d’événements.',
+    tagline: 'Pour les indépendants, les agences et les créateurs.',
     monthlyPriceFcfa: 3000,
     includedDistributions: 100,
+    quotaLabel: '100 distributions incluses par mois',
     costPerParticipantFcfa: 30,
-    costPerParticipantLabel: '100 distributions incluses — soit 30 FCFA par participant',
+    costPerParticipantLabel: 'soit 30 FCFA par participant',
+    watermarkLabel: 'Sans filigrane — tant que le quota n’est pas épuisé',
     periods: {
       '1m': {
         totalFcfa: 3000,
@@ -106,24 +125,24 @@ export const PRICING_PLANS: Record<'free' | 'creator' | 'organization', PricingP
       },
     },
     features: [
-      '100 distributions incluses / mois (sans filigrane)',
       'Exports sans filigrane Campagnes',
-      'Cadres avancés & calques multiples (Frame Pro)',
+      'Cadres avancés et calques multiples (Frame Pro)',
       'Bibliothèque de modèles prêts à l’emploi',
-      'Statistiques de participation de base',
-      'Gestion et personnalisation des liens de campagne',
-      'Animation IA et formats d’affichage',
+      'Animation des cadres assistée par l’IA',
+      'Statistiques de participation',
     ],
-    ctaText: 'Choisir Créateur',
+    ctaText: 'Payer avec Mobile Money',
   },
   organization: {
     id: 'organization',
     name: 'Organisations & ONG',
-    tagline: 'Pour ONG, associations, institutions, marques et campagnes à fort impact.',
+    tagline: 'Pour les ONG, associations, institutions et marques.',
     monthlyPriceFcfa: 5000,
     includedDistributions: 1000,
+    quotaLabel: '1 000 distributions incluses par mois',
     costPerParticipantFcfa: 5,
-    costPerParticipantLabel: '1 000 distributions incluses — soit 5 FCFA par participant',
+    costPerParticipantLabel: 'soit 5 FCFA par participant',
+    watermarkLabel: 'Sans filigrane — tant que le quota n’est pas épuisé',
     highlight: true,
     highlightLabel: 'Offre recommandée',
     periods: {
@@ -147,21 +166,24 @@ export const PRICING_PLANS: Record<'free' | 'creator' | 'organization', PricingP
       },
     },
     features: [
-      '1 000 distributions incluses / mois (sans filigrane)',
-      'Coût imbattable : 5 FCFA par participant',
-      'Toutes les fonctionnalités Créateur incluses',
-      'Gestion multi-campagnes en simultané',
-      'Statistiques avancées & suivi de diffusion',
-      'Export haute définition sans perte',
-      'Support prioritaire dédié',
+      'Exports sans filigrane Campagnes',
+      'Cadres avancés et calques multiples (Frame Pro)',
+      'Bibliothèque de modèles prêts à l’emploi',
+      'Animation des cadres assistée par l’IA',
+      'Statistiques de participation',
     ],
-    ctaText: 'Choisir Organisations & ONG',
+    ctaText: 'Payer avec Mobile Money',
   },
 };
 
 /**
- * 2. Packs de crédits de participation (distribution).
- * Les crédits achetés n'expirent JAMAIS et sont cumulables.
+ * 2. Crédits de participation (distribution).
+ *
+ * Les crédits achetés **n'expirent jamais** et se reportent d'une campagne à
+ * l'autre ; le quota inclus, lui, est mensuel. C'est la seule différence entre
+ * les deux, et elle suffit à rendre les crédits rationnels face à l'abonnement.
+ *
+ * Les durées 1 / 6 / 12 mois ne s'appliquent pas ici : abonnements uniquement.
  */
 export interface DistributionPack {
   id: string;
@@ -180,7 +202,7 @@ export const DISTRIBUTION_PACKS: DistributionPack[] = [
     distributions: 100,
     priceFcfa: 2500,
     unitPriceFcfa: 25,
-    tagline: 'Campagne de club, classe ou cercle restreint.',
+    tagline: 'Campagne de club, de classe ou de cercle restreint.',
   },
   {
     id: 'pack_500',
@@ -188,8 +210,7 @@ export const DISTRIBUTION_PACKS: DistributionPack[] = [
     distributions: 500,
     priceFcfa: 5000,
     unitPriceFcfa: 10,
-    tagline: 'Événement d’école, journée d’action locale.',
-    highlight: true,
+    tagline: 'Journée d’action locale, événement d’école.',
   },
   {
     id: 'pack_1000',
@@ -205,7 +226,7 @@ export const DISTRIBUTION_PACKS: DistributionPack[] = [
     distributions: 5000,
     priceFcfa: 20000,
     unitPriceFcfa: 4,
-    tagline: 'Campagne nationale multi-villes d’envergure.',
+    tagline: 'Campagne nationale, plusieurs villes.',
   },
   {
     id: 'pack_custom',
@@ -217,13 +238,47 @@ export const DISTRIBUTION_PACKS: DistributionPack[] = [
   },
 ];
 
+/** Palier au-delà duquel le volume sort de la grille : devis obligatoire. */
+export const DISTRIBUTION_QUOTE_THRESHOLD = 10000;
+
+/** Extrêmes de la grille, pour la phrase « de 25 à 4 FCFA par participant ». */
+export const DISTRIBUTION_UNIT_PRICE_RANGE = { minFcfa: 25, maxFcfa: 4 };
+
 /**
- * 3. Suppléments optionnels pour les packs de distribution
+ * Bandeau distribution de la page tarifs.
+ *
+ * Les paliers **ne sont pas des cartes** sur cette page : affichés côte à côte
+ * avec l'offre ONG, ils se font cannibaliser (l'abonnement ONG revient moins cher
+ * à l'unité que le pack de taille équivalente — grille §7). La grille se replie
+ * donc dans un `<details>` et l'achat se fait dans le tunnel, après le choix
+ * d'une campagne.
+ */
+export const DISTRIBUTION_BANNER = {
+  title: 'La distribution se paie à l’usage.',
+  /** Phrase unique : le partage est gratuit, seules les participations comptent. */
+  body:
+    'Le partage du lien est gratuit. Vous ne payez que les participations réellement ' +
+    'exportées — de 25 à 4 FCFA par participant selon le volume.',
+  /** La règle qui rend les crédits rationnels face à l'abonnement. */
+  rule:
+    'Les crédits achetés n’expirent jamais et se reportent d’une campagne à l’autre. ' +
+    'Le quota inclus, lui, est mensuel.',
+  gridLabel: 'Voir la grille des crédits',
+  ctaText: 'Acheter des crédits',
+  /** Une participation = un export réussi. */
+  unit: 'Une utilisation = un export réussi.',
+};
+
+/**
+ * 3. Suppléments au pack — vendus au checkout du pack, jamais par e-mail.
+ *
+ * Inutiles pour un compte Créateur ou ONG à jour : l'absence de filigrane y est
+ * déjà incluse. Ils s'adressent aux comptes Gratuit qui achètent un pack.
  */
 export const PACK_ADDONS = {
   propre: {
     name: 'Pack Propre',
-    description: 'Le filigrane Campagnes est retiré pour tous les participants.',
+    description: 'Le filigrane est retiré pour tous les participants de la campagne.',
     pricing: [
       { volume: 100, extraFcfa: 1000 },
       { volume: 500, extraFcfa: 2500 },
@@ -233,7 +288,7 @@ export const PACK_ADDONS = {
   },
   sponsor: {
     name: 'Pack Sponsor',
-    description: 'Le filigrane est remplacé par le logo de votre marque / sponsor officiel.',
+    description: 'Le filigrane est remplacé par le logo de votre marque.',
     minFloorFcfa: 50000,
     pricing: [
       { volume: 100, extraFcfa: 2000 },
@@ -244,9 +299,7 @@ export const PACK_ADDONS = {
   },
 };
 
-/**
- * 4. Micro-paiement participant (retrait de filigrane à l'unité)
- */
+/** 4. Micro-paiement participant : retrait du filigrane, sans création de compte. */
 export const PARTICIPANT_PAYMENT = {
   priceFcfa: 500,
   durationHours: 24,
@@ -255,19 +308,82 @@ export const PARTICIPANT_PAYMENT = {
 };
 
 /**
- * Contact commercial pour le palier Entreprise (sur devis)
+ * 5. Palier entreprise — **sur devis, jamais avec un prix**.
+ *
+ * Il n'y a pas de 4ᵉ offre publiée. Ces fonctions ne sont pas développées :
+ * les annoncer comme des avantages payants serait un mensonge (N5). Elles sont
+ * vendues en direct, et c'est ce qui permet de retirer un 4ᵉ prix de la page
+ * sans perdre les prospects institutionnels.
  */
 export const ENTERPRISE_CONTACT = {
   email: 'bonjour@campagnes.app',
   subject: 'Demande de devis Entreprise / Institution',
-  body: 'Bonjour,\n\nNous souhaitons déployer Campagnes pour notre organisation.\n\nNom de l’organisation :\nNombre de participants estimés :\nBesoins spécifiques (domaine, SSO, intégrations) :\n\nMerci !',
+  body:
+    'Bonjour,\n\nNous souhaitons déployer Campagnes pour notre organisation.\n\n' +
+    'Nom de l’organisation :\nNombre de participants estimés :\n' +
+    'Besoins spécifiques (domaine, SSO, intégrations) :\n\nMerci !',
+  responseDelay: 'Réponse sous 48 heures ouvrées',
+  /** Fonctions enterprise vendues sur devis — hors grille, hors prix. */
+  features: [
+    'Domaine personnalisé',
+    'Galerie privée',
+    'Rapports PDF',
+    'Multi-utilisateurs',
+  ],
+  /** Phrase d'accroche du bloc, sans montant. */
+  lead: 'Un volume qui ne figure pas dans la grille, ou un cahier des charges spécifique ?',
+  ctaText: 'Nous contacter',
 };
 
 /**
- * Fonctions de formatage normalisées
+ * 6. Réassurance — formulation exacte.
+ *
+ * La grille est une **prépaiement sans reconduction automatique** (N12). Le
+ * texte est écrit une fois ici pour qu'aucune surface ne puisse inventer une
+ * promesse de prélèvement récurrent.
+ */
+export const PREPAYMENT_REASSURANCE = {
+  lead: 'Prépaiement sans reconduction automatique.',
+  body: 'Vos droits restent actifs jusqu’à la date d’échéance affichée sur votre facturation. Vous recevrez un rappel 7 jours avant.',
+  renewal: 'Le renouvellement vous est proposé 7 jours avant l’échéance, jamais automatiquement.',
+};
+
+/**
+ * 7. Moyens de paiement — libellés utilisateur (N10, N11).
+ *
+ * Le nom de la passerelle n'apparaît jamais dans l'interface : ces deux phrases
+ * sont les seules qui doivent être affichées.
+ */
+export const PAYMENT_METHOD_LABELS = {
+  underCta: 'Paiement par Mobile Money (Orange, Moov) · sans carte bancaire',
+  reassurance: 'Paiement par Mobile Money (Orange, Moov), sans carte bancaire.',
+  operators: ['Orange', 'Moov'] as const,
+  countryCode: 'BFA',
+  currency: 'XOF',
+  dialCode: '+226',
+  /** XOF : aucune décimale supportée par la passerelle. */
+  decimalsSupported: false,
+};
+
+/* ------------------------------------------------------------------ */
+/* Formatage (règle §7 : Intl, jamais un formatage maison)             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * « 3 000 FCFA ».
+ *
+ * `Intl.NumberFormat('fr-FR')` sépare déjà les milliers par une **espace fine
+ * insécable** (U+202F). On ne la remplace surtout pas par une espace ordinaire :
+ * c'est ce qui empêche « 3 000 FCFA » de se couper en fin de ligne sur un
+ * téléphone étroit.
  */
 export function formatFcfaPrice(amount: number): string {
-  return `${new Intl.NumberFormat('fr-FR').format(amount).replace(/\u202f|\u00a0/g, ' ')} FCFA`;
+  return `${new Intl.NumberFormat('fr-FR').format(amount)} FCFA`;
+}
+
+/** « 7,5 » — coût unitaire, qui peut être décimal même si le prix ne l'est pas. */
+export function formatUnitPrice(unitFcfa: number): string {
+  return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 1 }).format(unitFcfa);
 }
 
 export function getPlanPeriodPrice(
@@ -276,4 +392,9 @@ export function getPlanPeriodPrice(
 ): PlanPricingPeriod {
   const plan = PRICING_PLANS[planId];
   return plan.periods[duration] || plan.periods['1m'];
+}
+
+/** Nombre de mois d'une période — sert à vérifier le prorata des prix barrés. */
+export function getPeriodMonths(duration: BillingDuration): number {
+  return PRICING_PERIODS.find((p) => p.id === duration)?.months ?? 1;
 }

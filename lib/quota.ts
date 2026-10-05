@@ -1,4 +1,5 @@
 import type { CampaignQuota, ParticipationClaim } from './types';
+import { DISTRIBUTION_PACKS, type DistributionPack } from './pricing/config';
 
 /**
  * Quota de téléchargements par campagne.
@@ -32,9 +33,13 @@ export const QUOTE_THRESHOLD = 10_000;
 /**
  * Paliers d'extension.
  *
- * Ils reprennent exactement la grille `distribution_offers` : mêmes volumes,
- * mêmes prix. Un créateur qui a lu la page tarifs reconnaît ses chiffres, et il
- * n'y a pas deux grilles concurrentes à tenir à jour.
+ * Les volumes et les prix **viennent de la grille unique** (`DISTRIBUTION_PACKS`,
+ * `lib/pricing/config.ts`). Ce module ne fait que les réinterpréter pour son
+ * propre besoin : un palier, c'est un nombre de téléchargements vendu à un prix,
+ * avec un intitulé court.
+ *
+ * Règle N3 : aucun montant n'est recopié ici. Ajouter un palier dans la config
+ * suffit ; il apparaît dans le tunnel d'extension sans autre modification.
  */
 export interface TopupTier {
   /** Téléchargements ajoutés au quota courant. */
@@ -45,12 +50,19 @@ export interface TopupTier {
   label: string;
 }
 
-export const TOPUP_TIERS: TopupTier[] = [
-  { downloads: 100, priceFcfa: 2500, label: 'Starter' },
-  { downloads: 500, priceFcfa: 5000, label: 'Popular' },
-  { downloads: 1000, priceFcfa: 7500, label: 'Growth' },
-  { downloads: 5000, priceFcfa: 20000, label: 'Large' },
-];
+/**
+ * Un palier n'est proposé au paiement que s'il a **un identifiant de pack, un
+ * volume et un prix** publiés. Le pack « 10 000 et plus » (sur devis) n'entre
+ * donc pas dans l'échelle : il ne se règle pas en ligne.
+ */
+export const TOPUP_TIERS: TopupTier[] = DISTRIBUTION_PACKS.filter(
+  (pack): pack is DistributionPack & { distributions: number; priceFcfa: number } =>
+    pack.distributions !== null && pack.priceFcfa !== null,
+).map((pack) => ({
+  downloads: pack.distributions,
+  priceFcfa: pack.priceFcfa,
+  label: pack.name,
+}));
 
 /**
  * Premier palier : 100 pour 2 500 FCFA.
@@ -124,8 +136,8 @@ export const QUOTA_CONTACT_EMAIL = 'bonjour@campagnes.app';
  * L'extension **dans la grille** passe désormais par un paiement Mobile Money en
  * ligne (`TopupButton` → `DISTRIBUTION_PACKS`). Le revirement est assumé : tant
  * qu'aucun prestataire n'était branché, un bouton « payer » qui ne débitait rien
- * aurait été un mensonge ; maintenant que pawaPay répond, c'est le `mailto:` qui
- * le serait.
+ * aurait été un mensonge ; maintenant que le paiement Mobile Money répond, c'est
+ * le `mailto:` qui le serait.
  *
  * Ce helper ne survit donc que pour le **sur devis** : au-dessus de
  * `QUOTE_THRESHOLD`, ou pour un pack dont le prix n'est pas publié

@@ -85,3 +85,14 @@ docs/**/*_files/
 # volontairement (forcés par `git add -f`), donc pas concernés par la règle
 # `docs/**/*.png` ci-dessus.
 !docs/monétisation/ui/captures/*.png
+
+# Profils Chrome et gros plans produits par les sondes `tools/tarifs-check/` :
+# regenrables a la demande, jamais des livrables. Les captures retenues
+# sont dans `docs/monetisation/ui/captures/`.
+tools/tarifs-check/.tmp/
+tools/.u1-crops/
+
+# Profils Chrome laisse par les sondes headless (.u1-chrome-profile*) :
+# volumineux et sans valeur. Les captures retenues sont versionnees
+# dans `docs/monetisation/ui/captures/`.
+.u1-chrome-profile*/

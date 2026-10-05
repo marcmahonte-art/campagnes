@@ -191,14 +191,14 @@ export async function POST(request: NextRequest) {
         if (dbError) {
           console.error('[PawaPay] Erreur insertion table payments:', dbError);
           return NextResponse.json(
-            { error: `Impossible d'enregistrer la transaction : ${dbError.message}` },
+            { error: 'Le paiement n’a pas pu être enregistré. Réessayez dans un instant.' },
             { status: 500 },
           );
         }
       } catch (adminErr) {
         console.error('[PawaPay] Erreur client Supabase admin:', adminErr);
         return NextResponse.json(
-          { error: 'Configuration serveur Supabase incomplète (SUPABASE_SERVICE_ROLE_KEY).' },
+          { error: 'Le paiement est momentanément indisponible. Réessayez plus tard.' },
           { status: 500 },
         );
       }
@@ -207,9 +207,13 @@ export async function POST(request: NextRequest) {
     if (!isPawaPayConfigured()) {
       return NextResponse.json(
         {
-          error:
-            'Le service de paiement pawaPay n’est pas encore configuré (PAWAPAY_API_TOKEN manquant).',
-          code: 'PAWAPAY_NOT_CONFIGURED',
+          /*
+           * Message destiné à l'utilisateur : jamais le nom du prestataire ni
+           * une variable d'environnement (N11). Le détail technique reste dans
+           * le code d'erreur, exploité par le client.
+           */
+          error: 'Le paiement Mobile Money n’est pas encore disponible.',
+          code: 'PAYMENT_NOT_CONFIGURED',
         },
         { status: 503 },
       );
@@ -231,14 +235,25 @@ export async function POST(request: NextRequest) {
       redirectUrl: initiation.redirectUrl,
     });
   } catch (err: unknown) {
+    /*
+     * Le détail technique reste **dans les journaux serveur**. Ce qui remonte au
+     * navigateur est un message actionnable, sans nom de prestataire ni détail
+     * d'infrastructure (N11).
+     */
     console.error('[PawaPay] Erreur lors de l’initiation du paiement :', err);
     if (err instanceof PawaPayError) {
       return NextResponse.json(
-        { error: err.message, status: err.status, details: err.body },
+        {
+          error:
+            'Le service de paiement Mobile Money n’a pas répondu correctement. Réessayez dans un instant.',
+          code: err.status === 401 || err.status === 403 ? 'PAYMENT_AUTH' : 'PAYMENT_UPSTREAM',
+        },
         { status: 502 },
       );
     }
-    const message = err instanceof Error ? err.message : 'Erreur interne du serveur.';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(
+      { error: 'Le paiement est momentanément indisponible. Réessayez plus tard.' },
+      { status: 500 },
+    );
   }
 }

@@ -11,7 +11,12 @@
     "noEmitOnError": false,
     "jsx": "react-jsx",
     "rootDir": "../..",
-    "outDir": "build"
+    "outDir": "build",
+    /* Alias `@/` : voir `tools/watermark-check/tsconfig.json` et `tools/alias-hook.cjs`. */
+    "baseUrl": "../..",
+    "paths": {
+      "@/*": ["./*"]
+    }
   },
   "files": ["check-templates.ts"]
 }

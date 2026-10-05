@@ -576,7 +576,7 @@ export default function CampaignEditorPage() {
         <QuotaMeter used={campaign.participants_used} quota={campaign.participants_granted} />
 
         {/*
-          Réconciliation du retour pawaPay (`?depositId=…`) — montée UNE fois,
+          Réconciliation du retour de paiement Mobile Money (`?depositId=…`) — montée UNE fois,
           pas dans chaque bouton : l'écran en affiche quatre.
         */}
         <TopupReturnNotice campaignName={campaign.name} />
@@ -586,9 +586,10 @@ export default function CampaignEditorPage() {
             <p className="text-[13px] leading-relaxed text-gray-600">
               {blocked ? (
                 <>
-                  <span className="font-semibold text-ink">Votre lien est bloqué.</span> Les{' '}
-                  {quota} téléchargements offerts ont été consommés : plus personne ne peut
-                  télécharger votre visuel. Prolongez-le pour le rouvrir.
+                  <span className="font-semibold text-ink">Quota épuisé.</span> Les{' '}
+                  {quota} téléchargements inclus ont été consommés : les participants peuvent
+                  continuer avec le filigrane Campagnes, ou vous pouvez acheter des crédits pour
+                  rétablir les exports propres.
                 </>
               ) : (
                 <>
@@ -602,7 +603,7 @@ export default function CampaignEditorPage() {
                   {remaining(campaign.participants_used, campaign.participants_granted) > 1
                     ? 's'
                     : ''}
-                  . Ensuite votre lien se bloquera.
+                  . Ensuite les exports repasseront avec le filigrane Campagnes.
                 </>
               )}
             </p>
@@ -637,16 +638,16 @@ export default function CampaignEditorPage() {
             </div>
 
             <p className="text-[12px] leading-relaxed text-gray-500">
-              Paiement par Mobile Money, traité par pawaPay. Le quota est crédité dès la
-              confirmation du paiement. Au-delà de{' '}
-              {new Intl.NumberFormat('fr-FR').format(QUOTE_THRESHOLD)} téléchargements, c’est
-              traité directement au devis.
+              Paiement par Mobile Money. Le quota est crédité dès la confirmation du paiement.
+              Au-delà de {new Intl.NumberFormat('fr-FR').format(QUOTE_THRESHOLD)}{' '}
+              téléchargements, c’est traité directement au devis.
             </p>
           </div>
         ) : (
           <p className="text-[12px] leading-relaxed text-gray-500">
             Chaque téléchargement de votre visuel est compté. À {campaign.participants_granted}, le
-            lien se bloque — vous pourrez alors le prolonger par Mobile Money, ou au devis au-delà de{' '}
+            lien continue avec filigrane — vous pourrez alors acheter des crédits par Mobile Money,
+            ou passer au devis au-delà de{' '}
             {new Intl.NumberFormat('fr-FR').format(QUOTE_THRESHOLD)} téléchargements.
           </p>
         )}

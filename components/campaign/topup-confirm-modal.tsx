@@ -16,7 +16,7 @@ import { formatFcfaTier, type TopupTier } from '@/lib/quota';
  * sur un écran dédié est la moindre des choses — c'est aussi le seul endroit où
  * l'on peut dire clairement ce qui va se passer.
  *
- * Le composant ne connaît ni pawaPay ni les routes : il rend une décision et
+ * Le composant ne connaît ni le prestataire ni les routes : il rend une décision et
  * remonte les paramètres. C'est `TopupButton` qui appelle l'API.
  */
 export function TopupConfirmModal({
@@ -136,9 +136,8 @@ export function TopupConfirmModal({
           <p className="flex items-start gap-2.5 text-[12px] leading-relaxed text-gray-500">
             <Smartphone className="mt-0.5 size-4 shrink-0 text-gray-400" strokeWidth={1.75} aria-hidden />
             <span>
-              Vous serez redirigé vers la page de paiement pawaPay pour régler par Mobile
-              Money (Orange, MTN, Moov, Wave…). Le quota de la campagne est crédité dès
-              confirmation du paiement.
+              Vous serez redirigé vers la page de paiement Mobile Money (Orange, Moov). Le
+              quota de la campagne est crédité dès confirmation du paiement.
             </span>
           </p>
 
@@ -146,7 +145,7 @@ export function TopupConfirmModal({
             <ShieldCheck className="mt-0.5 size-4 shrink-0 text-gray-400" strokeWidth={1.75} aria-hidden />
             <span>
               Aucun numéro n&apos;est conservé par Campagnes : le paiement est traité
-              entièrement par pawaPay.
+              entièrement par notre prestataire de paiement.
             </span>
           </p>
 

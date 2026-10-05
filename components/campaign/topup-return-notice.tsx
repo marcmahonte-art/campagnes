@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { CheckCircle2, Clock, TriangleAlert } from 'lucide-react';
 
 /**
- * Réconciliation du retour de paiement pawaPay — **un seul point**, monté une
+ * Réconciliation du retour de paiement Mobile Money — **un seul point**, monté une
  * fois par page.
  *
  * Pourquoi un composant à part, et pas dans le bouton : l'écran affiche quatre

@@ -35,7 +35,10 @@ export async function GET(request: NextRequest) {
 
     if (dbError) {
       console.error('[PawaPay Check] Erreur lecture payments :', dbError);
-      return NextResponse.json({ error: dbError.message }, { status: 500 });
+      return NextResponse.json(
+        { error: 'Impossible de vérifier le paiement pour le moment.' },
+        { status: 500 },
+      );
     }
 
     if (!payment) {
@@ -117,7 +120,7 @@ export async function GET(request: NextRequest) {
   } catch (err: unknown) {
     console.error('[PawaPay Check] Erreur :', err);
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : 'Erreur interne du serveur.' },
+      { error: 'Impossible de vérifier le paiement pour le moment.' },
       { status: 500 },
     );
   }

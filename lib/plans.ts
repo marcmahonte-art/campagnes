@@ -38,8 +38,16 @@ export interface Plan {
   highlight?: boolean;
 }
 
+/**
+ * N5 — rien ici qui ne soit développé.
+ *
+ * `campaigns_unlimited` est retiré : aucune limite de nombre de campagnes
+ * n'existe dans le produit, donc l'annoncer reviendrait à promettre un
+ * déverrouillage qui n'a pas lieu d'être. Il en va de même des modules
+ * entreprise (`domain`, `multi_user`, `private_gallery`, `reports`) et du
+ * `support_priority` : aucun écran, aucune API, aucun différenciateur.
+ */
 const CREATOR_FEATURES: PlanFeature[] = [
-  'campaigns_unlimited',
   'no_watermark',
   'frame_pro',
   'templates_premium',
@@ -47,18 +55,19 @@ const CREATOR_FEATURES: PlanFeature[] = [
   'analytics',
   'qr',
   'branding',
-  'support_priority',
 ];
 
-const ORGANIZATION_FEATURES: PlanFeature[] = [
-  ...CREATOR_FEATURES,
-  'domain',
-  'multi_user',
-  'private_gallery',
-  'reports',
-];
+const ORGANIZATION_FEATURES: PlanFeature[] = [...CREATOR_FEATURES];
 
 import { PRICING_PLANS, formatFcfaPrice } from '@/lib/pricing/config';
+
+/*
+ * Les fonctions listées ici correspondent à du code livré et à un verrou réel
+ * (`hasFeature` est appelé dans l'application). Voir la colonne « N5 » du
+ * rapport de phase U1 : `domain`, `multi_user`, `private_gallery`, `reports`
+ * et `support_priority` ont été retirés de la segmentation des formules — ils
+ * appartiennent au palier « Sur devis » et ne sont pas développés.
+ */
 
 export const PLANS: Record<PlanId, Plan> = {
   free: {
@@ -215,52 +224,92 @@ export interface ComparisonRow {
   free: string | boolean;
   creator: string | boolean;
   organization: string | boolean;
-  /** Groupe d'appartenance, pour aérer le tableau. */
-  group: 'Général' | 'Création' | 'Modules' | 'Organisation' | 'Distribution';
+  /**
+   * Groupe d'appartenance, pour aérer le tableau.
+   *
+   * « Organisation » a disparu avec la ligne « Support prioritaire » (N5) :
+   * on ne crée pas un groupe vide pour une section qui n'a plus de contenu.
+   */
+  group: 'Général' | 'Création' | 'Modules' | 'Distribution';
 }
 
+/**
+ * Matrice comparative.
+ *
+ * Règles appliquées :
+ *  - **Aucun montant n'est écrit ici** (N3) : les trois lignes chiffrées lisent
+ *    la config de tarification. Changer un prix dans `lib/pricing/config.ts`
+ *    suffit, cette table suit.
+ *  - **Aucune fonctionnalité non développée** (N5) : chaque ligne renvoie à un
+ *    verrou réel (`hasFeature`) ou à un comportement observable. « Support
+ *    prioritaire » a été retiré : aucun écran, aucune API, aucun délai garanti.
+ *  - Le filigrane est décrit tel qu'il se passe : « Filigrane Campagnes » côté
+ *    gratuit, « sans filigrane tant que le quota n'est pas épuisé » côté payant
+ *    — jamais « Oui / Non », qui laisse croire à une absence de limite.
+ */
 export const COMPARISON: ComparisonRow[] = [
   {
     group: 'Général',
     label: 'Prix mensuel',
-    free: '0 FCFA',
+    free: formatFcfa(PRICING_PLANS.free.monthlyPriceFcfa),
     creator: formatFcfa(PRICING_PLANS.creator.monthlyPriceFcfa),
     organization: formatFcfa(PRICING_PLANS.organization.monthlyPriceFcfa),
   },
   {
     group: 'Général',
-    label: 'Distributions incluses / mois',
-    free: '25 à vie',
-    creator: '100 / mois',
-    organization: '1 000 / mois',
+    label: 'Distributions incluses',
+    free: PRICING_PLANS.free.quotaLabel,
+    creator: PRICING_PLANS.creator.quotaLabel,
+    organization: PRICING_PLANS.organization.quotaLabel,
   },
   {
     group: 'Général',
     label: 'Coût par participant inclus',
     free: '—',
-    creator: '30 FCFA',
-    organization: '5 FCFA',
+    creator: formatFcfa(PRICING_PLANS.creator.costPerParticipantFcfa ?? 0),
+    organization: formatFcfa(PRICING_PLANS.organization.costPerParticipantFcfa ?? 0),
+  },
+  {
+    group: 'Général',
+    label: 'Filigrane Campagnes',
+    free: PRICING_PLANS.free.watermarkLabel,
+    creator: PRICING_PLANS.creator.watermarkLabel,
+    organization: PRICING_PLANS.organization.watermarkLabel,
   },
   { group: 'Général', label: 'Campagnes', free: true, creator: true, organization: true },
-  { group: 'Général', label: 'Galerie', free: true, creator: true, organization: true },
-  { group: 'Général', label: 'Utiliser une campagne existante', free: true, creator: true, organization: true },
-  { group: 'Création', label: 'Personnalisation', free: true, creator: true, organization: true },
+  { group: 'Général', label: 'Galerie publique', free: true, creator: true, organization: true },
+  {
+    group: 'Général',
+    label: 'Utiliser une campagne existante',
+    free: true,
+    creator: true,
+    organization: true,
+  },
+  {
+    group: 'Création',
+    label: 'Personnalisation du visuel',
+    free: true,
+    creator: true,
+    organization: true,
+  },
   { group: 'Création', label: 'Photo', free: true, creator: true, organization: true },
   { group: 'Création', label: 'Vidéo', free: true, creator: true, organization: true },
   { group: 'Création', label: '3 formats', free: true, creator: true, organization: true },
   { group: 'Création', label: 'Lien de campagne', free: true, creator: true, organization: true },
-  { group: 'Création', label: 'Watermark', free: 'Oui', creator: 'Non', organization: 'Non' },
+  { group: 'Création', label: 'Exports sans filigrane', free: false, creator: true, organization: true },
   { group: 'Modules', label: 'Frame Pro', free: false, creator: true, organization: true },
-  { group: 'Modules', label: 'Animation IA (Motion)', free: false, creator: true, organization: true },
-  { group: 'Modules', label: 'Analytics', free: false, creator: true, organization: true },
+  { group: 'Modules', label: 'Modèles de cadres', free: false, creator: true, organization: true },
+  { group: 'Modules', label: 'Animation', free: false, creator: true, organization: true },
+  { group: 'Modules', label: 'Statistiques de participation', free: false, creator: true, organization: true },
   { group: 'Modules', label: 'QR Code', free: false, creator: true, organization: true },
   { group: 'Modules', label: 'Branding', free: false, creator: true, organization: true },
-  { group: 'Modules', label: 'Domaine personnalisé', free: false, creator: false, organization: true },
-  { group: 'Organisation', label: 'Multi-utilisateurs', free: false, creator: false, organization: true },
-  { group: 'Organisation', label: 'Galerie privée', free: false, creator: false, organization: true },
-  { group: 'Organisation', label: 'Rapports PDF', free: false, creator: false, organization: true },
-  { group: 'Organisation', label: 'Support prioritaire', free: false, creator: true, organization: true },
-  { group: 'Distribution', label: 'Distribution', free: 'À l’usage', creator: 'À l’usage', organization: 'À l’usage' },
+  {
+    group: 'Distribution',
+    label: 'Crédits de distribution',
+    free: 'À l’usage',
+    creator: 'À l’usage',
+    organization: 'À l’usage',
+  },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -300,9 +349,9 @@ export const PREMIUM_MODULES: PremiumModule[] = [
   },
   {
     id: 'motion',
-    name: 'Motion',
+    name: 'Animation',
     feature: 'motion',
-    description: 'Animation IA des cadres, rendu vidéo.',
+    description: 'Animation des cadres et export vidéo.',
     availableFrom: 'creator',
   },
   {
@@ -323,21 +372,7 @@ export const PREMIUM_MODULES: PremiumModule[] = [
     id: 'branding',
     name: 'Branding',
     feature: 'branding',
-    description: 'Logo, couleurs de marque, suppression du watermark.',
+    description: 'Logo, couleurs de marque, suppression du filigrane.',
     availableFrom: 'creator',
-  },
-  {
-    id: 'domain',
-    name: 'Domaine',
-    feature: 'domain',
-    description: 'Domaine personnalisé.',
-    availableFrom: 'organization',
-  },
-  {
-    id: 'reports',
-    name: 'Reports',
-    feature: 'reports',
-    description: 'Export CSV et rapports PDF pour les sponsors.',
-    availableFrom: 'organization',
   },
 ];

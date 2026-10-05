@@ -2,8 +2,8 @@
  * Distribution — grille tarifaire.
  *
  * La diffusion se facture **par volume**. Les paliers publiés (100 → 5 000) se
- * règlent désormais en ligne par Mobile Money (`TopupButton` → pawaPay) ; ce qui
- * sort de la grille — 10 000 et plus — reste **sur devis** (`quoteHref()`).
+ * règlent en ligne par **Mobile Money** (`TopupButton`) ; ce qui sort de la
+ * grille — 10 000 et plus — reste **sur devis** (`quoteHref()`).
  *
  * Pas de solde, pas de crédit prépayé transférable : ce qui est acheté est
  * immédiatement rattaché à une campagne (`credit_campaign_quota`, migration
@@ -22,6 +22,8 @@
  * la participation compte, parce qu'elle est la seule chose mesurable.
  */
 
+import { DISTRIBUTION_PACKS, type DistributionPack } from './pricing/config';
+
 export interface DistributionOffer {
   id: string;
   name: string;
@@ -34,44 +36,41 @@ export interface DistributionOffer {
   highlight?: boolean;
 }
 
-export const DISTRIBUTION_OFFERS: DistributionOffer[] = [
-  {
-    id: 'starter',
-    name: 'Starter',
-    participants: 100,
-    priceFcfa: 2500,
-    description: 'Une campagne locale, une classe, un club.',
-  },
-  {
-    id: 'popular',
-    name: 'Popular',
-    participants: 500,
-    priceFcfa: 5000,
-    description: 'Une campagne d’école, une journée internationale.',
-    highlight: true,
-  },
-  {
-    id: 'growth',
-    name: 'Growth',
-    participants: 1000,
-    priceFcfa: 7500,
-    description: 'Une campagne de campus ou d’événement régional.',
-  },
-  {
-    id: 'large',
-    name: 'Large',
-    participants: 5000,
-    priceFcfa: 20000,
-    description: 'Une campagne nationale, plusieurs villes.',
-  },
-  {
-    id: 'enterprise',
-    name: 'Grand volume',
-    participants: null,
-    priceFcfa: null,
-    description: 'Au-delà de 10 000 participants, conditions adaptées.',
-  },
-];
+/**
+ * La grille de distribution, **dérivée de la config unique**.
+ *
+ * Règle N3 : ce module ne porte aucun montant. Les volumes, les prix et les
+ * mises en avant viennent de `DISTRIBUTION_PACKS` (`lib/pricing/config.ts`) ;
+ * ici on ne fait que traduire chaque pack dans le vocabulaire de la page
+ * publique (un « volume de participants » plutôt qu'un « nombre de
+ * distributions », une phrase d'usage plutôt qu'un intitulé de boutique).
+ *
+ * Le nom affiché est celui du pack, en français : plus de « Starter / Popular /
+ * Growth / Large » qui obligeaient le lecteur à traduire mentalement.
+ */
+function toOffer(pack: DistributionPack, description: string): DistributionOffer {
+  return {
+    id: pack.id,
+    name: pack.name,
+    participants: pack.distributions,
+    priceFcfa: pack.priceFcfa,
+    description,
+    highlight: pack.highlight,
+  };
+}
+
+/** Phrases d'usage, indexées par identifiant de pack. */
+const OFFER_DESCRIPTIONS: Record<string, string> = {
+  pack_100: 'Une campagne locale, une classe, un club.',
+  pack_500: 'Une campagne d’école, une journée internationale.',
+  pack_1000: 'Une campagne de campus ou d’événement régional.',
+  pack_5000: 'Une campagne nationale, plusieurs villes.',
+  pack_custom: 'Au-delà de 10 000 participants, conditions adaptées.',
+};
+
+export const DISTRIBUTION_OFFERS: DistributionOffer[] = DISTRIBUTION_PACKS.map((pack) =>
+  toOffer(pack, OFFER_DESCRIPTIONS[pack.id] ?? pack.tagline),
+);
 
 /** Adresse de contact pour établir un devis de distribution. */
 export const DISTRIBUTION_CONTACT_EMAIL = 'bonjour@campagnes.app';

@@ -2,7 +2,8 @@ import { Check, Minus } from 'lucide-react';
 import { COMPARISON, type ComparisonRow } from '@/lib/plans';
 import { cn } from '@/lib/cn';
 
-const GROUPS: ComparisonRow['group'][] = ['Général', 'Création', 'Modules', 'Organisation', 'Distribution'];
+/** Ordre des groupes — celui de `COMPARISON`, donc l'ordre de lecture du lecteur. */
+const GROUPS: ComparisonRow['group'][] = ['Général', 'Création', 'Modules', 'Distribution'];
 
 function Cell({ value }: { value: string | boolean }) {
   if (value === true) {
@@ -34,9 +35,9 @@ export function ComparisonTable() {
       {/* ---------- En-tête (desktop) ---------- */}
       <div className="hidden grid-cols-[1.6fr_repeat(3,1fr)] items-center border-b border-gray-200 bg-gray-50 px-5 py-3 text-[12px] font-semibold uppercase tracking-[0.1em] text-gray-500 md:grid">
         <span>Fonctionnalité</span>
-        <span className="text-center">Free</span>
-        <span className="text-center">Creator</span>
-        <span className="text-center">Organisation</span>
+        <span className="text-center">Gratuit</span>
+        <span className="text-center">Créateur</span>
+        <span className="text-center">Organisations &amp; ONG</span>
       </div>
 
       {GROUPS.map((group) => {
@@ -73,19 +74,19 @@ export function ComparisonTable() {
                   <p className="text-[13px] font-medium text-gray-900">{row.label}</p>
                   <dl className="mt-2 grid grid-cols-3 gap-2 text-[12px]">
                     <div>
-                      <dt className="text-gray-400">Free</dt>
+                      <dt className="text-gray-400">Gratuit</dt>
                       <dd className={cn('mt-0.5', typeof row.free === 'boolean' && 'flex')}>
                         <Cell value={row.free} />
                       </dd>
                     </div>
                     <div>
-                      <dt className="text-gray-400">Creator</dt>
+                      <dt className="text-gray-400">Créateur</dt>
                       <dd className={cn('mt-0.5', typeof row.creator === 'boolean' && 'flex')}>
                         <Cell value={row.creator} />
                       </dd>
                     </div>
                     <div>
-                      <dt className="text-gray-400">Organisation</dt>
+                      <dt className="text-gray-400">Organisations &amp; ONG</dt>
                       <dd className={cn('mt-0.5', typeof row.organization === 'boolean' && 'flex')}>
                         <Cell value={row.organization} />
                       </dd>

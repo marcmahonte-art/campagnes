@@ -10,14 +10,19 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "check:shapes": "tsc -p tools/shape-check/tsconfig.json && node tools/shape-check/run.js",
-    "check:text": "tsc -p tools/text-check/tsconfig.json && node tools/text-check/build/tools/text-check/check-text.js",    "check:history": "tsc -p tools/history-check/tsconfig.json && node tools/history-check/build/tools/history-check/check-history.js",
-    "check:watermark": "tsc -p tools/watermark-check/tsconfig.json && node tools/watermark-check/build/tools/watermark-check/check-watermark.js",
-    "check:templates": "tsc -p tools/templates-check/tsconfig.json && node tools/templates-check/build/tools/templates-check/check-templates.js",
+    "check:text": "tsc -p tools/text-check/tsconfig.json && node tools/text-check/build/tools/text-check/check-text.js",    "check:text-geometry": "tsc -p tools/text-geometry-check/tsconfig.json && node tools/text-geometry-check/run.js",
+    "check:participant": "tsc -p tools/participant-check/tsconfig.json && node tools/participant-check/build/tools/participant-check/check-participant.js",    "check:history": "tsc -p tools/history-check/tsconfig.json && node tools/history-check/build/tools/history-check/check-history.js",
+    "check:watermark": "tsc -p tools/watermark-check/tsconfig.json && node -r ./tools/alias-hook.cjs tools/watermark-check/build/tools/watermark-check/check-watermark.js",
+    "check:templates": "tsc -p tools/templates-check/tsconfig.json && node -r ./tools/alias-hook.cjs tools/templates-check/build/tools/templates-check/check-templates.js",
     "check:storage": "node tools/storage-check/listing-lockdown-check.js",
     "check:distribution": "node tools/distribution-check/distribution-check.js",
     "check:distribution:contract": "tsc -p tools/distribution-check/tsconfig.json && node tools/distribution-check/build/tools/distribution-check/check-contract.js",
     "check:topup": "tsc -p tools/topup-check/tsconfig.json && node tools/topup-check/build/tools/topup-check/check-topup.js",
-    "check:clone": "tsc -p tools/clone-check/tsconfig.json && node tools/clone-check/build/tools/clone-check/check-clone.js"
+    "check:clone": "tsc -p tools/clone-check/tsconfig.json && node tools/clone-check/build/tools/clone-check/check-clone.js",
+    "check:ui-tarifs": "node tools/tarifs-check/check-ui-tarifs.cjs",
+    "check:ui-tarifs:rendu": "npm run build && node tools/tarifs-check/check-rendu-tarifs.cjs",
+    "check:ui-tarifs:selecteur": "node tools/tarifs-check/check-selecteur-duree.cjs",
+    "capture:ui-tarifs": "node tools/tarifs-check/capture-tarifs.cjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.2",

@@ -11,7 +11,19 @@
     "noEmitOnError": false,
     "jsx": "react-jsx",
     "rootDir": "../..",
-    "outDir": "build"
+    "outDir": "build",
+    /*
+     * Alias `@/` : `lib/plans.ts` importe la config de tarification par ce
+     * chemin. Sans ces deux lignes, `tsc` échouait sur « Cannot find module
+     * '@/lib/pricing/config' » — et comme `noEmitOnError` est à `false`, il
+     * émettait quand même, si bien que le contrôle tournait sur du code
+     * incomplet au lieu d'échouer franchement. Le harnais échouait en silence,
+     * ce qui est le pire mode de défaillance pour un contrôle.
+     */
+    "baseUrl": "../..",
+    "paths": {
+      "@/*": ["./*"]
+    }
   },
   "files": ["check-watermark.ts"]
 }
