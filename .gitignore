@@ -91,12 +91,17 @@ docs/**/*_files/
 !docs/monétisation/ui/captures/*.png
 
 # Profils Chrome et gros plans produits par les sondes `tools/tarifs-check/` :
-# regenrables a la demande, jamais des livrables. Les captures retenues
+# régénérables à la demande, jamais des livrables. Les captures retenues
 # sont dans `docs/monetisation/ui/captures/`.
 tools/tarifs-check/.tmp/
 tools/.u1-crops/
 
-# Profils Chrome laisse par les sondes headless (.u1-chrome-profile*) :
-# volumineux et sans valeur. Les captures retenues sont versionnees
+# Profils Chrome laissés par les sondes headless (.u1-chrome-profile*) :
+# volumineux et sans valeur. Les captures retenues sont versionnées
 # dans `docs/monetisation/ui/captures/`.
 .u1-chrome-profile*/
+
+# Profils Chrome de `tools/participant-ui-check/` : un port et un dossier uniques
+# à chaque exécution, donc jamais les mêmes deux fois — impossible à suivre,
+# et inutile puisqu'on les régénère à chaque lancement.
+tools/participant-ui-check/.tmp/

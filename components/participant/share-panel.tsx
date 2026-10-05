@@ -144,7 +144,16 @@ export function SharePanel({
         contenu coupé sans indication donne l'impression d'un bug, alors qu'un
         scroll latéral se comprend au pouce.
       */}
-      <div className="mt-3 -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+      {/*
+        Rangée défilable.
+
+        Le débordement est **contenu dans la rangée** : `overflow-x-auto` porte le
+        scroll, mais ses propres boîtes ne doivent pas déborder de la section.
+        Mesuré : à 375 px, la rangée poussait `scrollWidth` à 385 — dix pixels de
+        débordement sur toute la page, qui fait apparaître une barre horizontale
+        alors que la rangée est censée défiler toute seule.
+      */}
+      <div className="mt-3 flex max-w-full gap-2 overflow-x-auto pb-1">
         <ButtonLink
           href={waHref}
           variant="secondary"

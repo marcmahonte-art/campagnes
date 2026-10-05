@@ -171,13 +171,57 @@ seule ligne (spec §12).
 3. Libellés (`Ajouter un texte` / `Ajouter du texte`), absence de pied de page,
    et présence de blocs que la spec §14 demande de réduire.
 
-### Ce qui n'a pas été vérifié par machine
+### Vérifié par machine
 
-Les largeurs imposées par la spec §18 (320, 375, 390, 414, 430 px) **n'ont pas
-été validées par un contrôle reproductible**. Un contrôle headless a été écrit
-puis abandonné : il passait une fois sur six, ce qui ne prouve rien. Les captures
-`captures/reel-390-*.png` montrent un rendu mobile réel, mais une seule fois, sur
-une machine donnée.
+Le contrôle `tools/participant-ui-check/check-largeurs.cjs` mesure la page
+**réellement montée** (il attend la présence du contenu, il ne compte pas les
+millisecondes) :
 
-C'est le point à vérifier en priorité, sur un vrai téléphone ou avec une sonde
-stabilisée.
+```
+DÉBORDEMENT HORIZONTAL (spec §18)      ZONES TACTILES (spec §20)
+[OK]  320 px — 320/320                 [OK] 320 px — aucune cible sous 36 px
+[OK]  360 px — 360/360                 [OK] 390 px — aucune cible sous 36 px
+[OK]  375 px — 375/375
+[OK]  390 px — 390/390                 CONFORME §18/§20
+[OK]  414 px — 414/414
+[OK]  430 px — 430/430
+[OK]  768 px — 768/768
+[OK] 1440 px — 1440/1440
+```
+
+Répété **4 fois sur 4** avant d'être cru.
+
+**Un défaut réel trouvé et corrigé au passage** : le lien du logo
+(`aria-label="Campagnes — accueil"`) faisait **32 px de haut**, sous le minimum
+tactile. La zone de frappe passe à 44 px (`min-h-11 py-1.5`) **sans agrandir le
+logo** — c'est la cible qui grandit, pas l'image. Il était le seul contre-exemple
+à 320 et à 390 px.
+
+### Ce qui reste non couvert
+
+**La barre d'actions et les panneaux**, parce qu'ils n'existent qu'après le
+dépôt d'une photo. Un contrôle headless qui simule ce dépôt via `DataTransfer`
+a été écrit puis abandonné : React remplace le nœud `input` entre la pose de
+`files` et le dispatch, et le contrôle passait une fois sur six.
+
+Pour cette partie, la voie fiable est un **vrai téléphone** : le participant y
+choisit un fichier comme il le ferait, et le geste n'a rien d'artificiel.
+
+### Note sur ce qui a faussé les premières mesures
+
+Deux méprises se sont succédé, et il vaut mieux les écrire que les refaire :
+
+1. **Le contrôle mesurait `/galerie`**, pas la page participant. Comme la
+   galerie ne déborde pas, il « passait » — sur la mauvaise page. Les cibles
+   tactiles signalées étaient celles de ses filtres. Le garde-fou de route
+   (`ATTENDU`) existe désormais et **refuse** de mesurer autre chose qu'un
+   parcours participant.
+2. **Le contrôle échouait une fois sur six**, et la faute en incombait à React.
+   La vraie cause : `chrome.kill()` ne tue pas les enfants sur Windows, chaque
+   exécution laissait un Chrome orphelin qui gardait le port de débogage
+   **et verrouillait le dossier de profil** — la run suivante tombait sur un
+   navigateur périmé, ou mourait en `EPERM` sur `fs.rmSync`. Mesuré : 31
+   processus orphelins après trois exécutions. Corrigé par un port et un profil
+   **uniques à chaque exécution**, plus un repérage ciblé des orphelins par
+   ligne de commande (jamais `taskkill /im chrome.exe` : le navigateur du poste
+   n'est pas en cause).

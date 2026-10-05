@@ -44,11 +44,17 @@ export function Logo({
 
   if (!asLink) return content;
 
+  /*
+   * La zone cliquable fait au moins 44 px de haut (spec §20), même quand le
+   * logo n'en fait que 32 : le logo ne grandit pas, c'est la **zone de frappe**
+   * qui s'agrandit. Sans ça, l'adresse du site est un lien de 32 px sous le
+   * pouce — mesuré à 320 et 390 px par `tools/participant-ui-check`.
+   */
   return (
     <Link
       href="/"
       aria-label="Campagnes — accueil"
-      className="inline-flex items-center transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-purple rounded-md"
+      className="inline-flex min-h-11 items-center rounded-md py-1.5 transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-purple"
     >
       {content}
     </Link>
