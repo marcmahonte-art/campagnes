@@ -838,18 +838,20 @@ export function FrameEditor({
       }
 
       const { makeImageLayer } = await import('@/lib/descriptor');
+      const maxZ = descriptor.layers.reduce((max, l) => Math.max(max, l.z ?? 0), 0);
       const layer = makeImageLayer(src, descriptor.ratio, {
         w,
         h,
         x: Math.round((spec.width - w) / 2),
         y: Math.round((spec.height - h) / 2),
-        z: nextZ(descriptor.layers),
+        z: maxZ + 10,
         label: file.name,
       });
 
       const next = { ...descriptor, layers: [...descriptor.layers, layer] };
       await buildObjects(next);
       applyLocks();
+      fitToView();
       setSelectedId(layer.id);
       setTab('cadre');
       onChange(next);
@@ -880,6 +882,7 @@ export function FrameEditor({
     const next = { ...descriptor, layers: [...descriptor.layers, layer] };
     await buildObjects(next);
     applyLocks();
+    fitToView();
     setSelectedId(layer.id);
     setTab('cadre');
     onChange(next);
@@ -907,6 +910,7 @@ export function FrameEditor({
     const next = { ...descriptor, layers: [...descriptor.layers, layer] };
     await buildObjects(next);
     applyLocks();
+    fitToView();
     setSelectedId(layer.id);
     setTab('cadre');
     onChange(next);
