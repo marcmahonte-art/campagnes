@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    /* `DOM` : `lib/participant.ts` déclare `readPhotoFile()` (FileReader, window).
+       Le harnais ne l'appelle pas, mais le module doit se typer. */
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": false,
+    "noEmitOnError": false,
+    "rootDir": "../..",
+    "outDir": "build"
+  },
+  "files": ["check-text-geometry.ts"]
+}

@@ -272,6 +272,17 @@ export interface ParticipantText {
   x?: number;
   /** Coordonnée Y dans le repère natif. */
   y?: number;
+  /**
+   * Boîte du texte : l'emprise réelle, dans le **même repère** que `x` et `y`.
+   *
+   * Elle n'est pas un réglage : c'est la mesure de ce que le participant voit,
+   * nécessaire pour qu'une taille choisie au pinceau survive au rechargement.
+   * Absente tant que le texte n'a pas été mesuré — `participantTextLayer` retombe
+   * alors sur le budget de largeur.
+   */
+  w?: number;
+  /** Hauteur de la boîte, même repère que `w`. */
+  h?: number;
 }
 
 /** Tout ce que le participant peut régler sur son propre visuel. */
@@ -358,7 +369,11 @@ function sameStyle(a: ParticipantStyle, b: ParticipantStyle): boolean {
     (a.text.strikethrough ?? false) === (b.text.strikethrough ?? false) &&
     Math.abs((a.text.rotation ?? 0) - (b.text.rotation ?? 0)) < 0.5 &&
     Math.abs((a.text.x ?? 0) - (b.text.x ?? 0)) < 0.5 &&
-    Math.abs((a.text.y ?? 0) - (b.text.y ?? 0)) < 0.5
+    Math.abs((a.text.y ?? 0) - (b.text.y ?? 0)) < 0.5 &&
+    // La boîte doit compter dans l'identité : sans elle, un redimensionnement
+    // au pinceau serait lu comme « aucun changement », donc **non annulable**.
+    Math.abs((a.text.w ?? 0) - (b.text.w ?? 0)) < 0.5 &&
+    Math.abs((a.text.h ?? 0) - (b.text.h ?? 0)) < 0.5
   );
 }
 
@@ -456,8 +471,11 @@ export function participantTextLayer(
     curve: 0,
     x: text.x ?? 0,
     y: text.y ?? 0,
-    w: participantTextWidth(zone),
-    h: Math.round(size * DEFAULT_LINE_HEIGHT * 1.2),
+    // Boîte mesurée quand elle existe, budget sinon. Un `w` absent ferait
+    // displays une boîte fantôme à la reconstruction ; le budget est au moins
+    // une valeur vraie, même si elle ne colle pas au texte court.
+    w: text.w ?? participantTextWidth(zone),
+    h: text.h ?? Math.round(size * DEFAULT_LINE_HEIGHT * 1.2),
     rotation: text.rotation ?? 0,
     z,
     opacity: text.opacity ?? 1,
@@ -522,11 +540,10 @@ function gapBounds(sorted: Layer[], insertAt: number): { below: number; above: n
  * reste visible tout autour. En **mode Cadre**, ils passent sous tous les calques
  * et n'apparaissent qu'à travers les zones transparentes du visuel.
  *
- * Dans les deux cas, le participant **remplit la fenêtre du cadre, il ne le
- * recouvre jamais** : son texte est posé sur sa photo, sous le cadre. Un texte
- * au-dessus du cadre serait le seul calque capable d'effacer le travail du
- * créateur, et le créateur découvrirait après publication un visuel qu'il n'a
- * jamais validé.
+ * La photo garde cette logique de fenêtre. Le texte, lui, est volontairement
+ * placé au-dessus de tous les calques du cadre : quand un participant écrit, le
+ * résultat doit rester lisible et ne jamais disparaître derrière une image, une
+ * forme ou un texte du créateur.
  */
 export function composeDescriptor(
   frame: Descriptor,
@@ -558,43 +575,38 @@ export function composeDescriptor(
   const text = style.text && style.text.content.trim().length > 0 ? style.text : null;
 
   /*
-   * Calques du participant : la photo en premier (derrière), le texte
-   * APRÈS tous les calques du créateur (devant tout).
-   *
-   * On insère la photo juste avant `insertAt` (entre créateur et
-   * calques postérieurs, là où elle est visible dans le cadre), mais
-   * le texte va TOUT EN HAUT du z-index pour qu'il recouvre le
-   * cadre lui-même — c'est la promesse produit : le texte du
-   * participant se lit par-dessus le cadre.
+   * Calques du participant : la photo se glisse dans la fenêtre du cadre, le
+   * texte part au sommet. Les deux ne suivent plus forcément le même endroit du
+   * tableau, donc l'animation réserve aussi deux positions neutres distinctes.
    */
   const { below, above } = gapBounds(sorted, insertAt);
-  const count = text ? 2 : 1;
-  const step = (above - below) / (count + 1);
-
-  const participant: Layer[] = [photoLayer(photo, zone, safe, below + step, style.filter)];
-  if (text) participant.push(participantTextLayer(text, zone, frame.ratio, below + 2 * step));
+  const photoParticipant = photoLayer(photo, zone, safe, (below + above) / 2, style.filter);
+  const textLayer = text
+    ? participantTextLayer(
+        text,
+        zone,
+        frame.ratio,
+        sorted.reduce((m, l) => Math.max(m, l.z), 0) + 10,
+      )
+    : null;
 
   const frameLayers = [
     ...sorted.slice(0, insertAt),
-    ...participant,
+    photoParticipant,
     ...sorted.slice(insertAt),
+    ...(textLayer ? [textLayer] : []),
   ];
 
-  /* Le texte participant passe au-dessus de tout (y compris les
-     calques du créateur qui le suivraient) : son z vaut le max + 1. */
-  if (text) {
-    const maxZ = frameLayers.reduce((m, l) => Math.max(m, l.z), 0);
-    const idx = frameLayers.findIndex((l) => l.id === PARTICIPANT_TEXT_ID);
-    if (idx !== -1) {
-      frameLayers[idx] = { ...frameLayers[idx], z: maxZ + 1 };
-    }
-  }
+  const motionWithPhoto = insertNeutralMotion(frame.motion, insertAt, frame.layers.length, 1);
+  const motionWithText = textLayer
+    ? insertNeutralMotion(motionWithPhoto, frame.layers.length + 1, frame.layers.length + 1, 1)
+    : motionWithPhoto;
 
   return {
     ...frame,
-    layers: frameLayers,
+    layers: [...frameLayers].sort((a, b) => a.z - b.z),
     // Les calques ajoutés décalent les positions : on leur réserve un mouvement
     // neutre pour que les calques du créateur gardent très exactement le leur.
-    motion: insertNeutralMotion(frame.motion, insertAt, frame.layers.length, participant.length),
+    motion: motionWithText,
   };
 }

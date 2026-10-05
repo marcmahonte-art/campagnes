@@ -67,7 +67,7 @@ export interface TextObjectOptions {
    * Budget de largeur, en unités du ratio. Le corps est réduit tant que le texte
    * ne tient pas dedans.
    *
-   * À ne pas confondre avec `width` du calque : `IText` se dimensionne sur son
+   * À ne pas confondre avec `w` du calque : `IText` se dimensionne sur son
    * contenu et **ignore** la largeur qu'on lui donne — c'est `Textbox` qui
    * l'honore. Pour un texte écrit librement par un participant, `width` n'est
    * donc pas une boîte mais un plafond, et sans ce plafond un texte long
@@ -87,6 +87,101 @@ export interface TextObjectOptions {
 }
 
 /**
+ * Ratio d'échelle : bornes acceptées.
+ *
+ * Une garde, pas une préférence. Un texte dont l'échelle sort de cette bande
+ * n'est pas un texte agrandi : c'est un texte dont la boîte a été mal mesurée.
+ * On refuse alors de l'appliquer, pour qu'une valeur aberrante n'efface pas le
+ * contenu du calque — un texte invisible est pire qu'un texte mal dimensionné.
+ */
+const RAPPORT_MIN = 0.02;
+const RAPPORT_MAX = 40;
+
+type TextScaleObject = {
+  scaleX?: number;
+  scaleY?: number;
+  fontSize?: number;
+  set: (props: { fontSize: number }) => unknown;
+  initDimensions?: () => void;
+  setCoords: () => void;
+  getScaledWidth: () => number;
+  getScaledHeight: () => number;
+};
+
+/**
+ * Replie l'échelle d'un texte dans son **corps**, et rend la boîte à l'identique.
+ *
+ * ## Le problème
+ *
+ * Quand on étire un texte par ses poignées, Fabric change `scaleX`/`scaleY` et
+ * **ne touche pas** `fontSize`. Or le descripteur ne connaît que `size` : à la
+ * reconstruction, `createTextObject` rebuild un texte à son corps d'origine, et
+ * le texte revient à sa taille de départ. Mesuré par
+ * `tools/text-geometry-check` : agrandi ×2, il revenait à 100 % — le stockage
+ * portait la bonne valeur, l'affichage mentait quand même.
+ *
+ * ## Pourquoi replier plutôt qu'appliquer la boîte
+ *
+ * On pourrait appliquer `w`/`h` à la reconstruction, comme on le fait pour les
+ * images (`img.scaleX = layer.w / naturalWidth`). Pour un texte, ce serait faux :
+ * `w` est une **emprise**, pas une boîte à atteindre. Un calque texte créé par
+ * `makeTextLayer` annonce déjà `w = 80 % du cadre` alors qu'un mot n'occupe que
+ * 173 px sur 864 : appliquer la boîte étirerait chaque texte sur toute la largeur
+ * du cadre. Le panneau le sait, d'ailleurs — il masque le curseur de taille pour
+ * les textes, parce que pour un texte la taille, c'est le corps.
+ *
+ * Donc : pour un texte, **`size` est l'unique source de taille**, et `w`/`h`
+ * n'en sont que la conséquence. Replier l'échelle dans le corps respecte cette
+ * hiérarchie au lieu de la concurrencer.
+ *
+ * ## Pourquoi c'est idempotent
+ *
+ * Reconstruire avec `size = corps × échelle` redonne une largeur naturelle
+ * `largeur × échelle` : l'emprise est **exactement** celle d'avant, sans arrondi
+ * cumulé d'un cycle à l'autre.
+ *
+ * ## Ce qu'on rend
+ *
+ * - `fontSize` : le corps à écrire dans `size` ;
+ * - `width` / `height` : l'emprise **après** repli, à écrire dans `w` / `h`.
+ *
+ * L'objet est laissé dans l'état exact où il était à l'écran : même taille, même
+ * place. Replier ne doit jamais faire bouger ce que l'utilisateur regarde.
+ */
+export function bakeTextScale(text: TextScaleObject): { fontSize: number; width: number; height: number } {
+  const scaleX = text.scaleX ?? 1;
+  const scaleY = text.scaleY ?? 1;
+  const fontSize = text.fontSize ?? 16;
+
+  // Boîte inchangée si l'échelle est saine : replier serait sans effet visible.
+  const sain =
+    Number.isFinite(scaleX) &&
+    Number.isFinite(scaleY) &&
+    scaleX >= RAPPORT_MIN &&
+    scaleX <= RAPPORT_MAX &&
+    scaleY >= RAPPORT_MIN &&
+    scaleY <= RAPPORT_MAX;
+
+  if (sain && Math.abs(scaleX - 1) > 1e-6) {
+    const nouveauCorps = Math.max(1, Math.round(fontSize * scaleX));
+    text.set({ fontSize: nouveauCorps });
+    // `set('fontSize')` ne recompose pas la boîte : sans `initDimensions()`,
+    // l'emprise resterait celle de l'ancien corps et les poignées se
+    // décolleraient du texte.
+    text.initDimensions?.();
+    text.scaleX = 1;
+    text.scaleY = 1;
+    text.setCoords();
+  }
+
+  return {
+    fontSize: Math.max(1, Math.round(text.fontSize ?? fontSize)),
+    width: Math.round(text.getScaledWidth()),
+    height: Math.round(text.getScaledHeight()),
+  };
+}
+
+/**
  * Réduit le corps jusqu'à ce que le texte tienne dans `maxWidth`.
  *
  * La largeur d'un texte est quasi proportionnelle à son corps : une ou deux
@@ -101,6 +196,15 @@ function fitTextToWidth(text: IText, maxWidth: number): void {
     // resterait celle de l'ancien corps et la boucle ne convergerait jamais.
     text.initDimensions();
   }
+  text.setCoords();
+}
+
+function applyBoxScale(text: IText, _targetWidth: number, _targetHeight: number): void {
+  /*
+   * `IText` ne doit pas être étiré pour remplir `w`/`h` : ces valeurs servent
+   * souvent de budget de largeur, notamment dans le parcours participant. Les
+   * appliquer comme une boîte ferait gonfler un mot court jusqu'au bord du cadre.
+   */
   text.setCoords();
 }
 
@@ -159,6 +263,15 @@ export async function createTextObject(
     textAlign: layer.align,
     charSpacing: layer.letterSpacing,
     lineHeight: layer.lineHeight || DEFAULT_LINE_HEIGHT,
+    /*
+     * `width` est SANS EFFET sur un `IText` : il se dimensionne sur son contenu
+     * et ignore la largeur qu'on lui donne (c'est `Textbox` qui l'honore).
+     *
+     * On ne supprime pas la ligne : elle rend l'intention lisible, et un jour un
+     * `Textbox` la lirait pour de bon. Mais se fier à elle pour la taille à
+     * l'écran serait une erreur — d'où `bakeTextScale`, qui replie l'échelle du
+     * canvas dans le corps.
+     */
     width: layer.w,
     originX: 'left',
     originY: 'top',
@@ -181,6 +294,17 @@ export async function createTextObject(
     await applyCurve(text, layer.curve);
   }
 
+  /*
+   * Pas d'application de la boîte ici, et c'est délibéré.
+   *
+   * Pour une image, `w` est une boîte à atteindre : l'éditeur fait
+   * `img.scaleX = layer.w / naturalWidth` et l'aller-retour est exact. Pour un
+   * texte, `w` est une **emprise**, et elle est vide avant la première mesure.
+   * L'appliquer ici étirerait chaque texte court sur toute la largeur du cadre.
+   *
+   * La taille d'un texte passe donc par son corps : c'est `bakeTextScale` qui,
+   * à l'émission, replie l'échelle du canvas dans `size`.
+   */
   return text;
 }
 

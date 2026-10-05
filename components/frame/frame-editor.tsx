@@ -23,7 +23,7 @@ import { applyTemplate, type FrameTemplate } from '@/lib/templates';
 import { cn } from '@/lib/cn';
 import { ratioSpec } from '@/lib/ratios';
 import { DEFAULT_LINE_HEIGHT, effectiveMotion, makeLayerId, nextZ } from '@/lib/descriptor';
-import { applyCurve, createTextObject } from '@/lib/fabric-text';
+import { applyCurve, bakeTextScale, createTextObject } from '@/lib/fabric-text';
 import { applyShapePaint, createShapeObject } from '@/lib/fabric-shape';
 import { shapeSpec } from '@/lib/shapes';
 
@@ -308,12 +308,25 @@ export function FrameEditor({
           const weight: TextLayer['weight'] =
             t.fontWeight === 'bold' || t.fontWeight === 700 ? 'bold' : 'normal';
           const style: TextLayer['style'] = t.fontStyle === 'italic' ? 'italic' : 'normal';
+
+          /*
+           * Un texte étiré par ses poignées porte une **échelle**, pas un corps :
+           * Fabric change `scaleX` et laisse `fontSize` intact. Or le descripteur
+           * ne connaît que `size`, donc sans ce repli le texte revenait à son
+           * corps d'origine au rechargement — un texte agrandi ×2 retombait à
+           * 100 %. Le repli remet l'échelle dans le corps et rend la boîte, sans
+           * bouger de ce que l'utilisateur regarde.
+           */
+          const repli = bakeTextScale(t);
+
           const layer: TextLayer = {
             ...base,
             type: 'text',
             text: t.text ?? '',
             font,
-            size: Math.round(t.fontSize ?? 96),
+            size: repli.fontSize,
+            w: repli.width,
+            h: repli.height,
             color: typeof t.fill === 'string' ? t.fill : '#FFFFFF',
             align,
             weight,

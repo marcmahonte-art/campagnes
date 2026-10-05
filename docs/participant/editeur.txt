@@ -1,0 +1,37 @@
+Tu travailles sur l’éditeur de Campagnes.
+
+Je veux corriger définitivement le comportement du texte dans l’éditeur.
+
+IMPORTANT : avant de coder, analyse le code existant du canvas, des calques, du système de sélection, du positionnement et de l’export. Réutilise l’architecture existante. Ne crée pas un deuxième éditeur, deuxième système de calques ou deuxième système d’export.
+
+## COMPORTEMENT À OBTENIR
+
+Le texte doit être un véritable élément du canvas, éditable directement sur le visuel.
+
+Quand l’utilisateur clique sur :
+
+« Ajouter du texte »
+
+alors :
+
+1. un nouveau calque texte est immédiatement créé sur le canvas ;
+2. il apparaît directement sur le visuel ;
+3. il est immédiatement sélectionné ;
+4. il est placé à une position par défaut raisonnable ;
+5. l’utilisateur peut écrire directement dans le texte sur le canvas ;
+6. il peut déplacer le texte ;
+7. il peut modifier ses propriétés avec les contrôles existants ;
+8. il peut cliquer sur « Valider » pour terminer l’édition ;
+9. le texte reste ensuite présent comme un calque normal ;
+10. l’utilisateur peut cliquer à nouveau sur « Ajouter du texte » pour créer un deuxième texte indépendant.
+
+## RÈGLE ABSOLUE DE Z-INDEX
+
+C’est le point le plus important.
+
+### TOUS LES TEXTES AJOUTÉS PAR L’UTILISATEUR DOIVENT ÊTRE AU-DESSUS DE TOUS LES AUTRES CALQUES DU FRAME.
+
+Lorsqu’un texte est créé :
+
+```text
+Z-INDEX MAXIMUM

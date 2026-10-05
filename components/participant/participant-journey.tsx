@@ -67,6 +67,7 @@ import { useHistory } from '@/components/editor/use-history';
 import { PHOTO_FILTER_PRESETS, type PhotoFilter } from '@/lib/photo-filters';
 import { blockedMessage, privateLinkBlockedMessage, remaining } from '@/lib/quota';
 import { exportPlanFor, shouldWatermark } from '@/lib/watermark-policy';
+import { PARTICIPANT_PAYMENT } from '@/lib/pricing/config';
 import { FONTS } from '@/lib/fonts';
 import type { CampaignQuota, GalleryItem } from '@/lib/types';
 
@@ -454,6 +455,35 @@ export function ParticipantJourney({
     [campaign, composed, distributionToken, exportPlan],
   );
 
+  const runWatermarkedExport = useCallback(
+    async (kind: 'png' | 'video') => {
+      if (!composed || !campaign) return;
+      setError(null);
+      setExporting(kind);
+      setProgress(0);
+      try {
+        if (kind === 'png') {
+          const dataUrl = await exportPng({ descriptor: composed, plan: 'free' });
+          downloadBlob(dataUrlToBlob(dataUrl), exportFilename(campaign.name, 'png'));
+        } else {
+          const result = await exportVideo({
+            descriptor: composed,
+            plan: 'free',
+            onProgress: (p) => setProgress(p.ratio),
+          });
+          downloadBlob(result.blob, exportFilename(campaign.name, result.extension));
+        }
+        setDownloaded(true);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "L'enregistrement a échoué.");
+      } finally {
+        setExporting(null);
+        setProgress(0);
+      }
+    },
+    [campaign, composed],
+  );
+
   /* ---------------- États transitoires ---------------- */
   if (loading) {
     return (
@@ -494,8 +524,8 @@ export function ParticipantJourney({
       {/* ---------------- En-tête minimal ----------------
           Le participant vient faire une chose précise : on ne met rien qui
           puisse détourner son attention avant qu'il ait son visuel. */}
-      <header className="border-b border-gray-200">
-        <div className="container-shell flex h-16 items-center justify-between gap-4">
+      <header className="border-b border-gray-200 bg-white/90 backdrop-blur">
+        <div className="container-shell flex h-14 items-center justify-between gap-4 md:h-16">
           <Logo size="sm" />
           {creatorLabel && (
             <span className="truncate text-[13px] text-gray-500">
@@ -505,8 +535,8 @@ export function ParticipantJourney({
         </div>
       </header>
 
-      <main className="container-shell py-10 md:py-14">
-        <div className="mx-auto max-w-3xl">
+      <main className="container-shell py-6 md:py-9">
+        <div className="mx-auto max-w-2xl">
           {/* ---------------- Titre ---------------- */}
           <div className="text-center">
             <span className="inline-flex items-center gap-1.5 rounded-pill border border-gray-200 px-3 py-1 text-[11px] font-medium text-gray-500">
@@ -520,10 +550,10 @@ export function ParticipantJourney({
                 className="mx-auto mt-4 block max-h-12 w-auto object-contain"
               />
             )}
-            <h1 className="mt-4 text-[28px] font-bold leading-tight md:text-[38px]">
+            <h1 className="mt-3 text-[22px] font-bold leading-tight md:text-[28px]">
               {campaign.name}
             </h1>
-            <p className="mx-auto mt-3 max-w-xl text-sm leading-relaxed text-gray-500">
+            <p className="mx-auto mt-2 max-w-lg text-[13px] leading-relaxed text-gray-500">
               Choisissez une photo, placez-la comme vous voulez, puis enregistrez votre visuel.
               Aucun compte, aucune application.
             </p>
@@ -534,7 +564,7 @@ export function ParticipantJourney({
             Les réglages vivent sous l'aperçu, pas dans un panneau à côté — le
             regard ne quitte jamais le visuel qu'il est en train de composer.
           */}
-          <div className="mt-10">
+          <div className="mt-6 md:mt-8">
             {/* ---------------- Scène ---------------- */}
             <div className="min-w-0">
               {photo && placement ? (
@@ -543,7 +573,7 @@ export function ParticipantJourney({
                   photo={photo}
                   placement={placement}
                   style={style}
-                  watermark={showWatermark}
+                  watermark={showWatermark || blocked}
                   onPlacementChange={setPlacementFromCanvas}
                   onTextChange={setTextFromCanvas}
                 />
@@ -561,8 +591,8 @@ export function ParticipantJourney({
                     void choosePhoto(e.dataTransfer.files?.[0]);
                   }}
                   className={
-                    'relative flex min-h-[320px] flex-col items-center justify-center gap-5 overflow-hidden rounded-lg border-2 border-dashed p-8 text-center transition-colors ' +
-                    (dragging ? 'border-purple bg-purple/5' : 'border-gray-200 bg-gray-50')
+                    'relative flex min-h-[320px] flex-col items-center justify-center gap-5 overflow-hidden rounded-2xl border-2 border-dashed p-6 text-center shadow-[0_18px_55px_rgba(15,23,42,0.08)] transition-colors md:p-8 ' +
+                    (dragging ? 'border-purple bg-purple/5' : 'border-gray-200 bg-white')
                   }
                 >
                   {campaign.frame?.thumbnail_url ? (
@@ -632,7 +662,7 @@ export function ParticipantJourney({
             {photo && placement ? (
               <>
                 {/* ---------------- Réglages, juste sous l'aperçu ---------------- */}
-                <div className="mt-5">
+                <div className="mt-4 rounded-2xl border border-gray-200 bg-white p-3 shadow-sm md:p-4">
                   <div className="flex items-center gap-3">
                     <button
                       type="button"
@@ -645,7 +675,7 @@ export function ParticipantJourney({
                             : current,
                         )
                       }
-                      className="flex size-9 shrink-0 items-center justify-center rounded-pill border border-gray-200 text-gray-700 transition-colors hover:border-ink disabled:opacity-35 disabled:hover:border-gray-200"
+                      className="flex size-10 shrink-0 items-center justify-center rounded-pill border border-gray-200 text-gray-700 transition-colors hover:border-ink disabled:opacity-35 disabled:hover:border-gray-200"
                     >
                       <Minus className="size-4" aria-hidden />
                     </button>
@@ -678,7 +708,7 @@ export function ParticipantJourney({
                             : current,
                         )
                       }
-                      className="flex size-9 shrink-0 items-center justify-center rounded-pill border border-gray-200 text-gray-700 transition-colors hover:border-ink disabled:opacity-35 disabled:hover:border-gray-200"
+                      className="flex size-10 shrink-0 items-center justify-center rounded-pill border border-gray-200 text-gray-700 transition-colors hover:border-ink disabled:opacity-35 disabled:hover:border-gray-200"
                     >
                       <Plus className="size-4" aria-hidden />
                     </button>
@@ -736,7 +766,7 @@ export function ParticipantJourney({
                     </Button>
                   </div>
 
-                  <p className="mt-3 text-center text-[13px] text-gray-500">
+                  <p className="mt-3 text-center text-[12px] text-gray-500">
                     {axes && axes.x && axes.y
                       ? 'Faites glisser la photo pour la positionner.'
                       : 'Zoomez pour pouvoir déplacer la photo.'}
@@ -747,7 +777,7 @@ export function ParticipantJourney({
                     Six choix, une ligne, aucun réglage à comprendre. Le filtre
                     est porté par le descripteur, donc l'aperçu et le fichier
                     téléchargé montrent forcément la même image. */}
-                <div className="mt-6">
+                <div className="mt-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
                   <span className="text-[13px] font-semibold text-gray-700">Filtre</span>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {PHOTO_FILTER_PRESETS.map((preset) => {
@@ -779,7 +809,7 @@ export function ParticipantJourney({
                     un champ est infiniment plus sûr qu'un double-clic au doigt.
                     Le canvas sert à le placer — même partage des rôles que le
                     zoom, qui se règle au curseur et non aux coins de l'image. */}
-                <div className="mt-6">
+                <div className="mt-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-[13px] font-semibold text-gray-700">Texte</span>
                     {style.text && (
@@ -795,7 +825,7 @@ export function ParticipantJourney({
                   </div>
 
                   {style.text ? (
-                    <div className="mt-3 flex flex-col gap-3 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                    <div className="mt-3 flex flex-col gap-3">
                       {/* 1. Saisie directe du texte */}
                       <Input
                         value={style.text.content}
@@ -812,7 +842,7 @@ export function ParticipantJourney({
                               : current,
                           )
                         }
-                        placeholder="Enter your text"
+                        placeholder="Votre texte"
                         maxLength={TEXT_MAX_LENGTH}
                         className="rounded-xl border-gray-200 bg-gray-50/70 text-center font-medium text-ink focus:bg-white"
                         aria-label="Votre texte"
@@ -1044,7 +1074,7 @@ export function ParticipantJourney({
                           onClick={() => setStyle((current) => ({ ...current, text: null }))}
                           className="flex-1 rounded-full border border-gray-200 bg-white py-2.5 text-center text-sm font-medium text-gray-700 shadow-xs transition-colors hover:bg-gray-50 active:scale-98"
                         >
-                          Discard
+                          Retirer
                         </button>
                         <button
                           type="button"
@@ -1054,7 +1084,7 @@ export function ParticipantJourney({
                           }}
                           className="flex-1 rounded-full bg-[#00D09E] py-2.5 text-center text-sm font-bold text-white shadow-sm transition-transform hover:brightness-105 active:scale-98"
                         >
-                          Done
+                          Valider
                         </button>
                       </div>
                     </div>
@@ -1077,7 +1107,7 @@ export function ParticipantJourney({
                   )}
                 </div>
 
-                <div id="export-section" className="mt-6 rounded-lg border border-gray-200 bg-white p-5">
+                <div id="export-section" className="mt-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm md:p-5">
                   <span className="text-[13px] font-semibold text-gray-700">
                     Enregistrer mon visuel
                   </span>
@@ -1205,7 +1235,7 @@ export function ParticipantJourney({
                 )}
               </>
             ) : (
-              <Card className="mt-6 p-5">
+              <Card className="mt-4 p-5">
                 <span className="text-[13px] font-semibold text-gray-700">Comment ça marche</span>
                 <ol className="mt-3 flex flex-col gap-3 text-[13px] leading-relaxed text-gray-500">
                   <li className="flex gap-2">
@@ -1259,6 +1289,24 @@ export function ParticipantJourney({
                   Vous pouvez continuer à composer votre visuel : seul le téléchargement est
                   momentanément indisponible.
                 </p>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void runWatermarkedExport('png')}
+                  disabled={!composed || exporting !== null}
+                >
+                  {exporting === 'png' ? (
+                    <>
+                      <Loader2 className="size-4 animate-spin" aria-hidden />
+                      Préparation…
+                    </>
+                  ) : (
+                    <>
+                      <Download className="size-4" aria-hidden />
+                      Continuer avec le filigrane
+                    </>
+                  )}
+                </Button>
               </div>
             )}
 
@@ -1272,13 +1320,32 @@ export function ParticipantJourney({
                 </span>
                 <p className="text-[13px] leading-relaxed text-gray-600">
                   {campaign.name} a été utilisée{' '}
-                  {new Intl.NumberFormat('fr-FR').format(quota.used)} fois. Son creator peut la
-                  prolonger — son visuel n’est pas perdu, revenez plus tard.
+                  {new Intl.NumberFormat('fr-FR').format(quota.used)} fois. Vous pouvez repartir
+                  avec une version filigranée, sans compte, ou demander au créateur de prolonger la
+                  campagne.
                 </p>
                 <p className="text-xs leading-relaxed text-gray-400">
-                  Vous pouvez continuer à composer votre visuel : seul le téléchargement est
-                  momentanément indisponible.
+                  Le retrait du filigrane participant est prévu à {PARTICIPANT_PAYMENT.label} par
+                  Mobile Money, valable 24 h.
                 </p>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void runWatermarkedExport('png')}
+                  disabled={!composed || exporting !== null}
+                >
+                  {exporting === 'png' ? (
+                    <>
+                      <Loader2 className="size-4 animate-spin" aria-hidden />
+                      Préparation…
+                    </>
+                  ) : (
+                    <>
+                      <Download className="size-4" aria-hidden />
+                      Continuer avec le filigrane
+                    </>
+                  )}
+                </Button>
               </div>
             )}
 
@@ -1299,7 +1366,7 @@ export function ParticipantJourney({
           </div>
 
           {/* ---------------- Rebond produit ---------------- */}
-          <div className="mt-14 border-t border-gray-200 pt-8">
+          <div className="mt-10 border-t border-gray-200 pt-6">
             <div className="flex flex-col items-center justify-between gap-4 text-center md:flex-row md:text-left">
               <div>
                 <p className="text-[15px] font-semibold">Vous organisez votre propre campagne ?</p>

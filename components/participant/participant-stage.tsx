@@ -7,7 +7,13 @@ import { ratioSpec } from '@/lib/ratios';
 import { photoZone } from '@/lib/descriptor';
 import { createImageObject } from '@/lib/fabric-image';
 import { createShapeObject } from '@/lib/fabric-shape';
-import { createBrandGradient, createTextObject, resolveTextFill, setTextContent } from '@/lib/fabric-text';
+import {
+  createBrandGradient,
+  createTextObject,
+  bakeTextScale,
+  resolveTextFill,
+  setTextContent,
+} from '@/lib/fabric-text';
 import {
   DEFAULT_PARTICIPANT_STYLE,
   clampPlacement,
@@ -174,10 +180,22 @@ export function ParticipantStage({
 
       object.set({ left: safe.x, top: safe.y });
       object.setCoords();
+
+      /*
+       * Le repli de l'échelle : un texte étiré au pinceau porte un `scaleX`, pas
+       * un corps. Sans cette étape, `size` resterait celui d'origine et le texte
+       * reviendrait à sa taille initiale au rechargement — y compris dans le
+       * fichier téléchargé, puisque c'est le même descripteur qui sert à l'export.
+       */
+      const repli = bakeTextScale(object as IText);
+
       onTextChange?.({
         ...current,
         x: Math.round(safe.x),
         y: Math.round(safe.y),
+        w: repli.width,
+        h: repli.height,
+        size: repli.fontSize,
         rotation: Math.round(object.angle ?? current.rotation ?? 0),
       } as ParticipantText);
     },
@@ -195,6 +213,28 @@ export function ParticipantStage({
       fitWidth: participantTextWidth(zone),
     });
   }, [zone, descriptor.ratio]);
+
+  const decorateTextObject = useCallback((text: IText) => {
+    text.set({
+      hasControls: true,
+      hasBorders: true,
+      borderColor: '#111827',
+      cornerColor: '#ffffff',
+      cornerStrokeColor: '#111827',
+      cornerSize: 11,
+      cornerStyle: 'circle',
+      transparentCorners: false,
+      lockRotation: false,
+    });
+  }, []);
+
+  const bringTextToFront = useCallback(() => {
+    const canvas = canvasRef.current;
+    const text = textObjectRef.current;
+    if (!canvas || !text) return;
+    canvas.bringObjectToFront(text);
+    canvas.requestRenderAll();
+  }, []);
 
   /* ---------------- Montage ---------------- */
   useEffect(() => {
@@ -239,32 +279,7 @@ export function ParticipantStage({
         /* l'absence de photo est gérée par le parent, qui ne monte pas cette scène */
       }
 
-      /*
-       * 1bis. Le texte du participant, AU-DESSUS de sa photo ET du cadre.
-       *
-       * Il est inséré en dernier (au-dessus de tout) pour que le texte
-       * du participant recouvre les calques du cadre — c'est la promesse
-       * produit : le texte se lit par-dessus le cadre.
-       */
-      const text = await buildTextObject();
-      if (disposed) return;
-      if (text) {
-        text.set({
-          hasControls: true,
-          hasBorders: true,
-          borderColor: '#ef4444',
-          cornerColor: '#ffffff',
-          cornerStrokeColor: '#9ca3af',
-          cornerSize: 10,
-          cornerStyle: 'circle',
-          transparentCorners: false,
-          lockRotation: false,
-        });
-        canvas.insertAt(canvas.getObjects().length - 1, text);
-        textObjectRef.current = text;
-      }
-
-      /* 2. Les calques du cadre — par-dessus, inertes. */
+      /* 2. Les calques du cadre — inertes. */
       for (const layer of layers) {
         try {
           if (layer.type === 'shape') {
@@ -294,7 +309,24 @@ export function ParticipantStage({
       }
 
       /*
-       * 3. Le badge « Créé avec Campagnes », par-dessus tout.
+       * 3. Le texte du participant, AU-DESSUS de sa photo ET du cadre.
+       *
+       * Il est ajouté après les calques du créateur, puis remonté explicitement :
+       * l'ordre Fabric affiché doit porter la même règle que le descripteur et
+       * l'export. Un calque de cadre publié après coup ne peut donc plus passer
+       * devant ce que le participant écrit.
+       */
+      const text = await buildTextObject();
+      if (disposed) return;
+      if (text) {
+        decorateTextObject(text);
+        canvas.add(text);
+        textObjectRef.current = text;
+        bringTextToFront();
+      }
+
+      /*
+       * 4. Le badge « Créé avec Campagnes ».
        *
        * Il est dessiné par la MÊME fonction que l'export (`lib/watermark.ts`).
        * Un simple aperçu en HTML finirait par diverger de quelques pixels — et
@@ -304,6 +336,7 @@ export function ParticipantStage({
       if (watermark) {
         await addBadge(canvas, spec.width, spec.height);
         if (disposed) return;
+        bringTextToFront();
       }
 
       canvas.requestRenderAll();
@@ -374,6 +407,8 @@ export function ParticipantStage({
     emit,
     emitText,
     buildTextObject,
+    decorateTextObject,
+    bringTextToFront,
     descriptor.photo_anchor,
     descriptor.ratio,
     fitToView,
@@ -429,30 +464,17 @@ export function ParticipantStage({
       const target = canvasRef.current;
       if (!target) return;
 
-      // Juste au-dessus de la photo : la même place que dans le descripteur.
-      const photoIndex = photoObjectRef.current
-        ? target.getObjects().indexOf(photoObjectRef.current)
-        : -1;
-      object.set({
-        hasControls: true,
-        hasBorders: true,
-        borderColor: '#ef4444',
-        cornerColor: '#ffffff',
-        cornerStrokeColor: '#9ca3af',
-        cornerSize: 10,
-        cornerStyle: 'circle',
-        transparentCorners: false,
-        lockRotation: false,
-      });
-      target.insertAt(photoIndex + 1, object);
+      decorateTextObject(object);
+      target.add(object);
       textObjectRef.current = object;
+      bringTextToFront();
       target.requestRenderAll();
     })();
 
     return () => {
       alive = false;
     };
-  }, [textActive, ready, buildTextObject]);
+  }, [textActive, ready, buildTextObject, decorateTextObject, bringTextToFront]);
 
   /* ---------------- Le contenu, la couleur, la taille, le style, l'opacité du texte change ---------------- */
   const textContent = style.text?.content ?? '';
@@ -489,7 +511,36 @@ export function ParticipantStage({
         document.head.appendChild(link);
       }
       setTextContent(object, current.content, participantTextWidth(zone));
+      bringTextToFront();
       canvas.requestRenderAll();
+
+      /*
+       * La boîte est remesurée ici, à chaque frappe et à chaque changement de
+       * corps. Elle fait partie de ce que le participant a choisi : sans cette
+       * mesure, `w` garderait la valeur d'une frappe antérieure.
+       *
+       * Ce n'est pas grave pour l'affichage — `w` ne pilote rien au rendu d'un
+       * `IText` — mais ce serait une donnée fausse dans le descripteur
+       * téléchargé, donc une incohérence entre ce que le participant règle et ce
+       * qui est stocké.
+       *
+       * On n'émet que sur un **écart réel** : une émission à chaque frappe
+       * remplirait l'historique d'annulation d'entrées vides.
+       */
+      const mesure = bakeTextScale(object);
+      const courant = styleRef.current.text;
+      if (
+        courant &&
+        (Math.abs((courant.w ?? -1) - mesure.width) > 0.5 ||
+          Math.abs((courant.h ?? -1) - mesure.height) > 0.5)
+      ) {
+        onTextChange?.({
+          ...courant,
+          w: mesure.width,
+          h: mesure.height,
+          size: mesure.fontSize,
+        } as ParticipantText);
+      }
     })();
 
     return () => {
@@ -507,6 +558,7 @@ export function ParticipantStage({
     style.text?.rotation,
     style.text?.font,
     zone,
+    bringTextToFront,
   ]);
 
   /* ---------------- Le parent change le placement (curseur de zoom) ---------------- */
@@ -540,17 +592,20 @@ export function ParticipantStage({
       ref={stageRef}
       className={cn(
         'relative flex min-h-[280px] items-center justify-center overflow-hidden',
-        'rounded-lg p-4 md:min-h-[380px] md:p-6',
+        'rounded-2xl border border-gray-200 p-3 shadow-[0_18px_55px_rgba(15,23,42,0.12)] md:min-h-[380px] md:p-5',
       )}
       style={{
-        backgroundColor: '#787878',
+        background:
+          'linear-gradient(135deg, rgba(255,255,255,0.95), rgba(248,250,252,0.92))',
       }}
     >
       <div
         className="relative"
         style={{
           lineHeight: 0,
-          boxShadow: '0 4px 24px rgba(0,0,0,0.45), 0 1px 4px rgba(0,0,0,0.3)',
+          boxShadow: '0 18px 45px rgba(15,23,42,0.18), 0 1px 0 rgba(255,255,255,0.85)',
+          borderRadius: 12,
+          overflow: 'hidden',
         }}
       >
         {/* Damier de transparence sous le canvas (style Twibbonize / Photopea) */}

@@ -6,8 +6,8 @@
  * en découlent, invisibles à la lecture et coûteuses si elles cassent :
  *
  *   1. l'ordre d'empilement — le texte doit passer au-dessus de la photo et
- *      rester sous le cadre, sinon le participant peut effacer le travail du
- *      créateur, ou son texte devient invisible sans qu'il comprenne pourquoi ;
+ *      du cadre, sinon il peut devenir invisible sans que le participant
+ *      comprenne pourquoi ;
  *   2. le plan d'animation — `sampleAt()` indexe les mouvements **par position**,
  *      donc insérer deux calques sans réserver deux mouvements neutres décale
  *      toute l'animation des calques suivants.
@@ -165,13 +165,13 @@ async function main(): Promise<void> {
   {
     const composed = composeDescriptor(makeFrame(), photo, placement, STYLE_WITH_TEXT);
     eq(
-      'le texte est au-dessus de la photo, sous le cadre',
+      'le texte est au-dessus de la photo et du cadre',
       ids(composed),
-      `${PARTICIPANT_PHOTO_ID} → ${PARTICIPANT_TEXT_ID} → a → b → c`,
+      `${PARTICIPANT_PHOTO_ID} → a → b → c → ${PARTICIPANT_TEXT_ID}`,
     );
     ok('les z croissent strictement', strictlyRising(composed), composed.layers.map((l) => l.z).join(', '));
     eq('le filtre voyage dans le descripteur', (composed.layers[0] as ImageLayer).filter, 'sepia');
-    eq('deux mouvements neutres sont réservés', motions(composed), '0,0,1,2,3');
+    eq('les mouvements neutres encadrent photo et texte', motions(composed), '0,1,2,3,0');
   }
 
   /* ---------------- 3. Mode Fond (ancre sur « b ») ---------------- */
@@ -179,14 +179,12 @@ async function main(): Promise<void> {
   {
     const composed = composeDescriptor(makeFrame('b'), photo, placement, STYLE_WITH_TEXT);
     eq(
-      'photo et texte juste au-dessus du calque d’ancrage',
+      'la photo reste près de l’ancre, le texte passe tout en haut',
       ids(composed),
-      `a → b → ${PARTICIPANT_PHOTO_ID} → ${PARTICIPANT_TEXT_ID} → c`,
+      `a → b → ${PARTICIPANT_PHOTO_ID} → c → ${PARTICIPANT_TEXT_ID}`,
     );
     ok('les z croissent strictement', strictlyRising(composed), composed.layers.map((l) => l.z).join(', '));
-    // Le bloc neutre doit être contigu, sinon les calques suivants héritent du
-    // mouvement de la photo.
-    eq('mouvements neutres contigus après l’ancre', motions(composed), '1,0,0,2,3');
+    eq('mouvements neutres alignés sur photo et texte', motions(composed), '1,2,0,3,0');
   }
 
   /* ---------------- 4. Texte vide ---------------- */

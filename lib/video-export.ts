@@ -17,7 +17,7 @@ import { createShapeObject } from './fabric-shape';
 import { createImageObject } from './fabric-image';
 import { DEFAULT_MOTION_DURATION, sampleAt, type MotionPlan } from './motion';
 import { hasFeature, type PlanId } from './plans';
-import { PARTICIPANT_PHOTO_ID, effectiveMotion, photoZone } from './descriptor';
+import { PARTICIPANT_PHOTO_ID, PARTICIPANT_TEXT_ID, effectiveMotion, photoZone } from './descriptor';
 import { addBadge } from './watermark';
 import type { Descriptor, Layer } from './types';
 
@@ -216,6 +216,13 @@ async function addWatermark(target: RenderTarget): Promise<void> {
   target.canvas.renderAll();
 }
 
+function bringParticipantTextToFront(target: RenderTarget): void {
+  const index = target.layers.findIndex((layer) => layer.id === PARTICIPANT_TEXT_ID);
+  const text = index === -1 ? null : target.objects[index];
+  if (!text) return;
+  target.canvas.bringObjectToFront(text);
+}
+
 /* ------------------------------------------------------------------ */
 /* PNG                                                                 */
 /* ------------------------------------------------------------------ */
@@ -230,6 +237,7 @@ export async function exportPng(options: ExportOptions): Promise<string> {
   try {
     resetToBase(target);
     if (!hasFeature(options.plan, 'no_watermark')) await addWatermark(target);
+    bringParticipantTextToFront(target);
     target.canvas.renderAll();
     return target.element.toDataURL('image/png');
   } finally {
@@ -284,6 +292,7 @@ export async function exportVideo(options: ExportOptions): Promise<VideoResult> 
   try {
     resetToBase(target);
     if (!hasFeature(plan, 'no_watermark')) await addWatermark(target);
+    bringParticipantTextToFront(target);
     target.canvas.renderAll();
 
     const { mimeType, extension } = pickMimeType();
