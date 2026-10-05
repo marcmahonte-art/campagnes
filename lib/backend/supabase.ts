@@ -852,7 +852,7 @@ export const supabaseBackend: Backend = {
   async setPlan(_userId, _plan: PlanKind): Promise<Result> {
     return {
       error:
-        "L'activation d'une formule payante se fait par notre équipe. Écrivez-nous à bonjour@campagnes.app et nous l'activons sous 24 h.",
+        'Activez une formule depuis la page Tarifs avec un paiement Mobile Money confirmé.',
     };
   },
 

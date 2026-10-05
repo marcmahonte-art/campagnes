@@ -9,8 +9,10 @@ import { Card } from '@/components/ui/card';
 import { Spinner } from '@/components/ui/feedback';
 import { CampaignCard } from '@/components/dashboard/campaign-card';
 import { CampaignTypeSelectorModal } from '@/components/campaign/type-selector-modal';
+import { PlanBadge } from '@/components/plans/plan-badge';
 import { backend } from '@/lib/backend';
 import { useSession } from '@/lib/backend/session';
+import { PRICING_PLANS } from '@/lib/pricing/config';
 import type { CampaignKind, CampaignWithFrame } from '@/lib/types';
 
 export default function DashboardPage() {
@@ -58,6 +60,8 @@ export default function DashboardPage() {
         </Button>
       </header>
 
+      {user && campaigns !== null && <MonetisationBanner plan={user.plan} campaigns={campaigns} />}
+
       {campaigns === null ? (
         <div className="flex h-56 items-center justify-center">
           <Spinner className="size-5 text-gray-400" />
@@ -86,6 +90,51 @@ export default function DashboardPage() {
         }}
       />
     </div>
+  );
+}
+
+function MonetisationBanner({
+  plan,
+  campaigns,
+}: {
+  plan: 'free' | 'creator' | 'organization';
+  campaigns: CampaignWithFrame[];
+}) {
+  const planConfig = PRICING_PLANS[plan];
+  const used = campaigns.reduce((sum, campaign) => sum + campaign.participants_used, 0);
+  const granted = campaigns.reduce((sum, campaign) => sum + campaign.participants_granted, 0);
+
+  return (
+    <Card className="grid gap-4 p-4 md:grid-cols-[1.2fr_1fr_1fr] md:items-center">
+      <div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[13px] font-semibold text-ink">Formule active</span>
+          <PlanBadge plan={plan} />
+        </div>
+        <p className="mt-1 text-[12px] leading-relaxed text-gray-500">
+          {planConfig.quotaLabel}. Prépaiement sans reconduction automatique.
+        </p>
+      </div>
+
+      <div className="rounded-md bg-gray-50 px-3 py-2.5">
+        <span className="block text-[11px] font-medium uppercase tracking-wide text-gray-400">
+          Campagnes
+        </span>
+        <span className="mt-1 block text-[14px] font-semibold text-ink">
+          {new Intl.NumberFormat('fr-FR').format(used)} /{' '}
+          {new Intl.NumberFormat('fr-FR').format(granted)} téléchargements utilisés
+        </span>
+      </div>
+
+      <div className="rounded-md bg-gray-50 px-3 py-2.5">
+        <span className="block text-[11px] font-medium uppercase tracking-wide text-gray-400">
+          Crédits achetés
+        </span>
+        <span className="mt-1 block text-[13px] font-medium text-gray-600">
+          Suivis sur chaque campagne
+        </span>
+      </div>
+    </Card>
   );
 }
 

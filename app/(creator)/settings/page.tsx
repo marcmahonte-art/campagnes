@@ -14,8 +14,9 @@ import { FeatureGate } from '@/components/plans/feature-gate';
 import { backend, canSelfActivatePlan } from '@/lib/backend';
 import { useSession } from '@/lib/backend/session';
 import { isValidUsername, normalizeUsername } from '@/lib/slug';
-import { FEATURE_LABELS, PLAN_LIST, hasFeature, planContactHref, planOf } from '@/lib/plans';
+import { FEATURE_LABELS, PLAN_LIST, hasFeature, planOf } from '@/lib/plans';
 import { formatFcfa } from '@/lib/plans';
+import { PAYMENT_METHOD_LABELS } from '@/lib/pricing/config';
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -211,16 +212,16 @@ export default function SettingsPage() {
                     {plan.features.length > 4 && ` · +${plan.features.length - 4}`}
                   </p>
 
-                  {/* En mode Supabase, la formule ne s'écrit plus depuis le
-                      navigateur (migration 0005). Le bouton devient une
-                      demande de contact — jamais un faux bouton d'achat. */}
+                  {/* En mode Supabase, la formule ne s'écrit plus directement
+                      depuis les paramètres. Le tunnel public `/tarifs` porte le
+                      paiement Mobile Money et la réconciliation serveur. */}
                   {!canSelfActivatePlan && !current ? (
                     <ButtonLink
-                      href={planContactHref(plan)}
+                      href="/tarifs"
                       variant={plan.highlight ? 'primary' : 'secondary'}
                       size="sm"
                     >
-                      Nous contacter
+                      {plan.id === 'free' ? 'Voir la formule' : 'Payer par Mobile Money'}
                     </ButtonLink>
                   ) : (
                     <Button
@@ -243,7 +244,7 @@ export default function SettingsPage() {
 
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-200 pt-4">
             <p className="text-[13px] text-gray-500">
-              La distribution est facturée à l’usage, sur devis, dans toutes les formules.
+              La distribution se paie à l’usage. Les crédits achetés n’expirent jamais.
             </p>
             <Link
               href="/tarifs"
@@ -255,8 +256,8 @@ export default function SettingsPage() {
 
           <p className="text-[12px] leading-relaxed text-gray-500">
             {canSelfActivatePlan
-              ? "Aucun prestataire de paiement n'est branché à ce stade : le changement de formule est immédiat, pour la recette."
-              : "Aucun prestataire de paiement n'est branché à ce stade. L'activation d'une formule payante se fait par notre équipe : écrivez-nous et nous l'activons sous 24 h."}
+              ? "Mode démonstration : le changement de formule est immédiat pour la recette."
+              : `${PAYMENT_METHOD_LABELS.reassurance} Prépaiement sans reconduction automatique.`}
           </p>
         </div>
       </Card>

@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { LegalBlock, LegalPageLayout, ToComplete, type LegalSection } from '@/components/legal/legal-page-layout';
 import { COMPANY, PRODUCT, TO_COMPLETE } from '@/lib/company';
+import { PARTICIPANT_PAYMENT, PAYMENT_METHOD_LABELS, PREPAYMENT_REASSURANCE } from '@/lib/pricing/config';
 
 export const metadata: Metadata = {
   title: "Conditions d'utilisation",
@@ -179,12 +180,12 @@ export default function ConditionsPage() {
         </p>
         <p>
           Chaque campagne dispose d’un nombre de téléchargements autorisés. Une fois ce nombre
-          atteint, le téléchargement est suspendu ; la composition du visuel reste possible, mais
-          le fichier ne peut plus être enregistré tant que la limite n’a pas été relevée.
+          atteint, la campagne continue avec le filigrane Campagnes. Le créateur peut acheter des
+          crédits de distribution pour rétablir les exports sans filigrane.
         </p>
         <p>
-          Certaines formules ajoutent un badge discret sur le visuel exporté. Il est retiré lorsque
-          le créateur dispose de la formule correspondante.
+          Le retrait ponctuel du filigrane côté participant peut être proposé à{' '}
+          {PARTICIPANT_PAYMENT.label}, sans création de compte.
         </p>
       </LegalBlock>
 
@@ -205,38 +206,36 @@ export default function ConditionsPage() {
 
       <LegalBlock id="paiements" title="12. Paiements">
         <p>
-          Le service <strong className="font-medium text-ink">n’encaisse aucun paiement en
-          ligne</strong> à ce jour : il n’existe ni formulaire de carte bancaire, ni portefeuille
-          prépayé, ni prélèvement automatique.
+          Les formules payantes et les crédits de distribution se règlent en prépaiement par{' '}
+          <strong className="font-medium text-ink">Mobile Money</strong>. L’interface ne propose
+          pas de paiement par carte bancaire, d’IBAN ou de portefeuille international.
         </p>
         <p>
-          L’activation d’une formule payante se fait par échange direct avec l’équipe. Les
-          modalités, les devises acceptées et les pièces justificatives restent à préciser :{' '}
-          <ToComplete />.
+          {PAYMENT_METHOD_LABELS.reassurance} Le paiement n’est considéré comme validé qu’après
+          confirmation serveur.
         </p>
       </LegalBlock>
 
       <LegalBlock id="abonnements" title="13. Abonnements ou achats">
         <p>
-          <strong className="font-medium text-ink">Aucun abonnement reconductible n’existe
-          actuellement.</strong> Aucun montant n’est prélevé automatiquement et aucune échéance
-          n’est déclenchée par le service.
+          <strong className="font-medium text-ink">{PREPAYMENT_REASSURANCE.lead}</strong> Aucun
+          montant n’est prélevé automatiquement.
         </p>
         <p>
-          Les conditions applicables à une formule payante — durée, renouvellement éventuel,
-          résiliation — doivent être définies et validées : <ToComplete />.
+          {PREPAYMENT_REASSURANCE.body} {PREPAYMENT_REASSURANCE.renewal}
         </p>
       </LegalBlock>
 
       <LegalBlock id="distribution" title="14. Liens de distribution">
         <p>
-          Publier une campagne génère une adresse publique qui peut être partagée librement. C’est
-          le mode de diffusion proposé aujourd’hui.
+          Publier une campagne génère une adresse publique qui peut être partagée librement. Le
+          partage du lien est gratuit ; seuls les exports réellement réalisés consomment un quota
+          ou des crédits.
         </p>
         <p>
-          Des liens de distribution restreints — quota propre au lien, date d’expiration, logo
-          client — ne sont <strong className="font-medium text-ink">pas disponibles</strong> à ce
-          jour. Ils ne doivent donc pas être présentés comme une fonctionnalité acquise.
+          Des liens privés de distribution peuvent être créés avec leur propre quota et, si besoin,
+          un logo client. Un lien privé doit rester confidentiel : toute personne qui le reçoit peut
+          l’utiliser tant qu’il est actif.
         </p>
       </LegalBlock>
 
