@@ -19,6 +19,7 @@
     "check:distribution:contract": "tsc -p tools/distribution-check/tsconfig.json && node tools/distribution-check/build/tools/distribution-check/check-contract.js",
     "check:topup": "tsc -p tools/topup-check/tsconfig.json && node tools/topup-check/build/tools/topup-check/check-topup.js",
     "check:clone": "tsc -p tools/clone-check/tsconfig.json && node tools/clone-check/build/tools/clone-check/check-clone.js",
+    "check:frame-render": "tsc -p tools/frame-render-check/tsconfig.json && node tools/frame-render-check/run.js",
     "check:ui-tarifs": "node tools/tarifs-check/check-ui-tarifs.cjs",
     "check:ui-tarifs:rendu": "npm run build && node tools/tarifs-check/check-rendu-tarifs.cjs",
     "check:ui-tarifs:selecteur": "node tools/tarifs-check/check-selecteur-duree.cjs",
