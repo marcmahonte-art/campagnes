@@ -4,10 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Check,
   Copy,
-  Download,
   Facebook,
   Link2,
-  Loader2,
   MessageCircle,
   Music2,
   Share2,
@@ -46,14 +44,10 @@ import type { GalleryItem } from '@/lib/types';
 export function SharePanel({
   campaign,
   downloaded,
-  downloading,
-  onDownload,
 }: {
   campaign: GalleryItem;
   /** Vrai une fois le visuel enregistré. Ne change que l'accroche. */
   downloaded: boolean;
-  downloading: boolean;
-  onDownload: () => void;
 }) {
   const [copied, setCopied] = useState<'text' | 'link' | null>(null);
   const [canNativeShare, setCanNativeShare] = useState(false);
@@ -116,57 +110,79 @@ export function SharePanel({
   return (
     <section
       aria-labelledby="share-title"
-      className="mt-6 rounded-lg border border-gray-200 bg-white p-5"
+      className="mt-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm"
     >
-      <div className="flex items-start gap-2.5">
-        <Share2 className="mt-0.5 size-4 shrink-0 text-purple" strokeWidth={1.75} aria-hidden />
-        <div>
-          <h2 id="share-title" className="text-[13px] font-semibold text-gray-700">
-            {downloaded ? 'Votre visuel est enregistré' : 'Partager cette campagne'}
-          </h2>
-          <p className="mt-1 text-[13px] leading-relaxed text-gray-500">
-            {downloaded
-              ? 'À vous de jouer : invitez vos proches à créer le leur.'
-              : 'Vous pouvez partager la campagne dès maintenant, ou enregistrer votre visuel d’abord.'}
-          </p>
-        </div>
+      {/*
+        Partage secondaire, une seule ligne (spec §12).
+
+        Les quatre destinations sur une rangée défilable, pas quatre grosses
+        cartes : sur un téléphone, quatre cartes empilées repoussent le partage
+        hors de l'écran et donnent au partage le poids d'une action principale
+        alors qu'il ne l'est pas — le téléchargement l'est.
+      */}
+      <div className="flex items-center gap-2">
+        <Share2 className="size-4 shrink-0 text-purple" strokeWidth={1.75} aria-hidden />
+        <h2 id="share-title" className="text-[13px] font-semibold text-gray-700">
+          {downloaded ? 'Votre visuel est enregistré' : 'Partager'}
+        </h2>
       </div>
 
       {/* La feuille de partage native, quand elle existe. Elle donne accès à
           toutes les applications installées — c'est le meilleur chemin sur
           mobile, et il n'y a rien à réinventer. */}
       {canNativeShare && (
-        <div className="mt-4">
-          <Button variant="secondary" size="md" onClick={nativeShare} className="w-full sm:w-auto">
+        <div className="mt-3">
+          <Button variant="secondary" size="md" onClick={nativeShare} className="min-h-[44px] w-full">
             <Share2 className="size-4" strokeWidth={1.75} aria-hidden />
             Partager…
           </Button>
         </div>
       )}
 
-      <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
-        <ButtonLink href={waHref} variant="ghost" onClick={() => track('share_whatsapp')}>
+      {/*
+        Rangée défilable : `overflow-x-auto`. On ne masque jamais le débordement — un
+        contenu coupé sans indication donne l'impression d'un bug, alors qu'un
+        scroll latéral se comprend au pouce.
+      */}
+      <div className="mt-3 -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+        <ButtonLink
+          href={waHref}
+          variant="secondary"
+          size="sm"
+          onClick={() => track('share_whatsapp')}
+          className="min-h-[44px] shrink-0"
+        >
           <MessageCircle className="size-4" strokeWidth={1.75} aria-hidden />
           WhatsApp
         </ButtonLink>
 
-        <ButtonLink href={fbHref} variant="ghost" onClick={() => track('share_facebook')}>
+        <ButtonLink
+          href={fbHref}
+          variant="secondary"
+          size="sm"
+          onClick={() => track('share_facebook')}
+          className="min-h-[44px] shrink-0"
+        >
           <Facebook className="size-4" strokeWidth={1.75} aria-hidden />
           Facebook
         </ButtonLink>
 
         <ButtonLink
           href={TIKTOK_UPLOAD_URL}
-          variant="ghost"
+          variant="secondary"
+          size="sm"
           onClick={() => track('share_tiktok')}
+          className="min-h-[44px] shrink-0"
         >
           <Music2 className="size-4" strokeWidth={1.75} aria-hidden />
           TikTok
         </ButtonLink>
 
         <Button
-          variant="ghost"
+          variant="secondary"
+          size="sm"
           onClick={() => void copy(text, 'text', 'share_copy_text')}
+          className="min-h-[44px] shrink-0"
         >
           {copied === 'text' ? (
             <>
@@ -176,14 +192,16 @@ export function SharePanel({
           ) : (
             <>
               <Copy className="size-4" strokeWidth={1.75} aria-hidden />
-              Copier le texte
+              Copier
             </>
           )}
         </Button>
 
         <Button
-          variant="ghost"
+          variant="secondary"
+          size="sm"
           onClick={() => void copy(url, 'link', 'share_copy_link')}
+          className="min-h-[44px] shrink-0"
         >
           {copied === 'link' ? (
             <>
@@ -194,20 +212,6 @@ export function SharePanel({
             <>
               <Link2 className="size-4" strokeWidth={1.75} aria-hidden />
               Copier le lien
-            </>
-          )}
-        </Button>
-
-        <Button variant="ghost" onClick={onDownload} disabled={downloading}>
-          {downloading ? (
-            <>
-              <Loader2 className="size-4 animate-spin" aria-hidden />
-              Préparation…
-            </>
-          ) : (
-            <>
-              <Download className="size-4" strokeWidth={1.75} aria-hidden />
-              {downloaded ? 'Télécharger à nouveau' : 'Télécharger'}
             </>
           )}
         </Button>

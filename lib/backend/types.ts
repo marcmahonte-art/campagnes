@@ -229,9 +229,10 @@ export interface Backend {
   /**
    * Prolonge une campagne de `downloads` téléchargements.
    *
-   * Aucun paiement automatique n'existe : l'extension se demande par contact.
-   * Cette fonction écrit donc un volume **déjà payé et validé hors du produit**,
-   * et n'est appelée que depuis l'outil d'administration.
+   * En production, les achats standards passent par le paiement Mobile Money et
+   * le webhook crédite le quota via la fonction SQL dédiée. Cette méthode reste
+   * le crochet administratif : volume offert, correction support ou devis hors
+   * grille déjà validé.
    */
   grantParticipation(campaignId: string, downloads: number): Promise<Result>;
 
@@ -350,7 +351,7 @@ export interface Backend {
   getShareStats(campaignIds: string[]): Promise<Record<string, ShareStats>>;
 
   /* --- Formule ------------------------------------------------------ */
-  /** Change la formule du compte. En mode Supabase, l'activation passe par un contact. */
+  /** Change la formule du compte. En mode Supabase, l'activation payante passe par le webhook. */
   setPlan(userId: string, plan: PlanKind): Promise<Result>;
 
   /* --- Médias ------------------------------------------------------- */

@@ -27,7 +27,7 @@ export function Logo({
     xl: 'h-20 sm:h-24 md:h-28 w-auto',
   } as const;
 
-  const src = variant === 'white' ? '/logo-white.png' : '/logo-dark.png';
+  const src = variant === 'white' ? '/logo-white.png' : '/logo-campagnes.png';
 
   const content = (
     <span className={cn('inline-flex items-center select-none', className)}>

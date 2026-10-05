@@ -7,7 +7,7 @@ import {
   Building2,
   CheckCircle2,
 } from 'lucide-react';
-import { SiteHeader } from '@/components/site-header';
+import { SiteHeaderStatic } from '@/components/site-header-static';
 import { SiteFooter } from '@/components/site-footer';
 import { ComparisonTable } from '@/components/plans/comparison-table';
 import { PricingPlans } from '@/components/plans/pricing-plans';
@@ -53,7 +53,7 @@ export default function TarifsPage() {
 
   return (
     <>
-      <SiteHeader />
+      <SiteHeaderStatic />
 
       {/* ---------------- En-tête ---------------- */}
       <section className="border-b border-gray-200 bg-gray-50/70">

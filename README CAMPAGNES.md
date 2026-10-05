@@ -31,7 +31,7 @@
 |---|---|
 | Grille tarifaire publique `/tarifs` (Free · Creator · Organisation) | ✅ |
 | Matrice comparative par fonctionnalité | ✅ |
-| Grille de distribution en FCFA + demande de devis par email | ✅ |
+| Grille de distribution en FCFA + paiement Mobile Money | ✅ |
 | Changement de formule (paramètres, immédiat en recette) | ✅ |
 | Verrouillage des modules premium selon la formule | ✅ |
 | **Motion Engine** — presets + description en français | ✅ |
@@ -57,7 +57,7 @@
 | Filigrane affiché à l'écran **avant** le téléchargement, s'il s'applique | ✅ |
 | La photo ne quitte jamais l'appareil du participant | ✅ |
 
-**Hors périmètre (non construit)** : paiement réel, branding, domaine personnalisé,
+**Hors périmètre (non construit)** : branding, domaine personnalisé,
 multi-utilisateurs, galerie privée, rendu serveur, modération des photos participantes
 (inutile : rien n'est stocké).
 
@@ -74,12 +74,13 @@ multi-utilisateurs, galerie privée, rendu serveur, modération des photos parti
 | Frame Pro · Motion · Analytics · QR · Branding | — | ✅ | ✅ |
 | Domaine · Multi-utilisateurs · Galerie privée · Rapports | — | — | ✅ |
 
-**Distribution** — facturée à l'usage, dans tous les plans. Les tarifs sont **indicatifs et
-affichés en FCFA** (100 participants = 2 500, 500 = 5 000, 1 000 = 7 500, 5 000 = 20 000,
-au-delà sur devis). Aucun paiement n'est simulé dans le produit : chaque volume renvoie à une
-**demande de devis** (`mailto:`), et le reste se traite avec l'équipe.
+**Distribution** — facturée à l'usage, dans tous les plans. Les tarifs sont **affichés en
+FCFA** (100 participants = 2 500, 500 = 5 000, 1 000 = 7 500, 5 000 = 20 000,
+au-delà sur devis). Les volumes publiés se règlent en ligne par **Mobile Money** via la page
+de paiement hébergée ; le quota est crédité uniquement après confirmation serveur.
 
-Source unique de vérité : `lib/plans.ts` (droits) et `lib/distribution.ts` (volumes et prix).
+Source unique de vérité : `lib/plans.ts` (droits), `lib/pricing/config.ts` (prix) et les routes
+`app/api/payments/pawapay/*` (initiation, retour et webhook de paiement).
 
 ---
 
@@ -168,7 +169,7 @@ components/
 lib/
   backend/                       façade données : Supabase ou mode local
   plans.ts                       formules, droits, libellés, matrice
-  distribution.ts                grille tarifaire FCFA + demande de devis
+  distribution.ts                compatibilité historique de la grille de volumes
   participant.ts                 composition cadre + photo, cadrage, contraintes
   motion.ts                      Motion Engine — pur et déterministe
   video-export.ts                rendu hors écran : PNG et WebM

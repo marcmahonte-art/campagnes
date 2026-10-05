@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { LegalBlock, LegalPageLayout } from '@/components/legal/legal-page-layout';
 import { COMPANY, TO_COMPLETE } from '@/lib/company';
+import { PAYMENT_METHOD_LABELS } from '@/lib/pricing/config';
 import { FREE_DOWNLOADS } from '@/lib/quota';
 
 /**
@@ -123,21 +124,22 @@ export default function AidePage() {
         <p>
           Une campagne ouvre avec <strong className="font-medium text-ink">{FREE_DOWNLOADS}</strong>{' '}
           téléchargements offerts. Au-delà, le lien participant reste consultable mais le
-          téléchargement est suspendu — le visiteur compose son visuel et n’est pas bloqué par une
-          erreur technique.
+          téléchargement repasse avec le filigrane Campagnes — le visiteur compose son visuel et
+          n’est pas bloqué par une erreur technique.
         </p>
         <p>
-          Aucun paiement automatique n’est branché : la prolongation se demande par contact, depuis
-          l’écran de blocage. Les paliers et leurs prix sont affichés sur la page des{' '}
-          <Internal href="/tarifs">formules</Internal>.
+          Le créateur peut acheter des crédits de distribution depuis l’écran de campagne.
+          {` ${PAYMENT_METHOD_LABELS.reassurance}`} Les paliers et leurs prix sont affichés sur la
+          page des <Internal href="/tarifs">formules</Internal>.
         </p>
       </LegalBlock>
 
       <LegalBlock id="formule" title="Formule et filigrane">
         <p>
           Le badge « Créé avec Campagnes » apposé dans le coin du visuel téléchargé dépend de votre
-          formule : il est présent en formule gratuite, absent en formule payante. Seul votre compte
-          peut le retirer — le participant ne dispose d’aucun compte.
+          formule et de votre quota : il est présent en formule gratuite, absent en formule payante
+          tant que le quota disponible n’est pas épuisé. Quand le quota est consommé, le participant
+          peut continuer avec le filigrane, sans créer de compte.
         </p>
         <p>
           Analytics, QR Codes, Motion et Branding sont des modules réservés aux formules payantes.

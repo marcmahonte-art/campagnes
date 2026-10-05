@@ -136,7 +136,11 @@ export default function HomePage() {
                 SIAO 2026.
               </p>
               <div className="mt-8">
-                <ButtonLink href="/galerie" variant="primary" size="md">
+                <ButtonLink
+                  href="https://campagnes-nu.vercel.app/premium"
+                  variant="primary"
+                  size="md"
+                >
                   Explorer les templates
                   <ArrowRight className="size-4" aria-hidden />
                 </ButtonLink>

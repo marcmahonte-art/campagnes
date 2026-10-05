@@ -14,8 +14,9 @@ import {
  * Une ligne de la grille de distribution. Le prix par participant est mis en
  * avant : c'est le seul chiffre qui permette de comparer les volumes honnêtement.
  *
- * L'action est une demande de devis, pas un achat : la diffusion se facture à
- * l'usage, sur le volume réellement visé.
+ * L'action historique reste un lien de contact pour les volumes hors grille.
+ * Les packs publiés passent désormais par `TopupButton`, côté campagne, avec
+ * paiement Mobile Money et confirmation serveur.
  */
 export function OfferCard({ offer }: { offer: DistributionOffer }) {
   const highlight = offer.highlight ?? false;

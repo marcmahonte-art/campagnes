@@ -38,6 +38,10 @@ docs/**/*.PNG
 docs/**/*.jpg
 docs/**/*.jpeg
 
+# Captures de vérification de l'interface participant : elles documentent un
+# écart mesuré maquette ↔ rendu réel, on les versionne donc explicitement.
+!docs/participant/captures/*.png
+
 # Documents de travail du SIAO : PDF, archives de polices, échantillonnages.
 # Le dépôt suit le code, pas les brouillons de production — ces fichiers
 # pèsent plusieurs dizaines de Mo et n'ont pas leur place dans un historique.

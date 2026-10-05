@@ -54,6 +54,7 @@ export function ParticipantStage({
   placement,
   style = DEFAULT_PARTICIPANT_STYLE,
   watermark = false,
+  textFocusKey = 0,
   onPlacementChange,
   onTextChange,
   onReady,
@@ -65,6 +66,8 @@ export function ParticipantStage({
   style?: ParticipantStyle;
   /** Affiche le filigrane à l'écran, exactement là où l'export le posera. */
   watermark?: boolean;
+  /** Incrémenté quand le parent veut placer le curseur dans le texte. */
+  textFocusKey?: number;
   onPlacementChange: (next: PhotoPlacement) => void;
   onTextChange?: (next: ParticipantText) => void;
   onReady?: (api: { fitToView: () => void }) => void;
@@ -236,6 +239,33 @@ export function ParticipantStage({
     canvas.requestRenderAll();
   }, []);
 
+  const focusTextObject = useCallback(() => {
+    const canvas = canvasRef.current;
+    const text = textObjectRef.current;
+    if (!canvas || !text) return;
+    canvas.setActiveObject(text);
+    bringTextToFront();
+    text.enterEditing();
+    text.selectAll();
+    canvas.requestRenderAll();
+  }, [bringTextToFront]);
+
+  const emitTextContent = useCallback(
+    (object: IText) => {
+      const current = styleRef.current.text;
+      if (!current) return;
+      const mesure = bakeTextScale(object);
+      onTextChange?.({
+        ...current,
+        content: object.text ?? '',
+        w: mesure.width,
+        h: mesure.height,
+        size: mesure.fontSize,
+      } as ParticipantText);
+    },
+    [onTextChange],
+  );
+
   /* ---------------- Montage ---------------- */
   useEffect(() => {
     let disposed = false;
@@ -323,6 +353,7 @@ export function ParticipantStage({
         canvas.add(text);
         textObjectRef.current = text;
         bringTextToFront();
+        if (textFocusKey) focusTextObject();
       }
 
       /*
@@ -375,6 +406,12 @@ export function ParticipantStage({
         else if (object === textObjectRef.current) emitText(object);
       });
 
+      canvas.on('text:changed', (event) => {
+        const object = event.target;
+        if (!object || object !== textObjectRef.current) return;
+        emitTextContent(object as IText);
+      });
+
       fitToView();
       onReady?.({ fitToView });
     })();
@@ -409,6 +446,9 @@ export function ParticipantStage({
     buildTextObject,
     decorateTextObject,
     bringTextToFront,
+    focusTextObject,
+    emitTextContent,
+    textFocusKey,
     descriptor.photo_anchor,
     descriptor.ratio,
     fitToView,
@@ -468,13 +508,19 @@ export function ParticipantStage({
       target.add(object);
       textObjectRef.current = object;
       bringTextToFront();
+      focusTextObject();
       target.requestRenderAll();
     })();
 
     return () => {
       alive = false;
     };
-  }, [textActive, ready, buildTextObject, decorateTextObject, bringTextToFront]);
+  }, [textActive, ready, buildTextObject, decorateTextObject, bringTextToFront, focusTextObject]);
+
+  useEffect(() => {
+    if (!textFocusKey) return;
+    focusTextObject();
+  }, [textFocusKey, focusTextObject]);
 
   /* ---------------- Le contenu, la couleur, la taille, le style, l'opacité du texte change ---------------- */
   const textContent = style.text?.content ?? '';

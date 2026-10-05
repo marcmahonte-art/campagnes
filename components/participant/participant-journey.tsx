@@ -25,6 +25,10 @@ import {
   ChevronUp,
   ChevronDown,
   Pipette,
+  Eye,
+  MoreHorizontal,
+  SlidersHorizontal,
+  X,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { Logo } from '@/components/ui/logo';
@@ -245,6 +249,8 @@ export function ParticipantJourney({
   const [reading, setReading] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [colorPage, setColorPage] = useState(0);
+  const [activePanel, setActivePanel] = useState<'adjust' | 'text' | null>(null);
+  const [textFocusKey, setTextFocusKey] = useState(0);
 
   const [exporting, setExporting] = useState<'png' | 'video' | null>(null);
   const [progress, setProgress] = useState(0);
@@ -518,6 +524,16 @@ export function ParticipantJourney({
     : null;
 
   const axes = photo && placement ? movableAxes(photo, zone, placement.zoom) : null;
+  const addOrEditText = () => {
+    setStyle((current) => ({
+      ...current,
+      text: current.text
+        ? current.text
+        : { ...defaultParticipantText(zone, ratio), content: 'Votre texte' },
+    }));
+    setActivePanel('text');
+    setTextFocusKey((key) => key + 1);
+  };
 
   return (
     <div className="min-h-dvh bg-white">
@@ -527,15 +543,23 @@ export function ParticipantJourney({
       <header className="border-b border-gray-200 bg-white/90 backdrop-blur">
         <div className="container-shell flex h-14 items-center justify-between gap-4 md:h-16">
           <Logo size="sm" />
-          {creatorLabel && (
-            <span className="truncate text-[13px] text-gray-500">
-              Créé par <span className="font-medium text-ink">{creatorLabel}</span>
-            </span>
-          )}
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" className="h-9 px-3">
+              <Eye className="size-3.5" aria-hidden />
+              Aperçu
+            </Button>
+            <button
+              type="button"
+              aria-label="Plus d’options"
+              className="flex size-9 items-center justify-center rounded-full border border-gray-200 text-gray-700 transition-colors hover:border-ink hover:bg-gray-50"
+            >
+              <MoreHorizontal className="size-4" aria-hidden />
+            </button>
+          </div>
         </div>
       </header>
 
-      <main className="container-shell py-6 md:py-9">
+      <main className="container-shell py-4 md:py-8">
         <div className="mx-auto max-w-2xl">
           {/* ---------------- Titre ---------------- */}
           <div className="text-center">
@@ -550,13 +574,14 @@ export function ParticipantJourney({
                 className="mx-auto mt-4 block max-h-12 w-auto object-contain"
               />
             )}
-            <h1 className="mt-3 text-[22px] font-bold leading-tight md:text-[28px]">
+            <h1 className="mt-3 text-[20px] font-bold leading-tight md:text-[24px]">
               {campaign.name}
             </h1>
-            <p className="mx-auto mt-2 max-w-lg text-[13px] leading-relaxed text-gray-500">
-              Choisissez une photo, placez-la comme vous voulez, puis enregistrez votre visuel.
-              Aucun compte, aucune application.
-            </p>
+            {creatorLabel && (
+              <p className="mt-1 text-[12px] text-gray-500">
+                Créé par <span className="font-medium text-ink">{creatorLabel}</span>
+              </p>
+            )}
           </div>
 
           {/*
@@ -574,6 +599,7 @@ export function ParticipantJourney({
                   placement={placement}
                   style={style}
                   watermark={showWatermark || blocked}
+                  textFocusKey={textFocusKey}
                   onPlacementChange={setPlacementFromCanvas}
                   onTextChange={setTextFromCanvas}
                 />
@@ -661,9 +687,79 @@ export function ParticipantJourney({
 
             {photo && placement ? (
               <>
-                {/* ---------------- Réglages, juste sous l'aperçu ---------------- */}
-                <div className="mt-4 rounded-2xl border border-gray-200 bg-white p-3 shadow-sm md:p-4">
-                  <div className="flex items-center gap-3">
+                {/*
+                  Barre d'actions principale — l'unique barre du parcours.
+
+                  Tout ce qui était affiché en permanence (zoom, filtres, réglages
+                  de texte) passe derrière « Ajuster » ou « Texte » : le canvas est
+                  le point focal, et une page où six réglages et deux blocs de
+                  texte se disputent l'attention n'est pas une page d'édition.
+
+                  L'ordre suit la spec : changer la photo, ajouter du texte,
+                  ajuster, télécharger. Le téléchargement est l'action principale
+                  — c'est ce que le participant est venu faire.
+                */}
+                <div className="mt-4 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+                  <Button
+                    variant="secondary"
+                    size="md"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={reading}
+                    className="min-h-[44px]"
+                  >
+                    <ImagePlus className="size-4" aria-hidden />
+                    Changer de photo
+                  </Button>
+
+                  <Button
+                    variant="secondary"
+                    size="md"
+                    onClick={addOrEditText}
+                    className="min-h-[44px]"
+                  >
+                    <Type className="size-4" aria-hidden />
+                    {style.text ? 'Modifier le texte' : 'Ajouter un texte'}
+                  </Button>
+
+                  <Button
+                    variant="secondary"
+                    size="md"
+                    onClick={() => setActivePanel((p) => (p === 'adjust' ? null : 'adjust'))}
+                    aria-expanded={activePanel === 'adjust'}
+                    aria-controls="panneau-ajuster"
+                    className="min-h-[44px]"
+                  >
+                    <SlidersHorizontal className="size-4" aria-hidden />
+                    Ajuster
+                  </Button>
+
+                  <Button
+                    variant="primary"
+                    size="md"
+                    onClick={() => void runExport('png')}
+                    disabled={exporting !== null || blocked || quota === null}
+                    className="col-span-2 min-h-[48px] sm:col-span-1 sm:min-h-[44px]"
+                  >
+                    {exporting === 'png' ? (
+                      <>
+                        <Loader2 className="size-4 animate-spin" aria-hidden />
+                        Préparation…
+                      </>
+                    ) : (
+                      <>
+                        <Download className="size-4" aria-hidden />
+                        Télécharger
+                      </>
+                    )}
+                  </Button>
+                </div>
+
+                {/* ---------------- Panneau « Ajuster » : position et filtres ----------------
+                    Le zoom et le filtre sont des ajustements de la photo, pas des
+                    actions : ils n'ont rien à faire sur la barre principale. */}
+                {activePanel === 'adjust' && (
+                  <div id="panneau-ajuster" className="mt-4 rounded-2xl border border-gray-200 bg-white p-3 shadow-sm md:p-4">
+                    <div className="flex items-center gap-3">
                     <button
                       type="button"
                       aria-label="Réduire"
@@ -727,15 +823,9 @@ export function ParticipantJourney({
                       <RotateCcw className="size-3.5" aria-hidden />
                       Recentrer
                     </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={reading}
-                    >
-                      <ImagePlus className="size-3.5" aria-hidden />
-                      Changer de photo
-                    </Button>
+                    {/* « Changer de photo » est passé sur la barre principale :
+                        l'action est toujours à un cran, et le panneau ne garde que
+                        les ajustements. */}
 
                     {/*
                       Annuler / rétablir.
@@ -771,13 +861,12 @@ export function ParticipantJourney({
                       ? 'Faites glisser la photo pour la positionner.'
                       : 'Zoomez pour pouvoir déplacer la photo.'}
                   </p>
-                </div>
 
                 {/* ---------------- Filtre ----------------
                     Six choix, une ligne, aucun réglage à comprendre. Le filtre
                     est porté par le descripteur, donc l'aperçu et le fichier
                     téléchargé montrent forcément la même image. */}
-                <div className="mt-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                <div className="mt-3 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
                   <span className="text-[13px] font-semibold text-gray-700">Filtre</span>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {PHOTO_FILTER_PRESETS.map((preset) => {
@@ -803,13 +892,18 @@ export function ParticipantJourney({
                     })}
                   </div>
                 </div>
+                  </div>
+                )}
 
-                {/* ---------------- Texte ----------------
-                    Le texte est saisi ici, pas sur le canvas : sur un téléphone,
-                    un champ est infiniment plus sûr qu'un double-clic au doigt.
-                    Le canvas sert à le placer — même partage des rôles que le
-                    zoom, qui se règle au curseur et non aux coins de l'image. */}
-                <div className="mt-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                {/* ---------------- Panneau « Texte » ----------------
+                    Le texte se saisit dans ce panneau, et se déplace sur le canvas.
+                    Les deux restent vrais : sur un téléphone, un champ est plus sûr
+                    qu'un double-clic au doigt ; le canvas sert à le poser.
+
+                    Le panneau n'existe que lorsqu'il y a un texte — sinon il n'y a
+                    rien à régler, et une carte vide sous le canvas serait du bruit. */}
+                {activePanel === 'text' && style.text && (
+                <div id="panneau-texte" className="mt-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-[13px] font-semibold text-gray-700">Texte</span>
                     {style.text && (
@@ -1004,6 +1098,53 @@ export function ParticipantJourney({
                         </div>
                       </div>
 
+                      {/*
+                        Alignement.
+
+                        Le modèle porte `align`, la scène l'applique
+                        (`textAlign`), l'export le relit — et aucun bouton ne
+                        l'exposait. Le réglage existait donc partout sauf là où
+                        le participant pouvait l'atteindre : une fonctionnalité
+                        écrite, testée, exportée, et impossible à utiliser.
+
+                        Les trois positions sont exclusives, donc `aria-pressed`
+                        plutôt qu'un `role="radio"` : ce sont des boutons
+                        indépendants dans une barre d'outils, pas un groupe de
+                        radios, et le comportement par defaut du clavier reste le
+                        bon.
+                      */}
+                      <div className="flex h-10 items-center justify-around rounded-xl border border-gray-200 bg-white p-1">
+                        {(
+                          [
+                            ['left', AlignLeft, 'Aligner à gauche'],
+                            ['center', AlignCenter, 'Centrer'],
+                            ['right', AlignRight, 'Aligner à droite'],
+                          ] as const
+                        ).map(([valeur, Icone, libelle]) => (
+                          <button
+                            key={valeur}
+                            type="button"
+                            aria-label={libelle}
+                            aria-pressed={(style.text?.align ?? 'left') === valeur}
+                            onClick={() =>
+                              setStyle((current) =>
+                                current.text
+                                  ? { ...current, text: { ...current.text, align: valeur } }
+                                  : current,
+                              )
+                            }
+                            className={cn(
+                              'flex size-8 items-center justify-center rounded-lg transition-all',
+                              (style.text?.align ?? 'left') === valeur
+                                ? 'bg-ink text-white'
+                                : 'text-gray-600 hover:bg-gray-100',
+                            )}
+                          >
+                            <Icone className="size-4" aria-hidden />
+                          </button>
+                        ))}
+                      </div>
+
                       {/* 4. Ligne 3 : Palette de couleurs carrousel */}
                       <div className="flex flex-col gap-1.5 pt-1">
                         <div className="flex items-center gap-2">
@@ -1079,8 +1220,17 @@ export function ParticipantJourney({
                         <button
                           type="button"
                           onClick={() => {
-                            const exportEl = document.getElementById('export-section');
-                            exportEl?.scrollIntoView({ behavior: 'smooth' });
+                            /*
+                              « Valider » termine l'édition, il ne supprime
+                              rien (spec §10). On referme donc le panneau et on
+                              rend la main : faire défiler vers une ancre
+                              `export-section` était un comportement d'une autre
+                              époque de la page, où le téléchargement vivait
+                              tout en bas. Il vit maintenant dans la barre
+                              principale, immédiatement au-dessus.
+                            */
+                            setActivePanel(null);
+                            setTextFocusKey(0);
                           }}
                           className="flex-1 rounded-full bg-[#00D09E] py-2.5 text-center text-sm font-bold text-white shadow-sm transition-transform hover:brightness-105 active:scale-98"
                         >
@@ -1106,32 +1256,16 @@ export function ParticipantJourney({
                     </div>
                   )}
                 </div>
+                )}
 
+                {/* ---------------- Export vidéo ----------------
+                    Le téléchargement de l'image est passé dans la barre
+                    principale : c'est l'action principale, elle ne doit pas
+                    attendre qu'on arrive en bas d'une page. Seule la vidéo reste
+                    ici, parce qu'elle n'existe que sur un cadre animé. */}
+                {(animated || exporting === 'video') && (
                 <div id="export-section" className="mt-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm md:p-5">
-                  <span className="text-[13px] font-semibold text-gray-700">
-                    Enregistrer mon visuel
-                  </span>
-
-                  <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-                    <Button
-                      variant="primary"
-                      size="md"
-                      onClick={() => void runExport('png')}
-                      disabled={exporting !== null || blocked || quota === null}
-                    >
-                      {exporting === 'png' ? (
-                        <>
-                          <Loader2 className="size-4 animate-spin" aria-hidden />
-                          Préparation…
-                        </>
-                      ) : (
-                        <>
-                          <Download className="size-4" aria-hidden />
-                          Télécharger l’image
-                        </>
-                      )}
-                    </Button>
-
+                  <div className="mt-2 flex flex-col gap-2 sm:flex-row">
                     {animated && (
                       <Button
                         variant="ghost"
@@ -1162,6 +1296,8 @@ export function ParticipantJourney({
                       />
                     </div>
                   )}
+                </div>
+                )}
 
                   {/*
                     Bannière du filigrane.
@@ -1216,7 +1352,6 @@ export function ParticipantJourney({
                       </div>
                     </div>
                   )}
-                </div>
 
                 {/*
                   Étape de partage. Elle vient après l'enregistrement, jamais
@@ -1226,12 +1361,7 @@ export function ParticipantJourney({
                   ne rien proposer que proposer un lien mort.
                 */}
                 {sharing && !blocked && (
-                  <SharePanel
-                    campaign={campaign}
-                    downloaded={downloaded}
-                    downloading={exporting !== null}
-                    onDownload={() => void runExport('png')}
-                  />
+                  <SharePanel campaign={campaign} downloaded={downloaded} />
                 )}
               </>
             ) : (

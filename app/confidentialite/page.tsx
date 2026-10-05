@@ -124,11 +124,19 @@ export default function ConfidentialitePage() {
           </li>
         </ul>
 
+        <p className="font-medium text-ink">Paiements Mobile Money</p>
+        <p>
+          Lorsqu’un paiement est lancé, Campagnes enregistre une intention de paiement : montant,
+          devise, formule ou pack acheté, état de confirmation et identifiant technique de
+          transaction. Le règlement est traité par un prestataire Mobile Money ; Campagnes ne
+          demande ni numéro de carte bancaire, ni IBAN, ni information de portefeuille
+          international.
+        </p>
+
         <p className="rounded-lg border border-dashed border-gray-300 p-4 text-[14px] text-gray-600">
-          <strong className="font-medium text-ink">Ce que le service ne collecte pas.</strong> Il
-          n’existe aujourd’hui aucun système de paiement, donc aucune donnée bancaire n’est
-          demandée ni conservée. Aucun numéro de téléphone, aucune adresse postale d’utilisateur et
-          aucune pièce d’identité ne sont collectés. Aucun outil de mesure d’audience ni de
+          <strong className="font-medium text-ink">Ce que le service ne collecte pas.</strong>{' '}
+          Aucune donnée de carte bancaire, aucune adresse postale d’utilisateur et aucune pièce
+          d’identité ne sont collectées par Campagnes. Aucun outil de mesure d’audience ni de
           publicité n’est installé sur le site.
         </p>
       </LegalBlock>
@@ -144,6 +152,7 @@ export default function ConfidentialitePage() {
             participant ;
           </li>
           <li>décompter les téléchargements et appliquer la limite de chaque campagne ;</li>
+          <li>initier et réconcilier les paiements Mobile Money demandés par le créateur ;</li>
           <li>assurer la sécurité du service et prévenir les usages abusifs ;</li>
           <li>répondre aux demandes envoyées par email.</li>
         </ul>
@@ -215,6 +224,11 @@ export default function ConfidentialitePage() {
           <li>
             <strong className="font-medium text-ink">Vercel</strong> — hébergement et diffusion du
             site.
+          </li>
+          <li>
+            <strong className="font-medium text-ink">Prestataire Mobile Money</strong> — page de
+            paiement hébergée, confirmation du paiement et notification serveur. Campagnes ne
+            valide une formule ou un pack qu’après confirmation serveur.
           </li>
           <li>
             <strong className="font-medium text-ink">Google Fonts</strong> — la feuille de style du
