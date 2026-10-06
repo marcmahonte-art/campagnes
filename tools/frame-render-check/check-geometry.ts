@@ -32,6 +32,7 @@ import * as path from 'node:path';
 import { ratioSpec } from '../../lib/ratios';
 import { makeImageLayer } from '../../lib/descriptor';
 import type { Descriptor, ImageLayer, Ratio } from '../../lib/types';
+import { Rect } from 'fabric';
 
 /* ------------------------------------------------------------------ */
 /* R\u00e9plique de `addImageFile` (components/frame/frame-editor.tsx)    */
@@ -79,6 +80,7 @@ function verifierSource() {
     ['placement 80 %', 'const maxW = spec.width * 0.8;'],
     ['mise \u00e0 l\u2019\u00e9chelle de l\u2019image', 'img.scaleX = layer.w / naturalWidth;'],
     ['\u00e9mission via getScaledWidth', 'w: Math.round(obj.getScaledWidth()),'],
+    ['clipPath ancr\u00e9 en haut \u00e0 gauche', "originX: 'left',"],
   ];
   const manquants = attendus.filter(([, extrait]) => !source.includes(extrait)).map(([nom]) => nom);
   return manquants;
@@ -209,6 +211,46 @@ console.log('--- T\u00e9moin : calque d\u00e9lib\u00e9r\u00e9ment hors cadre (do
     couche.w <= 0.8 * spec.width + 1,
     'm\u00eame hors cadre, le plafond 80 % tient',
     `w=${couche.w}`
+  );
+}
+
+/* --- Contrôle du clipPath du canvas Fabric ------------------------- */
+console.log('--- Contrôle du clipPath canvas Fabric (pas de découpe en quadrant)');
+{
+  const spec = ratioSpec('1:1');
+  const clip = new Rect({
+    left: 0,
+    top: 0,
+    width: spec.width,
+    height: spec.height,
+    originX: 'left',
+    originY: 'top',
+    strokeWidth: 0,
+  });
+  const bounds = clip.getBoundingRect();
+  check(
+    bounds.left === 0 && bounds.top === 0,
+    'le clipPath commence exactement à (0, 0)',
+    `left=${bounds.left}, top=${bounds.top}`
+  );
+  check(
+    bounds.width === spec.width && bounds.height === spec.height,
+    'le clipPath couvre 100 % de la largeur et de la hauteur du cadre',
+    `${bounds.width}×${bounds.height} pour cadre ${spec.width}×${spec.height}`
+  );
+
+  // Témoin négatif : sans originX/Y 'left'/'top', Fabric centre le Rect à (0,0) et coupe les 3/4
+  const defautClip = new Rect({
+    left: 0,
+    top: 0,
+    width: spec.width,
+    height: spec.height,
+  });
+  const defautBounds = defautClip.getBoundingRect();
+  check(
+    defautBounds.left < 0 && defautBounds.top < 0,
+    'témoin : sans originX/originY, Fabric centre le Rect et rogne le canvas',
+    `défaut centré à left=${defautBounds.left}, top=${defautBounds.top}`
   );
 }
 
