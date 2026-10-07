@@ -16,6 +16,11 @@ import {
   DISTRIBUTION_PACKS,
 } from '@/lib/pricing/config';
 import { COMPANY, PRODUCT, orToComplete } from '@/lib/company';
+import {
+  DEFAULT_PAYMENT_COUNTRY,
+  payableCountriesLabel,
+  resolvePaymentCountry,
+} from '@/lib/payments/corridors';
 
 interface InitiateBody {
   plan?: PlanId;
@@ -44,6 +49,36 @@ export async function POST(request: NextRequest) {
     }
 
     const { plan, duration = '1m', packId, campaignId, country, msisdn } = body;
+
+    /*
+     * Le pays vient du client : il est donc **validé**, jamais relayé tel quel.
+     *
+     * Deux refus distincts, deux messages distincts — c'est tout l'intérêt de
+     * séparer « corridor inconnu » de « corridor sans grille » : le premier
+     * signale une requête fabriquée, le second une zone où le paiement n'est
+     * simplement pas encore ouvert. Les confondre ferait croire à un bug pour
+     * une zone que nous n'avons pas encore tarifée.
+     */
+    const corridor = resolvePaymentCountry(country ?? DEFAULT_PAYMENT_COUNTRY);
+
+    if (!corridor.ok) {
+      return NextResponse.json(
+        {
+          error:
+            corridor.reason === 'unknown'
+              ? 'Pays de paiement non pris en charge.'
+              : `Le paiement Mobile Money n’est pas encore ouvert dans ce pays. Pays disponibles : ${payableCountriesLabel()}.`,
+          code: corridor.reason === 'unknown' ? 'PAYMENT_COUNTRY_UNKNOWN' : 'PAYMENT_COUNTRY_NOT_PRICED',
+        },
+        { status: 400 },
+      );
+    }
+
+    /*
+     * La devise découle du pays, jamais l'inverse. Figer « XOF » ici
+     * enverrait un montant en francs CFA sur un corridor en cedi ou en naira.
+     */
+    const paymentCurrency = corridor.corridor.currency;
 
     let targetPlan: PlanId | null = 'free';
     let paymentAmount = 0;
@@ -194,9 +229,16 @@ export async function POST(request: NextRequest) {
           campaign_id: purchaseType === 'campaign_topup' ? campaignId : null,
           purchase_type: purchaseType,
           amount: paymentAmount,
-          currency: 'XOF',
+          currency: paymentCurrency,
           status: 'pending',
           metadata: {
+            /*
+             * Le corridor est figé avec la vente : c'est ce qui permet, à la
+             * réconciliation, de savoir de quel pays venait l'encaissement —
+             * et de relire la facture dans la devise réellement payée.
+             */
+            country: corridor.corridor.countryCode,
+            currency: paymentCurrency,
             is_pack: isPack,
             pack_id: packId || null,
             purchase_type: purchaseType,
@@ -294,8 +336,8 @@ export async function POST(request: NextRequest) {
       returnUrl,
       amount: paymentAmount,
       reason: paymentReason,
-      country: country || undefined,
-      currency: 'XOF',
+      country: corridor.corridor.countryCode,
+      currency: paymentCurrency,
       msisdn: msisdn || undefined,
     });
 

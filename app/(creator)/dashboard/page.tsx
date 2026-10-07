@@ -129,6 +129,21 @@ function MonetisationBanner({
         <p className="mt-1 text-[12px] leading-relaxed text-gray-500">
           {planConfig.quotaLabel}. Prépaiement sans reconduction automatique.
         </p>
+        {plan === 'free' ? (
+          <Link
+            href="/dashboard/acheter?plan=creator"
+            className="mt-2 inline-flex items-center text-[12px] font-medium text-purple hover:underline"
+          >
+            Passer à Creator →
+          </Link>
+        ) : (
+          <Link
+            href="/dashboard/acheter"
+            className="mt-2 inline-flex items-center text-[12px] font-medium text-gray-500 hover:text-ink hover:underline"
+          >
+            Gérer mon abonnement →
+          </Link>
+        )}
       </div>
 
       <div className="rounded-md bg-gray-50 px-3 py-2.5">

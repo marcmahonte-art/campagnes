@@ -18,11 +18,20 @@ import {
   getPlanPeriodPrice,
   type BillingDuration,
 } from '@/lib/pricing/config';
+import {
+  DEFAULT_PAYMENT_COUNTRY,
+  payableCorridors,
+  upcomingCorridors,
+} from '@/lib/payments/corridors';
 
 const PAID_PLANS: PlanId[] = ['creator', 'organization'];
 const CREDIT_PACKS = DISTRIBUTION_PACKS.filter(
   (pack) => pack.priceFcfa !== null && pack.distributions !== null,
 );
+/** Pays où le paiement est ouvert — ceux dont la devise a une grille. */
+const PAYABLE_COUNTRIES = payableCorridors();
+/** Corridors connus de la passerelle mais non tarifés : annoncés, jamais facturés. */
+const UPCOMING_COUNTRIES = upcomingCorridors();
 
 type BillingSummary = {
   balance: number;
@@ -67,6 +76,7 @@ export function CheckoutPage() {
   const [plan, setPlan] = useState<PlanId>(() => validPlan(searchParams.get('plan')));
   const [duration, setDuration] = useState<BillingDuration>(() => validDuration(searchParams.get('duration')));
   const [packId, setPackId] = useState(CREDIT_PACKS[0]?.id ?? 'pack_100');
+  const [country, setCountry] = useState(DEFAULT_PAYMENT_COUNTRY);
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -199,7 +209,7 @@ export function CheckoutPage() {
     setNotice(null);
 
     try {
-      const body = type === 'credits' ? { packId } : { plan, duration };
+      const body = type === 'credits' ? { packId, country } : { plan, duration, country };
       const response = await fetch('/api/payments/pawapay/initiate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -351,6 +361,39 @@ export function CheckoutPage() {
               </div>
             </div>
           )}
+
+          {/*
+           * Le pays n'est pas une formalité : c'est lui qui fixe la devise
+           * envoyée à la passerelle. Sans ce choix, un client ivoirien était
+           * envoyé sur le corridor burkinabè, où son numéro n'existe pas.
+           */}
+          <div className="mt-6">
+            <p className="text-[12px] font-semibold uppercase tracking-wide text-gray-400">Pays de paiement</p>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              {PAYABLE_COUNTRIES.map((corridor) => (
+                <button
+                  key={corridor.countryCode}
+                  type="button"
+                  onClick={() => setCountry(corridor.countryCode)}
+                  className={`rounded-lg border p-3 text-left transition-colors ${
+                    country === corridor.countryCode
+                      ? 'border-purple bg-purple/5 ring-1 ring-purple/20'
+                      : 'border-gray-200 hover:border-gray-400'
+                  }`}
+                >
+                  <span className="block text-[14px] font-semibold text-ink">{corridor.country}</span>
+                  <span className="mt-0.5 block text-[12px] text-gray-500">
+                    {corridor.dialCode} · {corridor.operators.join(', ')}
+                  </span>
+                </button>
+              ))}
+            </div>
+            {UPCOMING_COUNTRIES.length > 0 && (
+              <p className="mt-2 text-[12px] leading-relaxed text-gray-500">
+                Également connectés à la passerelle : {UPCOMING_COUNTRIES.map((corridor) => corridor.country).join(', ')} — grille tarifaire À COMPLÉTER.
+              </p>
+            )}
+          </div>
 
           <div className="mt-7 flex flex-col gap-4 border-t border-gray-100 pt-5 sm:flex-row sm:items-end sm:justify-between">
             <div>

@@ -52,7 +52,7 @@ export function FeatureGate({
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
-        <ButtonLink href="/settings#formule" variant="ghost" size="sm">
+        <ButtonLink href={`/dashboard/acheter?plan=${required}`} variant="primary" size="sm">
           Débloquer avec {requiredPlan.name}
         </ButtonLink>
         <span className="text-[12px] text-gray-500">

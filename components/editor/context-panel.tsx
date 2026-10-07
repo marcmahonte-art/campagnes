@@ -260,7 +260,7 @@ export function FramePanel({
         {limitReached && (
           <p className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2.5 text-[12px] leading-relaxed text-gray-600">
             La formule Free limite à {maxLayers} éléments par cadre.{' '}
-            <Link href="/tarifs" className="font-medium text-ink underline underline-offset-4">
+            <Link href="/dashboard/acheter?plan=creator" target="_blank" rel="noopener noreferrer" className="font-medium text-ink underline underline-offset-4">
               Frame Pro les rend illimités
             </Link>
             .

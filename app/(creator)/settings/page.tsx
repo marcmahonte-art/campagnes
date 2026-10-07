@@ -268,11 +268,11 @@ export default function SettingsPage() {
                   </p>
 
                   {/* En mode Supabase, la formule ne s'écrit plus directement
-                      depuis les paramètres. Le tunnel public `/tarifs` porte le
-                      paiement Mobile Money et la réconciliation serveur. */}
+                      depuis les paramètres. L'espace `/dashboard/acheter` porte le
+                      choix de durée, le paiement Mobile Money et les factures. */}
                   {!canSelfActivatePlan && !current ? (
                     <ButtonLink
-                      href="/tarifs"
+                      href={plan.id === 'free' ? '/tarifs' : `/dashboard/acheter?plan=${plan.id}`}
                       variant={plan.highlight ? 'primary' : 'secondary'}
                       size="sm"
                     >
@@ -302,10 +302,10 @@ export default function SettingsPage() {
               La distribution se paie à l’usage. Les crédits achetés n’expirent jamais.
             </p>
             <Link
-              href="/tarifs"
+              href="/dashboard/acheter?type=credits"
               className="text-[13px] font-medium text-ink underline underline-offset-4"
             >
-              Voir la grille
+              Acheter des crédits
             </Link>
           </div>
 

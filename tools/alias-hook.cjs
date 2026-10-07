@@ -24,17 +24,26 @@ const path = require('node:path');
 const RACINE = path.resolve(__dirname, '..');
 const ALIAS = '@';
 
-function versCheminAbsolu(spec) {
+function versCheminAbsolu(spec, parent) {
   const relatif = spec.slice(ALIAS.length + 1); // « /lib/plans » -> « lib/plans »
+  const candidats = [];
+  if (parent && parent.filename) {
+    const buildIdx = parent.filename.indexOf(`${path.sep}build${path.sep}`);
+    if (buildIdx !== -1) {
+      const buildDir = parent.filename.slice(0, buildIdx + `${path.sep}build`.length);
+      const inBuild = path.join(buildDir, relatif);
+      candidats.push(inBuild, `${inBuild}.js`, path.join(inBuild, 'index.js'));
+    }
+  }
   const base = path.join(RACINE, relatif);
-  // On tente tel quel, puis les extensions habituelles de TypeScript.
-  return [base, `${base}.ts`, `${base}.js`, path.join(base, 'index.ts'), path.join(base, 'index.js')];
+  candidats.push(`${base}.js`, path.join(base, 'index.js'), base, `${base}.ts`, path.join(base, 'index.ts'));
+  return candidats;
 }
 
 const resolutionOriginale = Module._resolveFilename;
 Module._resolveFilename = function (requete, parent, ...reste) {
   if (requete.startsWith(ALIAS + '/')) {
-    const candidats = versCheminAbsolu(requete);
+    const candidats = versCheminAbsolu(requete, parent);
     for (const candidat of candidats) {
       try {
         return resolutionOriginale.call(this, candidat, parent, ...reste);

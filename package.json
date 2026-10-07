@@ -24,6 +24,8 @@
     "check:distribution:browser": "node tools/distribution-check/check-browser.cjs",
     "test:pawapay": "ts-node -O \"{\\\"module\\\":\\\"commonjs\\\"}\" scripts/test_pawapay.ts",
     "check:pawapay-token": "ts-node -O \"{\\\"module\\\":\\\"commonjs\\\"}\" scripts/check_pawapay_token.ts",
+    "check:pawapay-countries": "ts-node -O \"{\\\"module\\\":\\\"commonjs\\\"}\" scripts/check_pawapay_countries.ts",
+    "check:payments": "tsc -p tools/payments-check/tsconfig.json && node tools/payments-check/build/tools/payments-check/check-countries.js",
     "check:distribution:contract": "tsc -p tools/distribution-check/tsconfig.json && node tools/distribution-check/build/tools/distribution-check/check-contract.js",
     "check:topup": "tsc -p tools/topup-check/tsconfig.json && node tools/topup-check/build/tools/topup-check/check-topup.js",
     "check:webhook": "tsc -p tools/webhook-check/tsconfig.json && node tools/webhook-check/build/tools/webhook-check/check-webhook.js",

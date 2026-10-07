@@ -6,8 +6,9 @@
  * Utilise le mode Hosted Payment Page (/v2/paymentpage) pour permettre aux utilisateurs
  * de payer par Mobile Money dans une interface optimisée et sécurisée.
  *
- * Marché cible : Burkina Faso — deux opérateurs, `ORANGE_BFA` et `MOOV_BFA`.
- * La passerelle en sait d'autres, mais les annoncer ici promettrait un moyen de
+ * Marché cible : Afrique de l'Ouest. Les pays et opérateurs réellement
+ * proposés ne sont pas décidés ici mais dans `lib/payments/corridors.ts` —
+ * single source of truth. Les annoncer à l'aveugle promettrait un moyen de
  * paiement qui ne fonctionne pas pour l'utilisateur.
  */
 
@@ -161,12 +162,28 @@ export async function initiatePaymentPage(
     reason: input.reason,
   };
 
+  /*
+   * Un montant sans pays ni devise est un paiement qu'on ne sait pas
+   * encaisser : le défaut implicite « BFA / XOF » faisait payer un client
+   * ivoirien sur un corridor burkinabè, où son numéro n'existe pas.
+   *
+   * Le refus est explicite et précoce — avant l'appel réseau — pour que le
+   * défaut se voie dans les journaux au lieu de se lire comme un refus
+   * d'opérateur. La validation de la valeur, elle, appartient aux corridors.
+   */
   if (input.amount !== undefined && input.amount !== null) {
+    if (!input.currency || !input.country) {
+      throw new PawaPayError(
+        'Pays et devise obligatoires dès qu’un montant est fixé : ' +
+          'un corridor sans pays enverrait le client vers le mauvais opérateur.',
+      );
+    }
+
     payload.amountDetails = {
       amount: String(input.amount),
-      currency: input.currency || 'XOF',
+      currency: input.currency,
     };
-    payload.country = input.country || 'BFA';
+    payload.country = input.country;
   } else if (input.country) {
     payload.country = input.country;
   }

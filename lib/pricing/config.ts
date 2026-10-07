@@ -1,7 +1,9 @@
 /**
  * Source unique de vérité pour la tarification Campagnes.
  *
- * Devise : FCFA (XOF) · Marché : UEMOA
+ * Devise : FCFA (XOF) · Marché : Afrique de l'Ouest (zone XOF facturable ;
+ * les autres corridors sont listés dans `lib/payments/corridors.ts`, jamais
+ * facturés tant qu'une grille n'existe pas dans leur devise).
  * Conforme à : `docs/monétisation/ui/grille-tarifaire.md`
  *
  * Règle N3 : Aucun montant ne doit exister en dur dans un composant.
@@ -13,6 +15,14 @@
  * export haute définition, support prioritaire) n'apparaît QUE dans le bloc
  * « Sur devis » de la page, jamais dans une carte.
  */
+
+import {
+  DEFAULT_PAYMENT_COUNTRY,
+  findCorridor,
+  payableCorridors,
+  payableCountriesLabel,
+  payableOperatorLabels,
+} from '../payments/corridors';
 
 export type BillingDuration = '1m' | '6m' | '12m';
 
@@ -354,15 +364,20 @@ export const PREPAYMENT_REASSURANCE = {
  * Le nom de la passerelle n'apparaît jamais dans l'interface : ces deux phrases
  * sont les seules qui doivent être affichées.
  */
+const PAYABLE_OPERATORS = payableOperatorLabels();
+const PAYABLE_COUNTRIES = payableCountriesLabel();
+const REFERENCE_CORRIDOR = findCorridor(DEFAULT_PAYMENT_COUNTRY) ?? payableCorridors()[0] ?? null;
+
 export const PAYMENT_METHOD_LABELS = {
-  underCta: 'Paiement par Mobile Money (Orange, Moov) · sans carte bancaire',
-  reassurance: 'Paiement par Mobile Money (Orange, Moov), sans carte bancaire.',
-  operators: ['Orange', 'Moov'] as const,
-  countryCode: 'BFA',
-  currency: 'XOF',
-  dialCode: '+226',
+  underCta: `Paiement par Mobile Money (${PAYABLE_OPERATORS.join(', ')}) · sans carte bancaire`,
+  reassurance: `Paiement par Mobile Money (${PAYABLE_OPERATORS.join(', ')}), sans carte bancaire. Disponible en : ${PAYABLE_COUNTRIES}.`,
+  operators: PAYABLE_OPERATORS,
+  countries: PAYABLE_COUNTRIES,
+  countryCode: REFERENCE_CORRIDOR?.countryCode ?? 'À COMPLÉTER',
+  currency: REFERENCE_CORRIDOR?.currency ?? 'À COMPLÉTER',
+  dialCode: REFERENCE_CORRIDOR?.dialCode ?? 'À COMPLÉTER',
   /** XOF : aucune décimale supportée par la passerelle. */
-  decimalsSupported: false,
+  decimalsSupported: REFERENCE_CORRIDOR?.decimalsSupported ?? false,
 };
 
 /* ------------------------------------------------------------------ */
