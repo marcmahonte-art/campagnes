@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { ParticipantJourney } from '@/components/participant/participant-journey';
+import { ToastProvider } from '@/components/ui/toast';
 import { backend } from '@/lib/backend';
 import type { GalleryItem } from '@/lib/types';
 
@@ -37,5 +38,9 @@ export function ParticipantCampaign({ slug }: { slug: string }) {
     };
   }, [slug]);
 
-  return <ParticipantJourney campaign={campaign} loading={loading} sharing />;
+  return (
+    <ToastProvider>
+      <ParticipantJourney campaign={campaign} loading={loading} sharing />
+    </ToastProvider>
+  );
 }
