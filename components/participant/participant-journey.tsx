@@ -36,6 +36,7 @@ import { Button, ButtonLink } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { InlineError, Spinner } from '@/components/ui/feedback';
+import { useToast } from '@/components/ui/toast';
 import { ParticipantStage } from '@/components/participant/participant-stage';
 import { SharePanel } from '@/components/participant/share-panel';
 import { backend } from '@/lib/backend';
@@ -259,12 +260,6 @@ export function ParticipantJourney({
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   /**
-   * Vrai dès qu'un visuel a été téléchargé. Ne débloque rien et ne cache rien :
-   * l'étape de partage change seulement d'accroche. Un participant qui repart
-   * avec son image sans rien partager a parfaitement rempli son parcours.
-   */
-  const [downloaded, setDownloaded] = useState(false);
-  /**
    * Quota de la campagne, lu dès le chargement. `null` tant qu'il n'est pas
    * connu — on ne suppose jamais qu'il est ouvert, sinon un participant verrait
    * le bouton de téléchargement avant de savoir qu'il est bloqué.
@@ -276,6 +271,8 @@ export function ParticipantJourney({
   const exportBusy = useRef(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const notify = useToast();
 
   /* ---------------- Raccourcis clavier ---------------- */
   useEffect(() => {
@@ -422,7 +419,7 @@ export function ParticipantJourney({
           });
           setConfirmedFile(file);
           downloadBlob(file.blob, file.filename);
-          setDownloaded(true);
+                    notify('Image enregistrée ✓');
           return;
         }
         /*
@@ -470,7 +467,7 @@ export function ParticipantJourney({
           downloadBlob(result.blob, exportFilename(campaign.name, result.extension));
         }
 
-        setDownloaded(true);
+                notify('Image enregistrée ✓');
 
         /*
          * Le téléchargement est le seul instant du parcours que la plateforme
@@ -491,7 +488,7 @@ export function ParticipantJourney({
         setProgress(0);
       }
     },
-    [campaign, composed, photo, distributionToken, exportPlan, blocked, accessUnknown, sharing],
+    [campaign, composed, photo, distributionToken, exportPlan, blocked, accessUnknown, sharing, notify],
   );
 
   const runWatermarkedExport = useCallback(
@@ -512,7 +509,7 @@ export function ParticipantJourney({
           });
           downloadBlob(result.blob, exportFilename(campaign.name, result.extension));
         }
-        setDownloaded(true);
+                notify('Image enregistrée ✓');
       } catch (e) {
         setError(e instanceof Error ? e.message : "L'enregistrement a échoué.");
       } finally {
@@ -520,7 +517,7 @@ export function ParticipantJourney({
         setProgress(0);
       }
     },
-    [campaign, composed, distributionToken, sharing],
+    [campaign, composed, distributionToken, sharing, notify],
   );
 
   /* ---------------- États transitoires ---------------- */
@@ -1394,7 +1391,7 @@ export function ParticipantJourney({
                   ne rien proposer que proposer un lien mort.
                 */}
                 {sharing && !blocked && (
-                  <SharePanel campaign={campaign} downloaded={downloaded} />
+                  <SharePanel campaign={campaign} />
                 )}
               </>
             ) : (
