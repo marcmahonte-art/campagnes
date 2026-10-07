@@ -1,5 +1,6 @@
 node_modules/
 .next/
+.next-distribution/
 .next.stale/
 .next.*/
 out/

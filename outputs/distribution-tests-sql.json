@@ -1,0 +1,6 @@
+{
+  "passed": 16,
+  "engine": "PostgreSQL PGlite",
+  "migrationCount": 22,
+  "multiConnectionConcurrency": false
+}

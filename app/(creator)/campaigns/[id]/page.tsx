@@ -100,6 +100,11 @@ export default function CampaignEditorPage() {
    * commodité de saisie — elle ne copie rien, elle propose.
    */
   const [privateQuota, setPrivateQuota] = useState('1000');
+  const creationBusy = useRef(false);
+  const creationRequest = useRef<{ quota: number; reference: string } | null>(null);
+  const creditRequests = useRef(new Map<string, { amount: number; reference: string }>());
+  const [linkBusy, setLinkBusy] = useState<string | null>(null);
+  const [rechargeAmounts, setRechargeAmounts] = useState<Record<string, string>>({});
   const [confirmDelete, setConfirmDelete] = useState(false);
   /** Aperçu : masque les outils d'édition et joue l'animation du cadre. */
   const [preview, setPreview] = useState(false);
@@ -399,22 +404,30 @@ export default function CampaignEditorPage() {
    * bien en base.
    */
   async function generatePrivateLink() {
-    if (!campaign) return;
-    const quota = Number.parseInt(privateQuota, 10);
-    if (!Number.isFinite(quota) || quota <= 0) {
-      setError('Indiquez un nombre d’utilisations supérieur à zéro pour ce lien.');
+    if (!campaign || creationBusy.current) return;
+    if (campaign.status !== 'published' || !campaign.frame_id) { setError('Publiez votre campagne et enregistrez son cadre avant de distribuer un lien.'); return; }
+    const quota = Number(privateQuota);
+    if (!/^\d+$/.test(privateQuota) || !Number.isSafeInteger(quota) || quota <= 0 || quota > 1000000) {
+      setError('Indiquez un entier entre 1 et 1 000 000 pour ce lien.');
       return;
     }
 
-    setPrivateLinkLoading(true);
-    setError(null);
-    const result = await distributionService.createDistributionLink(campaign.id, quota);
-    if (result.error) {
-      setError(distributionError(result.error));
-    } else {
-      await refreshPrivateLinks();
-    }
-    setPrivateLinkLoading(false);
+    const requestKey = `campagnes.distribution.create.${campaign.id}`;
+    try {
+      creationBusy.current = true;
+      setPrivateLinkLoading(true);
+      setError(null);
+      const saved = sessionStorage.getItem(requestKey);
+      const previous = creationRequest.current ?? (saved ? JSON.parse(saved) : null);
+      if (previous && previous.quota !== quota) { setError('Reprenez la demande précédente avec le même volume avant de le modifier.'); return; }
+      const request = previous ?? { quota, reference: crypto.randomUUID() };
+      creationRequest.current = request;
+      sessionStorage.setItem(requestKey, JSON.stringify(request));
+      const result = await distributionService.createDistributionLink(campaign.id, quota, null, request.reference);
+      if (result.error || !result.data) setError(distributionError(result.error));
+      else { sessionStorage.removeItem(requestKey); creationRequest.current = null; await refreshPrivateLinks(); }
+    } catch { setError('La réponse est incertaine. Réessayez le même volume : aucun lien supplémentaire ne sera créé.'); }
+    finally { creationBusy.current = false; setPrivateLinkLoading(false); }
   }
 
   /** Copie un lien de distribution, jamais le lien public. */
@@ -423,10 +436,32 @@ export default function CampaignEditorPage() {
       await navigator.clipboard.writeText(privateDistributionUrl(token));
       setPrivateCopiedToken(token);
       setTimeout(() => setPrivateCopiedToken((t) => (t === token ? null : t)), 1800);
-    } catch {}
+    } catch { setError('La copie a échoué. Vous pouvez sélectionner et copier l’adresse manuellement.'); }
   }
 
-
+  async function changeLinkCredits(link: DistributionLink, refund: boolean) {
+    if (linkBusy) return;
+    const amount = Number(rechargeAmounts[link.id] ?? '');
+    if (!refund && (!/^\d+$/.test(rechargeAmounts[link.id] ?? '') || !Number.isSafeInteger(amount) || amount < 1 || amount > 1000000)) {
+      setError('Indiquez un entier entre 1 et 1 000 000 crédits.'); return;
+    }
+    const key = `${refund ? 'refund' : 'recharge'}.${link.id}`;
+    const storageKey = `campagnes.distribution.${key}`;
+    setLinkBusy(link.id); setError(null);
+    try {
+      const saved = sessionStorage.getItem(storageKey);
+      const previous = creditRequests.current.get(key) ?? (saved ? JSON.parse(saved) : null);
+      if (previous && !refund && previous.amount !== amount) throw new Error('Reprenez le volume précédent pour vérifier son affectation.');
+      const request = previous ?? { amount, reference: crypto.randomUUID() };
+      creditRequests.current.set(key, request);
+      sessionStorage.setItem(storageKey, JSON.stringify(request));
+      const result = refund ? await distributionService.refund(link.token, request.reference) : await distributionService.recharge(link.token, amount, request.reference);
+      if (result.error || result.data !== true) throw new Error(result.error ?? 'Cette opération n’a pas été autorisée.');
+      sessionStorage.removeItem(storageKey); creditRequests.current.delete(key);
+      await refreshPrivateLinks();
+    } catch (e) { setError(e instanceof Error ? e.message : 'Réponse incertaine : réessayez la même opération.'); }
+    finally { setLinkBusy(null); }
+  }
 
   async function removeCampaign() {
     if (!campaign) return;
@@ -710,11 +745,12 @@ export default function CampaignEditorPage() {
         <div>
           <h2 className="text-[15px] font-semibold">Lien privé de distribution</h2>
           <p className="mt-1 text-[13px] leading-relaxed text-gray-500">
-            Distribuez votre campagne à un public déterminé, sans la rendre publique.
+            Distribuez votre campagne publiée à un public déterminé avec une enveloppe distincte.
             Un lien à jeton, à envoyer à un client ou à une liste précise : il ouvre le
             même parcours que l&apos;adresse publique, mais avec son propre quota
             d&apos;utilisations et sans partage social. Un jeton est un secret — ne le
-            publiez pas.
+            publiez pas. La campagne et ses médias restent publics ; ce lien ne garantit pas leur confidentialité.
+            Chaque nouvelle enveloppe est financée par les crédits achetés de votre compte.
           </p>
         </div>
 
@@ -732,7 +768,7 @@ export default function CampaignEditorPage() {
               const expired =
                 link.status === 'EXPIRED' ||
                 (link.expiresAt !== null && Date.parse(link.expiresAt) < Date.now());
-              const usable = link.status === 'ACTIVE' && !expired;
+              const usable = link.status === 'ACTIVE' && !expired && link.quotaUsed + (link.reservedCount ?? 0) < link.quotaTotal;
               const state =
                 link.status === 'REVOKED'
                   ? 'Lien révoqué'
@@ -779,14 +815,14 @@ export default function CampaignEditorPage() {
                     )}
                     {/* Révocation : définitive. Un lien mort reste visible pour la
                         traçabilité, mais ne sera plus résolvable. */}
-                    {usable && (
+                    {link.status !== 'REVOKED' && (
                       <Button
                         variant="ghost"
                         onClick={async () => {
                           if (!confirm('Révoquer ce lien ? Cette action est définitive.')) return;
                           const result = await distributionService.revokeDistributionLink(link.token);
-                          if (result.error) {
-                            setError(result.error);
+                          if (result.error || result.data !== true) {
+                            setError(result.error ?? 'La révocation n’a pas été autorisée.');
                           } else {
                             await refreshPrivateLinks();
                           }
@@ -818,6 +854,23 @@ export default function CampaignEditorPage() {
                     {state && <span className="font-medium text-error">{state}</span>}
                   </div>
 
+                  <p className="text-[12px] text-gray-500">
+                    Historique : {fmtCount.format(link.historyUsed ?? 0)} · Exports confirmés : {fmtCount.format(link.confirmedCount ?? 0)} · Réservations : {fmtCount.format(link.reservedCount ?? 0)}
+                    {link.fundingOrigin === 'historical' ? ' · Enveloppe historique conservée' : ' · Enveloppe financée'}
+                    {link.historyDelta ? ` · Écart historique : ${link.historyDelta}` : ''}
+                  </p>
+                  <details className="rounded-md border border-gray-200 bg-white p-2">
+                    <summary className="cursor-pointer text-[13px] text-gray-600">••• Options du lien</summary>
+                    {!expired && link.status !== 'REVOKED' && (
+                      <div className="my-3 flex flex-wrap items-center gap-2">
+                        <Input type="number" min={1} max={1000000} step={1} aria-label="Crédits à ajouter au lien" value={rechargeAmounts[link.id] ?? ''}
+                          onChange={(e) => setRechargeAmounts((current) => ({ ...current, [link.id]: e.target.value }))} className="w-40" />
+                        <Button variant="secondary" size="sm" disabled={linkBusy !== null} onClick={() => void changeLinkCredits(link, false)}>Affecter des crédits</Button>
+                      </div>
+                    )}
+                    {(expired || link.status === 'REVOKED') && link.fundingOrigin !== 'historical' && (
+                      <Button variant="secondary" size="sm" className="my-3" disabled={linkBusy !== null} onClick={() => void changeLinkCredits(link, true)}>Restituer les crédits achetés non utilisés</Button>
+                    )}
                   <div className="flex flex-col gap-1">
                     <label className="text-[11px] font-medium text-gray-500">
                       Logo client (URL)
@@ -829,13 +882,17 @@ export default function CampaignEditorPage() {
                       onBlur={async (e) => {
                         const val = e.target.value.trim() || null;
                         if (val === (link.clientLogoUrl ?? null)) return;
-                        await distributionService.updateClientLogo(link.token, val);
-                        await refreshPrivateLinks();
+                        try {
+                          const result = await distributionService.updateClientLogo(link.token, val);
+                          if (result.error) { setError(result.error); return; }
+                          await refreshPrivateLinks();
+                        } catch { setError('Le logo n’a pas été enregistré. Réessayez.'); }
                       }}
                       className="h-8 text-[12px]"
                     />
                   </div>
 
+                  </details>
                   <p className="text-[12px] leading-relaxed text-gray-500">
                     Ce lien distribue la campagne selon le quota défini — indépendant du
                     quota de la campagne.
@@ -851,7 +908,7 @@ export default function CampaignEditorPage() {
           <Field
             label="Nombre d'utilisations"
             htmlFor="private-quota"
-            hint="Téléchargements autorisés pour chaque lien que vous créez."
+            hint="Crédits du compte affectés à ce lien, sans toucher au quota public."
             className="w-44"
           >
             <Input
@@ -866,7 +923,7 @@ export default function CampaignEditorPage() {
           <Button
             variant="secondary"
             onClick={() => void generatePrivateLink()}
-            disabled={privateLinkLoading}
+            disabled={privateLinkLoading || campaign.status !== 'published' || !campaign.frame_id}
           >
             {privateLinkLoading ? (
               <>

@@ -3,60 +3,41 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { ParticipantJourney } from '@/components/participant/participant-journey';
-import { backend } from '@/lib/backend';
-import type { GalleryItem } from '@/lib/types';
+import { distributionService } from '@/lib/distribution-service';
+import type { PrivateCampaignAccess, DistributionExportRequest } from '@/lib/backend/types';
+import { technicalHash } from '@/lib/distribution-export';
 
-/**
- * Page participant par lien privé — `/d/[token]`.
- *
- * Elle se distingue de la page publique par une seule chose : la campagne est
- * chargée à partir de son jeton, et le partage social est **désactivé**.
- *
- * Le partage est fermé ici volontairement, et pas par prudence excessive : le
- * jeton *est* le secret d'accès à la campagne. Proposer « Partager » depuis cette
- * page publierait ce secret, et transformerait un lien privé en lien public sans
- * que personne ne l'ait décidé.
- *
- * Le parcours lui-même est le même composant que la page publique : filtre,
- * texte et export s'y comportent à l'identique.
- */
+/** Le changement de jeton détruit l'ancien parcours et son droit d'export. */
 export default function PrivateParticipantPage() {
   const params = useParams<{ token: string }>();
   const token = typeof params?.token === 'string' ? params.token : '';
-
-  const [campaign, setCampaign] = useState<GalleryItem | null>(null);
-  const [loading, setLoading] = useState(true);
-
+  const [state, setState] = useState<{ token: string; access?: PrivateCampaignAccess; error?: string }>({ token: '' });
+  const [retry, setRetry] = useState(0);
   useEffect(() => {
-    if (!token) return;
     let alive = true;
-
-    void backend.getPrivateCampaign(token).then((found) => {
-      if (!alive) return;
-      setCampaign(found);
-      setLoading(false);
+    setState({ token });
+    if (!token) { setState({ token, access: { kind: 'unavailable' } }); return; }
+    void (async () => {
+      const key = `campagnes.export.v1.${await technicalHash(token)}`;
+      const saved = sessionStorage.getItem(key);
+      const resume = saved ? JSON.parse(saved) as DistributionExportRequest : null;
+      return distributionService.getPrivateAccess(token, resume);
+    })().then((result) => {
+      if (alive) setState({ token, access: result.data, error: result.error });
+    }).catch(() => {
+      if (alive) setState({ token, error: 'Impossible de vérifier ce lien. Votre connexion est peut-être interrompue.' });
     });
-
-    return () => {
-      alive = false;
-    };
-  }, [token]);
-
-  /*
-   * Le jeton est transmis au parcours, et à lui seul : c'est ce qui lui permet
-   * de consommer le quota du LIEN plutôt que celui de la campagne.
-   *
-   * Il ne transite que vers le bas. Le composant ne l'affiche nulle part, ne le
-   * copie pas et ne le partage pas — `sharing={false}` ferme déjà le partage
-   * social, et le jeton n'apparaît dans aucune URL fabriquée par l'écran.
-   */
-  return (
-    <ParticipantJourney
-      campaign={campaign}
-      loading={loading}
-      sharing={false}
-      distributionToken={token}
-      clientLogoUrl={campaign?.clientLogoUrl ?? null}
-    />
+    return () => { alive = false; };
+  }, [token, retry]);
+  const current = state.token === token ? state : { token };
+  const campaign = current.access?.kind === 'distributed' ? current.access.campaign : null;
+  if (current.error) return (
+    <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center gap-4 px-5 text-center">
+      <h1 className="font-semibold">Vérification momentanément impossible</h1>
+      <p role="alert" className="text-sm text-gray-600">{current.error}</p>
+      <button className="rounded-full border border-gray-300 px-5 py-2 text-sm" onClick={() => setRetry((value) => value + 1)}>Réessayer</button>
+    </main>
   );
+  return <ParticipantJourney key={token} campaign={campaign} loading={!current.access} sharing={false}
+    distributionToken={token} privateAccessReady={current.access?.kind === 'distributed'} clientLogoUrl={campaign?.clientLogoUrl ?? null} />;
 }

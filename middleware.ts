@@ -57,6 +57,12 @@ export async function middleware(request: NextRequest) {
     );
   }
 
+  if (pathname.startsWith('/d/')) {
+    response.headers.set('Referrer-Policy', 'no-referrer');
+    response.headers.set('Cache-Control', 'private, no-store, max-age=0');
+    response.headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
+  }
+
   // 3. Session Supabase — uniquement si le projet est configuré.
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -83,6 +89,13 @@ export async function middleware(request: NextRequest) {
   });
 
   await supabase.auth.getUser();
+  // setAll reconstruit la réponse : recopier les protections après le renouvellement.
+  response.headers.forEach((value, key) => sessionResponse.headers.set(key, value));
+  if (pathname.startsWith('/d/')) {
+    sessionResponse.headers.set('Referrer-Policy', 'no-referrer');
+    sessionResponse.headers.set('Cache-Control', 'private, no-store, max-age=0');
+    sessionResponse.headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
+  }
   return sessionResponse;
 }
 

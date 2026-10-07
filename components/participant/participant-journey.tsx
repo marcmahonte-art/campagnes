@@ -40,6 +40,7 @@ import { ParticipantStage } from '@/components/participant/participant-stage';
 import { SharePanel } from '@/components/participant/share-panel';
 import { backend } from '@/lib/backend';
 import { distributionService } from '@/lib/distribution-service';
+import { PrivateExportCoordinator, PrivateExportUnavailable, technicalHash, type PreparedPrivateExport } from '@/lib/distribution-export';
 import { frameZone, photoZone } from '@/lib/descriptor';
 import { ratioSpec } from '@/lib/ratios';
 import type { PlanId } from '@/lib/plans';
@@ -106,7 +107,9 @@ export function ParticipantJourney({
   sharing = true,
   distributionToken = null,
   clientLogoUrl = null,
+  privateAccessReady = false,
 }: {
+  privateAccessReady?: boolean;
   campaign: GalleryItem | null;
   loading: boolean;
   /**
@@ -267,6 +270,10 @@ export function ParticipantJourney({
    * le bouton de téléchargement avant de savoir qu'il est bloqué.
    */
   const [quota, setQuota] = useState<CampaignQuota | null>(null);
+  const [privateClosed, setPrivateClosed] = useState(false);
+  const [confirmedFile, setConfirmedFile] = useState<PreparedPrivateExport | null>(null);
+  const exportCoordinator = useRef<PrivateExportCoordinator | null>(null);
+  const exportBusy = useRef(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -295,15 +302,16 @@ export function ParticipantJourney({
 
   /* ---------------- Quota ---------------- */
   useEffect(() => {
-    if (!campaign) return;
+    if (!campaign || distributionToken || !sharing) return;
     let alive = true;
+    setQuota(null);
     void backend.getCampaignQuota(campaign.id).then((found) => {
       if (alive) setQuota(found);
-    });
+    }).catch(() => { if (alive) setError('Impossible de vérifier le quota de la campagne.'); });
     return () => {
       alive = false;
     };
-  }, [campaign]);
+  }, [campaign, distributionToken, sharing]);
 
   const frame = campaign?.frame?.descriptor_json ?? null;
   const ratio = frame?.ratio ?? campaign?.ratio ?? '1:1';
@@ -356,7 +364,8 @@ export function ParticipantJourney({
    * Le quota est-il épuisé ? `null` = pas encore lu, donc on ne suppose jamais
    * que le lien est ouvert.
    */
-  const blocked = quota !== null && !quota.open;
+  const blocked = distributionToken ? privateClosed : quota !== null && !quota.open;
+  const accessUnknown = distributionToken ? !privateAccessReady : quota === null;
   const left = quota ? remaining(quota.used, quota.quota) : null;
 
   /* ---------------- Choix de la photo ---------------- */
@@ -387,11 +396,35 @@ export function ParticipantJourney({
   /* ---------------- Export ---------------- */
   const runExport = useCallback(
     async (kind: 'png' | 'video') => {
-      if (!composed || !campaign) return;
+      if (!composed || !campaign || !photo || exportBusy.current || blocked || accessUnknown || (!sharing && !distributionToken)) return;
+      exportBusy.current = true;
       setError(null);
       setExporting(kind);
       setProgress(0);
       try {
+        if (kind === 'video' && (typeof MediaRecorder === 'undefined' || typeof HTMLCanvasElement.prototype.captureStream !== 'function')) {
+          throw new Error('Votre navigateur ne sait pas produire de vidéo. Essayez le PNG.');
+        }
+        if (distributionToken) {
+          if (!exportCoordinator.current) {
+            const key = `campagnes.export.v1.${await technicalHash(distributionToken)}`;
+            exportCoordinator.current = new PrivateExportCoordinator(sessionStorage, key,
+              (action, operation) => distributionService.exportOperation(action, distributionToken, operation));
+          }
+          const fingerprint = await technicalHash(JSON.stringify(composed));
+          const file = await exportCoordinator.current.run(kind, fingerprint, async () => {
+            if (kind === 'png') {
+              const url = await exportPng({ descriptor: composed, plan: exportPlan });
+              return { blob: dataUrlToBlob(url), filename: exportFilename(campaign.name, 'png') };
+            }
+            const video = await exportVideo({ descriptor: composed, plan: exportPlan, onProgress: (p) => setProgress(p.ratio) });
+            return { blob: video.blob, filename: exportFilename(campaign.name, video.extension) };
+          });
+          setConfirmedFile(file);
+          downloadBlob(file.blob, file.filename);
+          setDownloaded(true);
+          return;
+        }
         /*
          * Le quota est réservé **avant** le rendu, jamais après : un export
          * coûteux que personne ne pourrait récupérer ne doit pas consommer une
@@ -403,9 +436,7 @@ export function ParticipantJourney({
          * indépendants par construction : le lien mesure la diffusion vendue à
          * un client, la campagne mesure l'enveloppe globale du créateur.
          */
-        const claim = distributionToken
-          ? await distributionService.claimDistribution(distributionToken)
-          : await backend.claimParticipation(campaign.id);
+        const claim = await backend.claimParticipation(campaign.id);
         if (claim.error) throw new Error(claim.error);
         // La fonction renvoie toujours une ligne, mais le type ne peut pas le
         // garantir : on ne rend jamais un export sur une réservation incertaine.
@@ -452,18 +483,20 @@ export function ParticipantJourney({
          */
         void backend.recordShareEvent(campaign.id, 'share_download').catch(() => {});
       } catch (e) {
+        if (e instanceof PrivateExportUnavailable) setPrivateClosed(true);
         setError(e instanceof Error ? e.message : "L'enregistrement a échoué.");
       } finally {
+        exportBusy.current = false;
         setExporting(null);
         setProgress(0);
       }
     },
-    [campaign, composed, distributionToken, exportPlan],
+    [campaign, composed, photo, distributionToken, exportPlan, blocked, accessUnknown, sharing],
   );
 
   const runWatermarkedExport = useCallback(
     async (kind: 'png' | 'video') => {
-      if (!composed || !campaign) return;
+      if (!composed || !campaign || distributionToken || !sharing || exportBusy.current) return;
       setError(null);
       setExporting(kind);
       setProgress(0);
@@ -487,7 +520,7 @@ export function ParticipantJourney({
         setProgress(0);
       }
     },
-    [campaign, composed],
+    [campaign, composed, distributionToken, sharing],
   );
 
   /* ---------------- États transitoires ---------------- */
@@ -737,7 +770,7 @@ export function ParticipantJourney({
                     variant="primary"
                     size="md"
                     onClick={() => void runExport('png')}
-                    disabled={exporting !== null || blocked || quota === null}
+                    disabled={exporting !== null || blocked || accessUnknown}
                     className="col-span-2 min-h-[48px] sm:col-span-1 sm:min-h-[44px]"
                   >
                     {exporting === 'png' ? (
@@ -1271,7 +1304,7 @@ export function ParticipantJourney({
                         variant="ghost"
                         size="md"
                         onClick={() => void runExport('video')}
-                        disabled={exporting !== null || blocked || quota === null}
+                        disabled={exporting !== null || blocked || accessUnknown}
                       >
                         {exporting === 'video' ? (
                           <>
@@ -1410,7 +1443,7 @@ export function ParticipantJourney({
                 className="mt-6 flex flex-col items-start gap-3 rounded-lg border border-gray-200 bg-gray-50 p-5"
               >
                 <span className="text-[13px] font-semibold text-ink">
-                  Ce lien a atteint sa limite
+                  Ce lien est indisponible
                 </span>
                 <p className="text-[13px] leading-relaxed text-gray-600">
                   {privateLinkBlockedMessage()}
@@ -1419,25 +1452,13 @@ export function ParticipantJourney({
                   Vous pouvez continuer à composer votre visuel : seul le téléchargement est
                   momentanément indisponible.
                 </p>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => void runWatermarkedExport('png')}
-                  disabled={!composed || exporting !== null}
-                >
-                  {exporting === 'png' ? (
-                    <>
-                      <Loader2 className="size-4 animate-spin" aria-hidden />
-                      Préparation…
-                    </>
-                  ) : (
-                    <>
-                      <Download className="size-4" aria-hidden />
-                      Continuer avec le filigrane
-                    </>
-                  )}
-                </Button>
               </div>
+            )}
+
+            {confirmedFile && distributionToken && (
+              <Button variant="secondary" className="mt-4" onClick={() => downloadBlob(confirmedFile.blob, confirmedFile.filename)}>
+                <Download className="size-4" aria-hidden /> Télécharger à nouveau le fichier confirmé
+              </Button>
             )}
 
             {blocked && !distributionToken && (
@@ -1450,7 +1471,7 @@ export function ParticipantJourney({
                 </span>
                 <p className="text-[13px] leading-relaxed text-gray-600">
                   {campaign.name} a été utilisée{' '}
-                  {new Intl.NumberFormat('fr-FR').format(quota.used)} fois. Vous pouvez repartir
+                  {new Intl.NumberFormat('fr-FR').format(quota?.used ?? 0)} fois. Vous pouvez repartir
                   avec une version filigranée, sans compte, ou demander au créateur de prolonger la
                   campagne.
                 </p>

@@ -94,7 +94,31 @@ export type { ParticipationClaim };
  * `distribution_links` en interdit toute lecture à un anonyme, et
  * `resolve_distribution` ne rend jamais le jeton, seulement l'id de campagne.
  */
+export type DistributionExportState = 'RESERVED' | 'CONFIRMED' | 'CANCELLED' | 'EXPIRED' | 'UNAVAILABLE';
+export interface DistributionExportRequest {
+  operationId: string;
+  secret: string;
+  format: 'png' | 'video';
+  descriptorHash: string;
+}
+export interface DistributionExportReceipt {
+  state: DistributionExportState;
+  operationId?: string;
+  receipt?: string;
+  expiresAt?: string;
+}
+/** Un accès opaque : les compteurs du lien ne sortent jamais vers le participant. */
+export type PrivateCampaignAccess =
+  | { kind: 'distributed'; campaign: GalleryItem; protocolVersion: 1 }
+  | { kind: 'unavailable' };
+
 export interface DistributionLink {
+  historyUsed?: number;
+  confirmedCount?: number;
+  reservedCount?: number;
+  historyDelta?: number;
+  fundingOrigin?: 'historical' | 'bought' | 'mixed';
+  refundableCount?: number;
   id: string;
   token: string;
   /** Téléchargements autorisés par ce lien — indépendant du quota de campagne. */
@@ -283,6 +307,7 @@ export interface Backend {
     campaignId: string,
     quota: number,
     expiresAt?: string | null,
+    reference?: string,
   ): Promise<Result<string>>;
 
   /**
@@ -312,6 +337,10 @@ export interface Backend {
    * inexistant.
    */
   getPrivateCampaign(token: string): Promise<GalleryItem | null>;
+  getPrivateAccess(token: string, resume?: DistributionExportRequest | null): Promise<Result<PrivateCampaignAccess>>;
+  distributionExport(action: 'reserve' | 'status' | 'confirm' | 'cancel' | 'renew', token: string, operation: DistributionExportRequest): Promise<Result<DistributionExportReceipt>>;
+  rechargeDistribution(token: string, amount: number, reference: string): Promise<Result<boolean>>;
+  refundDistribution(token: string, reference: string): Promise<Result<boolean>>;
 
   /* --- Signalements de contenu -------------------------------------- */
   /**

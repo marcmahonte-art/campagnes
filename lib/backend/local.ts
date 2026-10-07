@@ -604,6 +604,10 @@ export const localBackend: Backend = {
   async getPrivateCampaign(_token): Promise<GalleryItem | null> {
     return null;
   },
+  async getPrivateAccess() { return { error: 'Les liens privés ne sont pas disponibles en mode démonstration.' }; },
+  async distributionExport() { return { error: 'Les exports privés ne sont pas disponibles en mode démonstration.' }; },
+  async rechargeDistribution() { return { error: 'Les crédits privés ne sont pas disponibles en mode démonstration.' }; },
+  async refundDistribution() { return { error: 'Les crédits privés ne sont pas disponibles en mode démonstration.' }; },
 
   /**
    * Aucun jeton n'existe en démonstration, donc aucune unité à réserver.
@@ -618,11 +622,11 @@ export const localBackend: Backend = {
   },
 
   async updateDistributionLink(): Promise<Result<void>> {
-    return { data: undefined };
+    return { error: 'Les liens privés ne sont pas disponibles en mode démonstration.' };
   },
 
   async revokeDistributionLink(): Promise<Result<boolean>> {
-    return { data: true };
+    return { error: 'Les liens privés ne sont pas disponibles en mode démonstration.' };
   },
 
 

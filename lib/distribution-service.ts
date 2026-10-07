@@ -18,12 +18,17 @@ import type { DistributionLink, ParticipationClaim, Result } from '@/lib/backend
  * inconnu, et la table n'est lisible par personne d'autre que son propriétaire.
  */
 export const distributionService = {
+  getPrivateAccess: backend.getPrivateAccess.bind(backend),
+  exportOperation: backend.distributionExport.bind(backend),
+  recharge: backend.rechargeDistribution.bind(backend),
+  refund: backend.refundDistribution.bind(backend),
   createDistributionLink(
     campaignId: string,
     quota: number,
     expiresAt?: string | null,
+    reference?: string,
   ): Promise<Result<string>> {
-    return backend.createDistributionLink(campaignId, quota, expiresAt);
+    return backend.createDistributionLink(campaignId, quota, expiresAt, reference);
   },
 
   /**

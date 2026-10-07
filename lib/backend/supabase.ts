@@ -21,6 +21,8 @@ import type {
   CreateCampaignInput,
   DistributionLink,
   DistributionLinkStatus,
+  PrivateCampaignAccess,
+  DistributionExportReceipt,
   ParticipationClaim,
   Result,
   SignUpOutcome,
@@ -616,8 +618,10 @@ export const supabaseBackend: Backend = {
    * l'appelant est le propriétaire de la campagne. Le navigateur n'a donc aucun
    * droit d'écriture direct sur `distribution_links`.
    */
-  async createDistributionLink(campaignId, quota, expiresAt): Promise<Result<string>> {
-    const { data, error } = await supabaseBrowser().rpc('create_distribution_link', {
+  async createDistributionLink(campaignId, quota, expiresAt, reference): Promise<Result<string>> {
+    if (!Number.isSafeInteger(quota) || quota <= 0 || quota > 1000000) return { error: 'Indiquez un entier entre 1 et 1 000 000.' };
+    const { data, error } = await supabaseBrowser().rpc('create_funded_distribution_link_v1', {
+      p_reference: reference ?? crypto.randomUUID(),
       p_campaign_id: campaignId,
       p_quota: quota,
       p_expires_at: expiresAt ?? null,
@@ -640,11 +644,9 @@ export const supabaseBackend: Backend = {
    * une liste vide par construction, jamais par politesse.
    */
   async listDistributionLinks(campaignId): Promise<Result<DistributionLink[]>> {
-    const { data, error } = await supabaseBrowser()
-      .from('distribution_links')
-      .select('id, token, quota_total, quota_used, status, expires_at, created_at, client_logo_url')
-      .eq('campaign_id', campaignId)
-      .order('created_at', { ascending: false });
+    const { data, error } = await supabaseBrowser().rpc('get_distribution_links_v1', {
+      p_campaign_id: campaignId,
+    });
 
     if (error) return { error: message(error, 'Impossible de lire les liens de distribution.') };
 
@@ -655,6 +657,12 @@ export const supabaseBackend: Backend = {
         token: String(row.token),
         quotaTotal: Number(row.quota_total ?? 0),
         quotaUsed: Number(row.quota_used ?? 0),
+        historyUsed: Number(row.history_used ?? 0),
+        confirmedCount: Number(row.confirmed_count ?? 0),
+        reservedCount: Number(row.reserved_count ?? 0),
+        historyDelta: Number(row.history_delta ?? 0),
+        fundingOrigin: row.funding_origin as DistributionLink['fundingOrigin'],
+        refundableCount: Number(row.refundable_count ?? 0),
         // La colonne porte une contrainte `check` : toute valeur inconnue est
         // impossible en base. On tombe sur `ACTIVE` par sécurité plutôt que de
         // laisser un libellé vide à l'écran.
@@ -672,10 +680,20 @@ export const supabaseBackend: Backend = {
    * l'échéance. Aucune unité de quota n'est consommée à l'ouverture de la page.
    */
   async getPrivateCampaign(token): Promise<GalleryItem | null> {
+    const access = await this.getPrivateAccess(token);
+    return access.data?.kind === 'distributed' ? access.data.campaign : null;
+  },
+
+  async getPrivateAccess(token, resume): Promise<Result<PrivateCampaignAccess>> {
     const sb = supabaseBrowser();
 
-    const { data, error } = await sb.rpc('resolve_distribution', { p_token: token });
-    if (error || !data) return null;
+    const { data, error } = resume
+      ? await sb.rpc('resolve_distribution_resume_v1', { p_token: token, p_operation_id: resume.operationId,
+          p_secret: resume.secret, p_format: resume.format, p_descriptor_hash: resume.descriptorHash })
+      : await sb.rpc('resolve_distribution', { p_token: token });
+    if (error) return { error: 'Impossible de vérifier ce lien. Réessayez dans un instant.' };
+    if (!data) return { data: { kind: 'unavailable' } };
+    if (typeof data !== 'object' || data.protocol_version !== 1) return { error: 'La distribution nécessite la mise à jour de la base de données.' };
 
     /*
      * La migration 0015 a changé le retour de `resolve_distribution` :
@@ -692,34 +710,35 @@ export const supabaseBackend: Backend = {
       campaignId = typeof obj.campaign_id === 'string' ? obj.campaign_id : null;
       clientLogoUrl = typeof obj.client_logo_url === 'string' ? obj.client_logo_url : null;
     }
-    if (!campaignId) return null;
+    if (!campaignId) return { data: { kind: 'unavailable' } };
 
-    const { data: row } = await sb
+    const { data: row, error: campaignError } = await sb
       .from('campaigns')
       .select('*')
       .eq('id', campaignId)
       .eq('status', 'published')
       .maybeSingle();
-    if (!row) return null;
+    if (campaignError) return { error: 'Impossible de charger cette campagne.' };
+    if (!row) return { data: { kind: 'unavailable' } };
 
     const campaign = rowToCampaign(row as Row);
-    const frame = campaign.frame_id ? await this.getFrame(campaign.frame_id) : null;
+    const { data: frameRow, error: frameError } = await sb.from('frames').select('*').eq('id', campaign.frame_id).maybeSingle();
+    if (frameError) return { error: 'Impossible de charger le cadre. Réessayez.' };
+    const frame = frameRow ? rowToFrame(frameRow as Row) : null;
+    if (!frame) return { data: { kind: 'unavailable' } };
 
-    const { data: creator } = await sb
+    const { data: creator, error: creatorError } = await sb
       .from('creator_profiles')
       .select('id, username, org_name, logo_url, created_at, watermark')
       .eq('id', campaign.owner_id)
       .maybeSingle();
 
-    return {
-      ...campaign,
-      frame,
+    if (creatorError) return { error: 'Impossible de charger les informations du créateur.' };
+    return { data: { kind: 'distributed', protocolVersion: 1, campaign: {
+      ...campaign, frame,
       creator: creator ? rowToCreator(creator as Row) : null,
-      usageCount: campaign.participants_used ?? 0,
-      likesCount: await likeCount(sb, campaign.id),
-      likedByMe: await likedByMe(sb, campaign.id),
-      clientLogoUrl,
-    };
+      usageCount: 0, likesCount: 0, likedByMe: false, clientLogoUrl,
+    } } };
   },
 
   /**
@@ -752,12 +771,30 @@ export const supabaseBackend: Backend = {
   },
 
   async updateDistributionLink(token, patch): Promise<Result<void>> {
-    const { error } = await supabaseBrowser()
-      .from('distribution_links')
-      .update({ client_logo_url: patch.client_logo_url })
-      .eq('token', token);
+    const { data, error } = await supabaseBrowser().rpc('update_distribution_logo_v1', {
+      p_token: token, p_url: patch.client_logo_url ?? null,
+    });
     if (error) return { error: message(error, 'Impossible de modifier le lien.') };
-    return { data: undefined };
+    if (data !== true) return { error: 'Le logo n’a pas été enregistré : lien non autorisé.' };
+    return {};
+  },
+
+  async distributionExport(action, token, operation): Promise<Result<DistributionExportReceipt>> {
+    const { data, error } = await supabaseBrowser().rpc('distribution_export_v1', {
+      p_action: action, p_token: token, p_operation_id: operation.operationId,
+      p_secret: operation.secret, p_format: operation.format, p_descriptor_hash: operation.descriptorHash,
+    });
+    if (error) return { error: 'Impossible de vérifier l’opération. Réessayez : aucun nouveau débit ne sera créé.' };
+    if (!data || !['RESERVED', 'CONFIRMED', 'CANCELLED', 'EXPIRED', 'UNAVAILABLE'].includes(data.state)) return { error: 'Réponse d’export invalide.' };
+    return { data: { state: data.state, operationId: data.operation_id, receipt: data.receipt, expiresAt: data.expires_at } };
+  },
+  async rechargeDistribution(token, amount, reference): Promise<Result<boolean>> {
+    const { data, error } = await supabaseBrowser().rpc('recharge_distribution_v1', { p_token: token, p_amount: amount, p_reference: reference });
+    return error ? { error: message(error, 'Impossible de recharger ce lien.') } : { data: data === true };
+  },
+  async refundDistribution(token, reference): Promise<Result<boolean>> {
+    const { data, error } = await supabaseBrowser().rpc('refund_distribution_v1', { p_token: token, p_reference: reference });
+    return error ? { error: message(error, 'Impossible de restituer les crédits.') } : { data: data === true };
   },
 
   async revokeDistributionLink(token): Promise<Result<boolean>> {
