@@ -7,12 +7,55 @@
  * de payer par Mobile Money dans une interface optimisée et sécurisée.
  *
  * Marché cible : Burkina Faso — deux opérateurs, `ORANGE_BFA` et `MOOV_BFA`.
- * La passerelle en sait d'autres, mais les annoncer ici prometrait un moyen de
+ * La passerelle en sait d'autres, mais les annoncer ici promettrait un moyen de
  * paiement qui ne fonctionne pas pour l'utilisateur.
  */
 
-export const PAWAPAY_BASE_URL =
-  process.env.PAWAPAY_BASE_URL?.trim().replace(/\/$/, '') || 'https://api.sandbox.pawapay.io';
+const PAWAPAY_SANDBOX_URL = 'https://api.sandbox.pawapay.io';
+const PAWAPAY_PRODUCTION_URL = 'https://api.pawapay.io';
+
+/**
+ * URL de base de l'API pawaPay.
+ *
+ * Le choix de l'environnement ne doit **jamais** être implicite.
+ *
+ * Le défaut précédent — « sandbox si la variable est absente » — est un piège
+ * silencieux : un déploiement en production qui oublie `PAWAPAY_BASE_URL`
+ * accepte de vrais paiements, affiche une page de paiement qui fonctionne, puis
+ * n'active aucune formule parce que les dépôts vont dans le bac à sable. Le
+ * client a payé pour rien et rien dans les journaux ne signale l'erreur.
+ *
+ * Donc : en production, l'absence de variable **casse le build**. En
+ * développement, le défaut reste la sandbox, où le paiement n'a aucune valeur.
+ */
+function resolveBaseUrl(): string {
+  const configured = process.env.PAWAPAY_BASE_URL?.trim().replace(/\/$/, '');
+
+  if (!configured) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'PAWAPAY_BASE_URL est obligatoire en production. Renseignez ' +
+          `${PAWAPAY_PRODUCTION_URL} (production) ou ${PAWAPAY_SANDBOX_URL} (bac à sable). ` +
+          'Sans cette variable, les paiements seraient acceptés dans la mauvaise passerelle.',
+      );
+    }
+    return PAWAPAY_SANDBOX_URL;
+  }
+
+  if (!configured.startsWith('https://')) {
+    throw new Error(
+      'PAWAPAY_BASE_URL doit être une URL https. Le jeton d’API est envoyé dans chaque ' +
+        'requête et ne doit pas transit en clair.',
+    );
+  }
+
+  return configured;
+}
+
+export const PAWAPAY_BASE_URL = resolveBaseUrl();
+
+/** Vrai quand l'environnement configuré est le bac à sable. */
+export const isPawaPaySandbox = PAWAPAY_BASE_URL.includes('sandbox');
 
 export const PAWAPAY_API_TOKEN = process.env.PAWAPAY_API_TOKEN?.trim() || '';
 
@@ -77,6 +120,25 @@ export function isPawaPayConfigured(): boolean {
 }
 
 /**
+ * Un paiement en production ne peut pas être encaissé par le bac à sable.
+ *
+ * Fonction appelée par `/initiate` avant d'ouvrir une page de paiement : mieux
+ * vaut refuser une vente que de la faire payer pour rien.
+ */
+export function assertPaymentEnvironmentIsSound(): string | null {
+  if (!isPawaPayConfigured()) return 'PAWAPAY_API_TOKEN non configuré.';
+
+  if (process.env.NODE_ENV === 'production' && isPawaPaySandbox) {
+    return (
+      'PAWAPAY_BASE_URL pointe vers le bac à sable en production : les paiements ' +
+      'seraient acceptés mais jamais crédités.'
+    );
+  }
+
+  return null;
+}
+
+/**
  * Initie une session de paiement via la page de paiement hébergée pawaPay (Hosted Payment Page).
  *
  * Appelle `POST /v2/paymentpage`.
@@ -93,21 +155,24 @@ export async function initiatePaymentPage(
 
   const endpoint = `${PAWAPAY_BASE_URL}/v2/paymentpage`;
 
-  const payload: Record<string, string> = {
+  const payload: Record<string, unknown> = {
     depositId: input.depositId,
     returnUrl: input.returnUrl,
-    amount: String(input.amount),
     reason: input.reason,
   };
 
-  if (input.country) {
+  if (input.amount !== undefined && input.amount !== null) {
+    payload.amountDetails = {
+      amount: String(input.amount),
+      currency: input.currency || 'XOF',
+    };
+    payload.country = input.country || 'BFA';
+  } else if (input.country) {
     payload.country = input.country;
   }
-  if (input.currency) {
-    payload.currency = input.currency;
-  }
+
   if (input.msisdn) {
-    payload.msisdn = input.msisdn;
+    payload.phoneNumber = input.msisdn;
   }
 
   const response = await fetch(endpoint, {

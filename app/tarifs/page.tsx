@@ -161,7 +161,7 @@ export default function TarifsPage() {
                   lignes dans la colonne étroite — un CTA qui se lit mal est un CTA
                   qu'on ne suit pas. */}
               <a
-                href="/dashboard"
+                href="/dashboard/acheter?type=credits"
                 className="bg-brand-gradient inline-flex h-11 w-full shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-pill px-6 text-[14px] font-medium text-white shadow-sm transition-shadow hover:shadow-md sm:w-auto"
               >
                 {DISTRIBUTION_BANNER.ctaText}

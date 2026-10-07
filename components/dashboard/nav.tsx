@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { BarChart3, LayoutGrid, QrCode, Settings } from 'lucide-react';
+import { BarChart3, LayoutGrid, QrCode, Receipt, Settings } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { ProBadge } from '@/components/ui/badge';
 import { useSession } from '@/lib/backend/session';
@@ -20,6 +20,7 @@ const ITEMS: NavItem[] = [
   { href: '/dashboard', label: 'Mes campagnes', icon: LayoutGrid },
   { href: '/analytics', label: 'Analytics', icon: BarChart3, feature: 'analytics' },
   { href: '/qr-codes', label: 'QR Codes', icon: QrCode, feature: 'qr' },
+  { href: '/dashboard/acheter', label: 'Achats', icon: Receipt },
   { href: '/settings', label: 'Paramètres', icon: Settings },
 ];
 

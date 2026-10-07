@@ -115,8 +115,14 @@ export function AuthForm({ mode }: { mode: Mode }) {
           setSentTo(email.trim().toLowerCase());
           return;
         }
+        const createdUser = await backend.getSessionUser();
         await refresh();
-        router.push(nextPath ?? '/onboarding');
+        const destination = nextPath ?? '/onboarding';
+        router.push(
+          createdUser?.onboarded_at || destination === '/onboarding'
+            ? destination
+            : `/onboarding?next=${encodeURIComponent(destination)}`,
+        );
         return;
       }
 
@@ -198,7 +204,12 @@ export function AuthForm({ mode }: { mode: Mode }) {
             {pending === 'resend' ? <Spinner /> : "Renvoyer l'email"}
           </Button>
 
-          <ButtonLink href="/login" variant="secondary" size="lg" className="w-full">
+          <ButtonLink
+            href={nextPath ? `/login?next=${encodeURIComponent(nextPath)}` : '/login'}
+            variant="secondary"
+            size="lg"
+            className="w-full"
+          >
             J’ai confirmé, me connecter
             <ArrowRight className="size-4" aria-hidden />
           </ButtonLink>
@@ -385,7 +396,10 @@ export function AuthForm({ mode }: { mode: Mode }) {
         ) : (
           <>
             Pas encore de compte ?{' '}
-            <Link href="/signup" className="font-medium text-ink underline underline-offset-4">
+            <Link
+              href={nextPath ? `/signup?next=${encodeURIComponent(nextPath)}` : '/signup'}
+              className="font-medium text-ink underline underline-offset-4"
+            >
               S’inscrire
             </Link>
           </>

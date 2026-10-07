@@ -5,6 +5,7 @@ import type {
   Descriptor,
   Frame,
   GalleryItem,
+  PaymentRecord,
   PlanKind,
   User,
 } from '@/lib/types';
@@ -223,6 +224,8 @@ export const localBackend: Backend = {
       org_name: null,
       logo_url: null,
       plan: 'free',
+      // Le mode démonstration n'a pas d'échéance : rien n'y est facturé.
+      plan_expires_at: null,
       onboarded_at: null,
       created_at: new Date().toISOString(),
       password,
@@ -691,6 +694,17 @@ export const localBackend: Backend = {
     return {};
   },
 
+  /**
+   * Historique de paiement — toujours vide en démonstration.
+   *
+   * Rien n'est simulé : une fausse facture dans une maquette finit toujours par
+   * être montrée à un vrai client. L'écran affiche donc son état vide, qui est
+   * la vérité : aucun paiement n'a été encaissé.
+   */
+  async listPayments(): Promise<PaymentRecord[]> {
+    return [];
+  },
+
   /* --- Médias ------------------------------------------------------- */
   async uploadImage(file): Promise<Result<string>> {
     // En mode démonstration, l'image est encodée en data URL : aucune dépendance
@@ -790,8 +804,10 @@ export async function seedDemoAccount(): Promise<User> {
     org_name: "Amicale des étudiants d'Abidjan",
     logo_url: null,
     // Le compte de démonstration arrive en Creator : c'est ce qui permet de voir
-    // les modules premium (Motion, Analytics, QR) sans rien payer.
+    // les modules premium (Motion, Analytics, QR) sans rien payer. Sans
+    // échéance, pour qu'un cron ne le ramène pas au niveau gratuit.
     plan: 'creator',
+    plan_expires_at: null,
     onboarded_at: now,
     created_at: now,
     password: DEMO_PASSWORD,

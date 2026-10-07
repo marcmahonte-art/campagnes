@@ -21,8 +21,13 @@ export default function CreatorLayout({ children }: { children: React.ReactNode 
 
   useEffect(() => {
     if (loading) return;
-    if (!user) router.replace('/login');
-    else if (!user.onboarded_at) router.replace('/onboarding');
+    if (!user) {
+      const destination = `${window.location.pathname}${window.location.search}`;
+      router.replace(`/login?next=${encodeURIComponent(destination)}`);
+    } else if (!user.onboarded_at) {
+      const destination = `${window.location.pathname}${window.location.search}`;
+      router.replace(`/onboarding?next=${encodeURIComponent(destination)}`);
+    }
   }, [loading, user, router]);
 
   if (loading || !user) {

@@ -41,7 +41,11 @@ export function TopupReturnNotice({ campaignName }: { campaignName: string }) {
         const res = await fetch(
           `/api/payments/pawapay/check?depositId=${encodeURIComponent(depositId)}`,
         );
-        const data = (await res.json()) as { status?: string; failureMessage?: string };
+        const data = (await res.json()) as {
+          status?: string;
+          failureMessage?: string;
+          error?: string;
+        };
         if (cancelled) return;
 
         if (data.status === 'completed') {
@@ -55,6 +59,17 @@ export function TopupReturnNotice({ campaignName }: { campaignName: string }) {
           setNotice({
             tone: 'error',
             text: `Le paiement n’a pas abouti${data.failureMessage ? ` : ${data.failureMessage}` : '.'} Aucun montant n’a été débité par Campagnes.`,
+          });
+        } else if (data.error) {
+          /*
+           * pawaPay dit `COMPLETED` mais la confirmation est refusée (montant
+           * encaissé différent du montant attendu, le plus souvent). Le quota ne
+           * sera PAS crédité tout seul : dire « en cours de vérification » ferait
+           * attendre le client pour rien.
+           */
+          setNotice({
+            tone: 'error',
+            text: 'Votre paiement a bien été reçu, mais nous ne pouvons pas le valider pour le moment. Le quota n’a pas été crédité — notre équipe vérifie et vous répond sous 24 h.',
           });
         } else {
           setNotice({

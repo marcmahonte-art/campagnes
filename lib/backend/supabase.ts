@@ -5,12 +5,14 @@ import type {
   Descriptor,
   Frame,
   GalleryItem,
+  PaymentRecord,
   PlanKind,
   User,
 } from '@/lib/types';
 import { parseDescriptor } from '@/lib/descriptor';
 import { isCampaignKind } from '@/lib/campaign-kinds';
 import { FREE_DOWNLOADS, toClaim, toQuota } from '@/lib/quota';
+import { toPaymentRecord } from '@/lib/payments/history';
 import { supabaseBrowser } from '@/lib/supabase/client';
 import type { ShareEventType, ShareStats } from '@/lib/share';
 import { MEDIA_BUCKET, REPORTS_BUCKET, SITE_URL } from './config';
@@ -40,6 +42,8 @@ function rowToUser(row: Row): User {
     org_name: (row.org_name as string | null) ?? null,
     logo_url: (row.logo_url as string | null) ?? null,
     plan: (row.plan as User['plan']) ?? 'free',
+    // Migration 0020 : absent tant qu'elle n'est pas appliquée, d'où le repli.
+    plan_expires_at: (row.plan_expires_at as string | null) ?? null,
     onboarded_at: (row.onboarded_at as string | null) ?? null,
     created_at: String(row.created_at ?? new Date().toISOString()),
   };
@@ -854,6 +858,40 @@ export const supabaseBackend: Backend = {
       error:
         'Activez une formule depuis la page Tarifs avec un paiement Mobile Money confirmé.',
     };
+  },
+
+  /**
+   * Historique des paiements du compte connecté.
+   *
+   * La lecture passe par `supabaseBrowser()` — le client **de session**, avec la
+   * clé anon — et non par la clé `service_role`. C'est la policy
+   * `users_select_own_payments` (`auth.uid() = user_id`, migration 0017) qui
+   * filtre : passer `ownerId` en paramètre ne donne aucun pouvoir supplémentaire,
+   * la base ne rendrait rien d'autre que les lignes de la session.
+   *
+   * On ne filtre donc pas sur `userId` dans ce code — ce serait un filtre de
+   * confort qui laisserait croire que c'est lui qui protège, alors que c'est la
+   * RLS. Ne pas passer `userId` à la requête est un choix : il n'aurait aucun
+   * effet sur ce que la base renvoie.
+   */
+  async listPayments(_userId): Promise<PaymentRecord[]> {
+    const sb = supabaseBrowser();
+    const { data } = await sb.auth.getUser();
+    if (!data.user) return [];
+
+    const { data: rows, error } = await sb
+      .from('payments')
+      .select(
+        'deposit_id, amount, currency, status, plan, campaign_id, purchase_type, metadata, created_at, failure_message',
+      )
+      .order('created_at', { ascending: false })
+      .limit(30);
+
+    if (error || !rows) return [];
+
+    return (rows as unknown[])
+      .map((row) => toPaymentRecord(row as Parameters<typeof toPaymentRecord>[0]))
+      .filter((record): record is PaymentRecord => record !== null);
   },
 
   /* --- Médias ------------------------------------------------------- */

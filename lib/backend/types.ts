@@ -8,6 +8,7 @@ import type {
   Frame,
   GalleryItem,
   ParticipationClaim,
+  PaymentRecord,
   PlanKind,
   Ratio,
   User,
@@ -353,6 +354,19 @@ export interface Backend {
   /* --- Formule ------------------------------------------------------ */
   /** Change la formule du compte. En mode Supabase, l'activation payante passe par le webhook. */
   setPlan(userId: string, plan: PlanKind): Promise<Result>;
+
+  /**
+   * Historique des paiements du compte, du plus récent au plus ancien.
+   *
+   * En mode Supabase, la lecture passe par le client de session : c'est la RLS
+   * de `payments` (`auth.uid() = user_id`) qui décide de ce qu'un utilisateur
+   * voit, pas un filtre posé dans ce code. Un `userId` falsifié ne changerait
+   * rien — la base ne rendrait que les lignes de la session.
+   *
+   * Un tableau vide signifie « aucun paiement », ce qu'un écran doit pouvoir
+   * distinguer de « historique indisponible ».
+   */
+  listPayments(userId: string): Promise<PaymentRecord[]>;
 
   /* --- Médias ------------------------------------------------------- */
   uploadImage(file: File, folder: string): Promise<Result<string>>;

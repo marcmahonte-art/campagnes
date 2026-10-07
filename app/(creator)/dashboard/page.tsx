@@ -100,7 +100,22 @@ function MonetisationBanner({
   plan: 'free' | 'creator' | 'organization';
   campaigns: CampaignWithFrame[];
 }) {
+  const [creditBalance, setCreditBalance] = useState<number | null>(null);
   const planConfig = PRICING_PLANS[plan];
+
+  useEffect(() => {
+    let alive = true;
+    void fetch('/api/billing/summary', { cache: 'no-store' })
+      .then(async (response) => {
+        if (!response.ok) return;
+        const data = (await response.json()) as { balance?: number };
+        if (alive) setCreditBalance(Number(data.balance ?? 0));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
   const used = campaigns.reduce((sum, campaign) => sum + campaign.participants_used, 0);
   const granted = campaigns.reduce((sum, campaign) => sum + campaign.participants_granted, 0);
 
@@ -126,14 +141,15 @@ function MonetisationBanner({
         </span>
       </div>
 
-      <div className="rounded-md bg-gray-50 px-3 py-2.5">
+      <Link href="/dashboard/acheter?type=credits" className="rounded-md bg-gray-50 px-3 py-2.5 transition-colors hover:bg-purple/5">
         <span className="block text-[11px] font-medium uppercase tracking-wide text-gray-400">
-          Crédits achetés
+          Crédits du compte
         </span>
-        <span className="mt-1 block text-[13px] font-medium text-gray-600">
-          Suivis sur chaque campagne
+        <span className="mt-1 block text-[14px] font-semibold text-ink">
+          {creditBalance === null ? '—' : new Intl.NumberFormat('fr-FR').format(creditBalance)} disponibles
         </span>
-      </div>
+        <span className="mt-1 block text-[11px] text-purple">Acheter des crédits →</span>
+      </Link>
     </Card>
   );
 }

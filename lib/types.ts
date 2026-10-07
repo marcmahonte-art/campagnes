@@ -27,6 +27,16 @@ export interface User {
   org_name: string | null;
   logo_url: string | null;
   plan: PlanKind;
+  /**
+   * Date de fin de la formule payante (migration 0020).
+   *
+   * `null` pour la formule gratuite, qui n'expire pas. Tant que le cron
+   * `/api/cron/expire-plans` n'est pas passé, `plan` peut rester marqué payant
+   * quelques heures après cette date : c'est pourquoi les écrans qui verrouillent
+   * un module premium doivent comparer `plan_expires_at` à maintenant, et pas
+   * seulement lire `plan`.
+   */
+  plan_expires_at: string | null;
   onboarded_at: string | null;
   created_at: string;
 }
@@ -347,4 +357,31 @@ export interface CampaignQuota {
   quota: number;
   /** Vrai tant qu'un téléchargement reste possible. */
   open: boolean;
+}
+
+/**
+ * Un paiement tel qu'un créateur peut le lire dans son historique.
+ *
+ * Ce type ne contient **aucun secret** : ni jeton d'API, ni clé de signature,
+ * ni en-tête de callback. `depositId` est un identifiant de transaction
+ * nécessaire pour rapprocher visuellement d'un relevé opérateur, et il est
+ * public par nature — c'est l'identifiant du dépôt chez pawaPay, pas une
+ * authentification.
+ */
+export interface PaymentRecord {
+  /** Identifiant du dépôt chez pawaPay — la référence à donner à l'opérateur. */
+  depositId: string;
+  /** Montant enregistré, en FCFA. */
+  amountFcfa: number;
+  currency: string;
+  status: 'pending' | 'completed' | 'failed' | 'cancelled';
+  /** Intitulé lisible de l'offre achetée, reconstitué côté client. */
+  label: string;
+  /** `pack` pour une recharge de campagne, `credits` pour le portefeuille, `plan` pour un abonnement. */
+  kind: 'pack' | 'credits' | 'plan';
+  /** Date d'échéance, pour un abonnement. `null` sinon. */
+  planExpiresAt: string | null;
+  createdAt: string;
+  /** Renseigné uniquement si le paiement a échoué. */
+  failureMessage: string | null;
 }

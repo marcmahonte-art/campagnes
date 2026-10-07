@@ -3,13 +3,19 @@ import { supabaseServer } from '@/lib/supabase/server';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { isSupabaseConfigured, SITE_URL } from '@/lib/backend/config';
 import { PLANS, isPaidPlan, type PlanId } from '@/lib/plans';
-import { initiatePaymentPage, isPawaPayConfigured, PawaPayError } from '@/lib/pawapay';
+import {
+  assertPaymentEnvironmentIsSound,
+  initiatePaymentPage,
+  isPawaPayConfigured,
+  PawaPayError,
+} from '@/lib/pawapay';
 import {
   PRICING_PLANS,
   getPlanPeriodPrice,
   type BillingDuration,
   DISTRIBUTION_PACKS,
 } from '@/lib/pricing/config';
+import { COMPANY, PRODUCT, orToComplete } from '@/lib/company';
 
 interface InitiateBody {
   plan?: PlanId;
@@ -43,6 +49,7 @@ export async function POST(request: NextRequest) {
     let paymentAmount = 0;
     let paymentReason = '';
     let isPack = false;
+    let purchaseType: 'plan' | 'campaign_topup' | 'account_credits' = 'plan';
     /** Distributions créditées à la confirmation. Lu par `credit_campaign_quota`. */
     let distributions: number | null = null;
 
@@ -58,12 +65,15 @@ export async function POST(request: NextRequest) {
       paymentAmount = pack.priceFcfa;
       distributions = pack.distributions;
       /*
-       * Un pack crédite une campagne, pas une formule : `plan` reste nul sur la
-       * ligne `payments` (migration 0018). Écrire un plan factice ferait
-       * croire à une activation d'abonnement et tromperait le webhook.
+       * Avec une campagne, le comportement historique est conservé. Sans
+       * campagne, le pack alimente le portefeuille de crédits du compte : le
+       * paiement ne doit pas être bloqué par l'absence d'une campagne choisie.
        */
       targetPlan = null;
-      paymentReason = `Pack ${pack.name} - Campagnes`;
+      purchaseType = campaignId ? 'campaign_topup' : 'account_credits';
+      paymentReason = campaignId
+        ? `Pack ${pack.name} - Campagnes`
+        : `Crédits de compte — ${pack.name} - Campagnes`;
     } else {
       if (!plan || !isPaidPlan(plan)) {
         return NextResponse.json(
@@ -88,18 +98,17 @@ export async function POST(request: NextRequest) {
       paymentReason = `Abonnement ${planName} (${periodLabel}) - Campagnes`;
     }
 
-    /* ---- Un pack DOIT désigner sa campagne, et elle doit être au créateur ---- */
-    if (isPack) {
-      if (!campaignId) {
-        return NextResponse.json(
-          { error: 'Campagne manquante : un pack de distribution crédite une campagne précise.' },
-          { status: 400 },
-        );
-      }
+    /* ---- Une campagne est obligatoire uniquement pour l'ancien topup ciblé ---- */
+    if (isPack && purchaseType === 'campaign_topup' && !campaignId) {
+      return NextResponse.json(
+        { error: 'Campagne manquante pour cette recharge ciblée.' },
+        { status: 400 },
+      );
     }
 
     let userId: string;
     let userEmail: string | undefined;
+    let buyerName = 'À COMPLÉTER';
 
     if (isSupabaseConfigured) {
       const supabase = await supabaseServer();
@@ -117,6 +126,8 @@ export async function POST(request: NextRequest) {
 
       userId = user.id;
       userEmail = user.email;
+      const metadataName = user.user_metadata?.full_name ?? user.user_metadata?.name;
+      if (typeof metadataName === 'string' && metadataName.trim()) buyerName = metadataName.trim();
     } else {
       // Mode démonstration / développement local
       userId = '00000000-0000-0000-0000-000000000000';
@@ -152,29 +163,44 @@ export async function POST(request: NextRequest) {
 
     const depositId = crypto.randomUUID();
     /*
-     * Retour : la page campagne pour un pack, `/tarifs` pour un abonnement.
-     * `campaignId` est porté dans l'URL de retour pour que l'écran sache quoi
-     * relire au retour — sans lui, on ne saurait pas quel quota vérifier.
+     * Tous les nouveaux achats reviennent dans le tunnel du dashboard. Le
+     * parcours historique des topups campagne garde sa page de campagne pour
+     * ne pas casser les paiements déjà initiés.
      */
-    const returnUrl = isPack
+    const returnUrl = purchaseType === 'campaign_topup'
       ? `${SITE_URL}/campaigns/${campaignId}?depositId=${encodeURIComponent(depositId)}`
-      : `${SITE_URL}/tarifs?depositId=${encodeURIComponent(depositId)}&plan=${encodeURIComponent(targetPlan ?? 'creator')}`;
+      : `${SITE_URL}/dashboard/acheter?depositId=${encodeURIComponent(depositId)}&type=${purchaseType === 'account_credits' ? 'credits' : 'plan'}`;
 
     // Enregistrement de l'intention de paiement avant l'appel à pawaPay
     if (isSupabaseConfigured) {
       try {
         const admin = supabaseAdmin();
+        if (isSupabaseConfigured) {
+          const { data: profile } = await admin
+            .from('users')
+            .select('org_name')
+            .eq('id', userId)
+            .maybeSingle();
+          if (typeof profile?.org_name === 'string' && profile.org_name.trim()) {
+            buyerName = profile.org_name.trim();
+          }
+        }
+
+        const invoiceLabel = paymentReason;
         const { error: dbError } = await admin.from('payments').insert({
           deposit_id: depositId,
           user_id: userId,
           plan: targetPlan,
-          campaign_id: isPack ? campaignId : null,
+          campaign_id: purchaseType === 'campaign_topup' ? campaignId : null,
+          purchase_type: purchaseType,
           amount: paymentAmount,
           currency: 'XOF',
           status: 'pending',
           metadata: {
             is_pack: isPack,
             pack_id: packId || null,
+            purchase_type: purchaseType,
+            credit_amount: purchaseType === 'account_credits' ? distributions : null,
             /*
              * Le volume crédité au webhook. Stocké ici, pas recalculé plus tard
              * depuis le catalogue : c'est ce que le client a payé, et il ne doit
@@ -185,6 +211,25 @@ export async function POST(request: NextRequest) {
             reason: paymentReason,
             user_email: userEmail,
             return_url: returnUrl,
+            seller: {
+              name: COMPANY.legalName,
+              product: PRODUCT.name,
+              address: COMPANY.address,
+              email: COMPANY.email,
+              rccm: COMPANY.rccm,
+            },
+            buyer: {
+              name: orToComplete(buyerName),
+              email: orToComplete(userEmail),
+            },
+            invoice_lines: [
+              {
+                description: invoiceLabel,
+                quantity: 1,
+                unit_amount: paymentAmount,
+                total: paymentAmount,
+              },
+            ],
           },
         });
 
@@ -212,6 +257,31 @@ export async function POST(request: NextRequest) {
            * une variable d'environnement (N11). Le détail technique reste dans
            * le code d'erreur, exploité par le client.
            */
+          error: 'Le paiement Mobile Money n’est pas encore disponible.',
+          code: 'PAYMENT_NOT_CONFIGURED',
+        },
+        { status: 503 },
+      );
+    }
+
+    /*
+     * Refus **avant** d'ouvrir la page de paiement, et après avoir écrit la
+     * ligne `payments`.
+     *
+     * L'ordre est délibéré. L'environnement est contrôlé après l'insertion
+     * pour que le refus soit attributed à une trace en base ; si l'on contrôlait
+     * avant, une configuration cassée ne laisserait aucun journal et le client
+     * n'aurait aucun moyen de nous dire ce qui s'est passé.
+     *
+     * En pratique ce refus ne survient que si `PAWAPAY_BASE_URL` ou le jeton ont
+     * été modifiés à chaud — `lib/pawapay.ts` refuse déjà de démarrer sans ces
+     * variables en production.
+     */
+    const environmentProblem = assertPaymentEnvironmentIsSound();
+    if (environmentProblem) {
+      console.error('[pawaPay] Configuration de paiement inutilisable :', environmentProblem);
+      return NextResponse.json(
+        {
           error: 'Le paiement Mobile Money n’est pas encore disponible.',
           code: 'PAYMENT_NOT_CONFIGURED',
         },

@@ -5,9 +5,9 @@ import { useRouter } from 'next/navigation';
 import { DismissibleNotice, InlineError } from '@/components/ui/feedback';
 import { Button } from '@/components/ui/button';
 import { PaymentReassurance } from '@/components/plans/plan-card';
-import { backend, canSelfActivatePlan } from '@/lib/backend';
+import { backend } from '@/lib/backend';
 import { useSession } from '@/lib/backend/session';
-import { planOf, type PlanId } from '@/lib/plans';
+import type { PlanId } from '@/lib/plans';
 import {
   PRICING_PERIODS,
   PRICING_PLANS,
@@ -83,6 +83,31 @@ export function PricingProvider({
     let isMounted = true;
     setCheckingPayment(true);
 
+    /**
+     * Date d'échéance du compte, relue **après** la confirmation.
+     *
+     * `refresh()` met à jour l'état React, mais l'effet qui héberge cette
+     * fermeture a capturé l'ancien `user` : lire `user.plan_expires_at` ici
+     * renverrait la valeur d'avant le paiement. On relit donc le profil
+     * directement, ce qui est de toute façon ce que fait `refresh()` en
+     * interne — sans dépendre du temps de rendu de React.
+     */
+    const readFreshPlanExpiry = async (): Promise<string | null> => {
+      const fresh = await backend.getSessionUser();
+      const iso = fresh?.plan_expires_at;
+      if (!iso || fresh?.plan === 'free') return null;
+
+      const expiry = new Date(iso);
+      if (Number.isNaN(expiry.getTime()) || expiry.getTime() <= Date.now()) return null;
+
+      return new Intl.DateTimeFormat('fr-FR', {
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+        timeZone: 'Africa/Ouagadougou',
+      }).format(expiry);
+    };
+
     async function verifyDeposit() {
       try {
         const res = await fetch(
@@ -95,8 +120,24 @@ export function PricingProvider({
           await refresh();
           const activatedPlan =
             data.plan === 'organization' ? 'Organisations & ONG' : 'Créateur';
+
+          /*
+           * La date d'échéance est relue **après** `refresh()`, donc depuis la
+           * session à jour : `refresh()` recharge l'utilisateur, `plan_expires_at`
+           * vient d'être écrit par le webhook. Sans elle, l'écran annonçait une
+           * formule sans dire jusqu'à quand — le client ne pouvait pas savoir
+           * s'il devait renouveler ou attendre.
+           *
+           * Elle peut rester absente si le webhook vient de passer et que le
+           * `expires_at` n'est pas encore visible : dans ce cas on n'invente
+           * rien, on confirme l'activation et laisse le client la retrouver dans
+           * ses réglages.
+           */
+          const expiry = await readFreshPlanExpiry();
+
           setNotice(
-            `Votre paiement Mobile Money a été validé. Votre formule ${activatedPlan} est maintenant active.`,
+            `Votre paiement Mobile Money a été validé. Votre formule ${activatedPlan} est maintenant active` +
+              `${expiry ? ` jusqu’au ${expiry}` : ''}.`,
           );
           window.history.replaceState({}, '', '/tarifs');
         } else if (data.status === 'failed') {
@@ -104,6 +145,18 @@ export function PricingProvider({
             data.failureMessage
               ? `Le paiement a échoué : ${data.failureMessage}`
               : 'Le paiement Mobile Money a été refusé ou annulé. Vous pouvez réessayer.',
+          );
+          window.history.replaceState({}, '', '/tarifs');
+        } else if (data.error) {
+          /*
+           * La confirmation a été refusée alors que pawaPay dit `COMPLETED` —
+           * le plus souvent un montant encaissé différent du montant attendu.
+           * On ne dit pas « en cours » : le paiement ne se confirmera pas tout
+           * seul, et laisser croire à une attente invite à réessayer en boucle.
+           */
+          setError(
+            'Votre paiement a bien été reçu, mais nous ne pouvons pas le valider pour le moment. ' +
+              'Notre équipe vérifie et vous répond sous 24 h. Aucune formule n’a été activée.',
           );
           window.history.replaceState({}, '', '/tarifs');
         } else {
@@ -127,84 +180,26 @@ export function PricingProvider({
     onDurationChange?.(d);
   }
 
-  async function activate(plan: PlanId) {
-    if (!user) {
-      router.push('/signup');
-      return;
-    }
-
+  function activate(plan: PlanId) {
     setError(null);
-
-    // Retour à la formule gratuite : aucun paiement.
-    if (plan === 'free') {
-      setPending('free');
-      const result = await backend.setPlan(user.id, 'free');
-      if (result.error) {
-        setError(result.error);
-        setPending(null);
-        return;
-      }
-      await refresh();
-      setPending(null);
-      setNotice('Votre compte est repassé en formule Gratuite.');
-      return;
-    }
-
-    // Formule payante : initiation du paiement Mobile Money.
     setPending(plan);
 
-    try {
-      const response = await fetch('/api/payments/pawapay/initiate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ plan, duration }),
-      });
+    const checkoutPath = plan === 'free'
+      ? '/dashboard'
+      : `/dashboard/acheter?plan=${encodeURIComponent(plan)}&duration=${encodeURIComponent(duration)}`;
+    const destination = user?.onboarded_at
+      ? checkoutPath
+      : `/onboarding?next=${encodeURIComponent(checkoutPath)}`;
 
-      const data = await response.json();
-
-      if (!response.ok || !data.success) {
-        /*
-         * Le paiement n'est pas configuré côté serveur. Deux cas :
-         *  - mode démonstration local : on active la formule sans passerelle,
-         *    pour que le reste de l'interface reste explorable ;
-         *  - production : on dit la vérité, sans inventer de succès.
-         */
-        if (data.code === 'PAYMENT_NOT_CONFIGURED') {
-          if (canSelfActivatePlan) {
-            const result = await backend.setPlan(user.id, plan);
-            if (result.error) {
-              setError(result.error);
-            } else {
-              await refresh();
-              setNotice(`Formule ${planOf(plan).name} activée (mode démonstration).`);
-            }
-          } else {
-            setError(
-              'Le paiement Mobile Money n’est pas encore disponible. Réessayez plus tard ou contactez-nous.',
-            );
-          }
-          setPending(null);
-          return;
-        }
-
-        setError(data.error || 'Le paiement n’a pas pu être initialisé. Réessayez.');
-        setPending(null);
-        return;
-      }
-
-      if (data.redirectUrl) {
-        window.location.href = data.redirectUrl;
-      } else {
-        throw new Error('Aucune adresse de paiement renvoyée.');
-      }
-    } catch (err: unknown) {
-      console.error('[Paiement]', err);
-      setError(
-        err instanceof Error
-          ? err.message
-          : 'Impossible de joindre le service de paiement Mobile Money. Réessayez.',
-      );
-      setPending(null);
+    /*
+     * La page Tarifs ne déclenche plus de paiement. Elle qualifie l'intention,
+     * puis l'espace compte affiche le récapitulatif et devient l'unique endroit
+     * qui peut ouvrir la page Mobile Money.
+     */
+    if (!user) {
+      router.push(`/signup?next=${encodeURIComponent(destination)}`);
+    } else {
+      router.push(destination);
     }
   }
 

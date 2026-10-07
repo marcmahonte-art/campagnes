@@ -26,14 +26,22 @@ export function OnboardingForm() {
   const [pending, setPending] = useState(false);
   const [available, setAvailable] = useState<boolean | null>(null);
   const [checking, setChecking] = useState(false);
+  const [nextPath, setNextPath] = useState<string | null>(null);
 
   // Garde d'accès : pas de session → connexion ; déjà onboardé → dashboard.
   useEffect(() => {
+    const raw = new URLSearchParams(window.location.search).get('next');
+    if (raw && raw.startsWith('/') && !raw.startsWith('//')) setNextPath(raw);
+  }, []);
+
+  useEffect(() => {
     if (loading) return;
-    if (!user) router.replace('/login');
-    else if (user.onboarded_at) router.replace('/dashboard');
+    const raw = new URLSearchParams(window.location.search).get('next');
+    const safeNext = raw && raw.startsWith('/') && !raw.startsWith('//') ? raw : null;
+    if (!user) router.replace(safeNext ? `/login?next=${encodeURIComponent(safeNext)}` : '/login');
+    else if (user.onboarded_at) router.replace(nextPath ?? safeNext ?? '/dashboard');
     else if (!orgName && user.org_name) setOrgName(user.org_name);
-  }, [loading, user, router, orgName]);
+  }, [loading, user, router, orgName, nextPath]);
 
   const usernameValid = useMemo(() => isValidUsername(username), [username]);
 
@@ -90,7 +98,7 @@ export function OnboardingForm() {
         return;
       }
       await refresh();
-      router.push('/dashboard');
+      router.push(nextPath ?? '/dashboard');
     } finally {
       setPending(false);
     }

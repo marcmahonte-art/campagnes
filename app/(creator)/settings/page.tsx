@@ -17,6 +17,30 @@ import { isValidUsername, normalizeUsername } from '@/lib/slug';
 import { FEATURE_LABELS, PLAN_LIST, hasFeature, planOf } from '@/lib/plans';
 import { formatFcfa } from '@/lib/plans';
 import { PAYMENT_METHOD_LABELS } from '@/lib/pricing/config';
+import { PaymentHistory } from '@/components/payments/payment-history';
+
+/**
+ * Date d'échéance d'une formule payante, ou `null` si elle ne porte pas encore
+ * d'engagement (absente, ou déjà dépassée).
+ *
+ * `fr-FR` sur `Africa/Ouagadougou` : une échéance affichée au 31 mars à
+ * Ouagadougou ne doit pas basculer au 1er avril selon le fuseau du poste qui
+ * consulte la page.
+ */
+function planExpiryLabel(iso: string | null): string | null {
+  if (!iso) return null;
+
+  const expiry = new Date(iso);
+  if (Number.isNaN(expiry.getTime())) return null;
+  if (expiry.getTime() <= Date.now()) return null;
+
+  return new Intl.DateTimeFormat('fr-FR', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'Africa/Ouagadougou',
+  }).format(expiry);
+}
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -173,9 +197,40 @@ export default function SettingsPage() {
             </Link>
           </div>
 
+          {/*
+            Date d'échéance — le point le plus important de cet écran après la
+            formule elle-même.
+
+            Elle n'est affichée que si elle existe ET qu'elle est dans le futur.
+            Un `plan_expires_at` dépassé n'est pas une erreur : c'est l'état
+            normal entre l'échéance et le passage du cron quotidien, qui
+            ramène le compte au niveau gratuit. Afficher « expiré le 3 mars »
+            pendant quelques heures donnerait l'impression d'un bug ; on ne montre
+            donc l'échéance que lorsqu'elle porte encore un engagement.
+          */}
+          {user.plan !== 'free' && planExpiryLabel(user.plan_expires_at) && (
+            <p className="text-[13px] text-gray-500">
+              Formule active jusqu’au{' '}
+              <span className="font-medium text-ink">{planExpiryLabel(user.plan_expires_at)}</span>
+              . Aucune reconduction automatique.
+            </p>
+          )}
+
           {planNotice && (
             <DismissibleNotice onDismiss={() => setPlanNotice(null)}>{planNotice}</DismissibleNotice>
           )}
+
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-md border border-purple/15 bg-purple/5 p-4">
+            <div>
+              <p className="text-[13px] font-semibold text-ink">Gérer mes achats et mes factures</p>
+              <p className="mt-1 text-[12px] leading-relaxed text-gray-600">
+                Choisissez une formule, achetez des crédits et retrouvez vos justificatifs au même endroit.
+              </p>
+            </div>
+            <ButtonLink href="/dashboard/acheter" variant="primary" size="sm">
+              Ouvrir les achats
+            </ButtonLink>
+          </div>
 
           <div className="grid gap-3 md:grid-cols-3">
             {PLAN_LIST.map((plan) => {
@@ -259,6 +314,10 @@ export default function SettingsPage() {
               ? "Mode démonstration : le changement de formule est immédiat pour la recette."
               : `${PAYMENT_METHOD_LABELS.reassurance} Prépaiement sans reconduction automatique.`}
           </p>
+
+          <div className="border-t border-gray-200 pt-4">
+            <PaymentHistory />
+          </div>
         </div>
       </Card>
 
