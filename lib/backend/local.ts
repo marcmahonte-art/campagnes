@@ -262,7 +262,7 @@ export const localBackend: Backend = {
     return {};
   },
 
-  async signInWithGoogle(): Promise<Result> {
+  async signInWithGoogle(_next?: string | null): Promise<Result> {
     return {
       error:
         "La connexion Google nécessite un projet Supabase configuré. En mode démonstration, utilisez l'inscription par email.",

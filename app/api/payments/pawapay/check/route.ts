@@ -146,6 +146,12 @@ export async function GET(request: NextRequest) {
           const failureCode = remoteStatus.failureReason?.failureCode ?? 'FAILED';
           const failureMessage = remoteStatus.failureReason?.failureMessage ?? 'Échec du paiement.';
 
+          /*
+           * Même garde que le webhook : un échec ne dégrade pas une ligne déjà
+           * finalisée. `/check` et le webhook doivent écrire de la même façon,
+           * sinon la réconciliation et la notification racontent deux histoires
+           * différentes de la même commande.
+           */
           await admin
             .from('payments')
             .update({
@@ -154,7 +160,8 @@ export async function GET(request: NextRequest) {
               failure_message: failureMessage,
               updated_at: new Date().toISOString(),
             })
-            .eq('deposit_id', depositId);
+            .eq('deposit_id', depositId)
+            .eq('status', 'pending');
 
           return NextResponse.json({
             depositId,

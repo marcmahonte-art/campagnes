@@ -186,7 +186,21 @@ export async function POST(request: NextRequest) {
         const failureCode = item.failureReason?.failureCode ?? 'UNKNOWN_FAILURE';
         const failureMessage = item.failureReason?.failureMessage ?? 'Le paiement a échoué.';
 
-        await admin
+        /*
+         * Un échec n'écrase JAMAIS un paiement déjà finalisé.
+         *
+         * pawaPay rejoue ses notifications, et `/check` a pu confirmer le
+         * paiement entre-temps : sans le filtre `status = 'pending'`, un
+         * `FAILED` tardif repassait la ligne en « failed » alors que le quota
+         * ou la formule étaient déjà crédités. L'écart était invisible à
+         * l'écran et indétectable en réconciliation : le compteur disait
+         * « crédité », la commande disait « échec ».
+         *
+         * Le filtre porte la garde : c'est la base qui décide, pas le code.
+         * Zéro ligne modifiée n'est pas une erreur — c'est la preuve que la
+         * notification arrivait trop tard pour être honorée.
+         */
+        const { data: marked, error: failedError } = await admin
           .from('payments')
           .update({
             status: 'failed',
@@ -194,9 +208,21 @@ export async function POST(request: NextRequest) {
             failure_message: failureMessage,
             updated_at: new Date().toISOString(),
           })
-          .eq('deposit_id', depositId);
+          .eq('deposit_id', depositId)
+          .eq('status', 'pending')
+          .select('deposit_id');
 
-        console.log(`[pawaPay Webhook] Échec enregistré pour depositId=${depositId}: ${failureCode}`);
+        if (failedError) {
+          console.warn(
+            `[pawaPay Webhook] Échec non enregistré (depositId=${depositId}) : ${failedError.message}`,
+          );
+        } else if (marked && marked.length === 0) {
+          console.warn(
+            `[pawaPay Webhook] Échec ignoré (depositId=${depositId}) : paiement déjà finalisé, l'état n'est pas dégradé.`,
+          );
+        } else {
+          console.log(`[pawaPay Webhook] Échec enregistré pour depositId=${depositId}: ${failureCode}`);
+        }
       }
     }
 

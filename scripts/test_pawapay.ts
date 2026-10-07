@@ -8,6 +8,16 @@ async function test() {
     '../lib/pawapay'
   );
 
+  const production = PAWAPAY_BASE_URL === 'https://api.pawapay.io';
+  if (production && process.env.PAWAPAY_ALLOW_PRODUCTION_TEST !== '1') {
+    console.error(
+      'Refus : ce script ouvrirait une session sur l’API de production.\n' +
+        'Utilisez PAWAPAY_BASE_URL=https://api.sandbox.pawapay.io, ou relancez avec\n' +
+        'PAWAPAY_ALLOW_PRODUCTION_TEST=1 si la session de production est voulue.',
+    );
+    process.exit(1);
+  }
+
   console.log('--- Test PawaPay ---');
   console.log('Environnement cible :', PAWAPAY_BASE_URL);
 

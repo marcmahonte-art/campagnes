@@ -126,7 +126,12 @@ export interface Backend {
   /** Renvoie l'email de confirmation d'inscription (aucun compte créé). */
   resendConfirmation(email: string): Promise<Result>;
   signInWithEmail(email: string, password: string): Promise<Result>;
-  signInWithGoogle(): Promise<Result>;
+  /**
+   * `next` est un chemin interne (`/dashboard/acheter?plan=…`). Il est transmis
+   * au callback OAuth pour que la formule choisie survive à Google. Un chemin
+   * absolu est ignoré : ce serait une redirection ouverte.
+   */
+  signInWithGoogle(next?: string | null): Promise<Result>;
   signOut(): Promise<void>;
 
   /* --- Profil ------------------------------------------------------- */

@@ -9,7 +9,9 @@ import { isSupabaseConfigured } from '@/lib/backend/config';
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get('code');
-  const next = searchParams.get('next') ?? '/onboarding';
+  const requested = searchParams.get('next') ?? '/onboarding';
+  // Chemin interne uniquement : un `next` absolu ferait de ce callback un tremplin.
+  const next = requested.startsWith('/') && !requested.startsWith('//') ? requested : '/onboarding';
 
   if (!isSupabaseConfigured || !code) {
     return NextResponse.redirect(`${origin}/onboarding`);

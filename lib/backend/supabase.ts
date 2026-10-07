@@ -239,11 +239,12 @@ export const supabaseBackend: Backend = {
     return {};
   },
 
-  async signInWithGoogle(): Promise<Result> {
+  async signInWithGoogle(next?: string | null): Promise<Result> {
     const sb = supabaseBrowser();
+    const safeNext = next && next.startsWith('/') && !next.startsWith('//') ? next : '/onboarding';
     const { error } = await sb.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: `${SITE_URL}/auth/callback?next=/onboarding` },
+      options: { redirectTo: `${SITE_URL}/auth/callback?next=${encodeURIComponent(safeNext)}` },
     });
     if (error) return { error: message(error, 'La connexion Google a échoué.') };
     return {};

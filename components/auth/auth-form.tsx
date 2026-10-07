@@ -133,7 +133,17 @@ export function AuthForm({ mode }: { mode: Mode }) {
       }
       const user = await backend.getSessionUser();
       await refresh();
-      router.push(nextPath ?? (user?.onboarded_at ? '/dashboard' : '/onboarding'));
+      /*
+       * Un compte déjà créé qui se reconnecte depuis /tarifs doit retrouver la
+       * formule et la durée choisies. Les envoyer vers /dashboard les perd :
+       * l'inscription, elle, les conservait déjà via l'onboarding.
+       */
+      const destination = nextPath ?? (user?.onboarded_at ? '/dashboard' : '/onboarding');
+      router.push(
+        user?.onboarded_at || !nextPath || destination === '/onboarding'
+          ? destination
+          : `/onboarding?next=${encodeURIComponent(destination)}`,
+      );
     } catch {
       setError('Une erreur inattendue est survenue. Réessayez dans un instant.');
     } finally {
@@ -161,7 +171,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
     setError(null);
     setPending('google');
     try {
-      const result = await backend.signInWithGoogle();
+      const result = await backend.signInWithGoogle(nextPath);
       if (result.error) setError(result.error);
     } catch {
       setError('La connexion Google a échoué. Réessayez dans un instant.');
