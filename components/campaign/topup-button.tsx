@@ -2,15 +2,21 @@
 
 import { useCallback, useState } from 'react';
 import { TopupConfirmModal } from '@/components/campaign/topup-confirm-modal';
+import { CountryPickerModal } from '@/components/payments/country-picker-modal';
 import { DISTRIBUTION_PACKS } from '@/lib/pricing/config';
-import type { TopupTier } from '@/lib/quota';
+import { formatFcfaTier, type TopupTier } from '@/lib/quota';
 
 /**
  * Bouton d'achat d'une extension de quota — paiement Mobile Money en ligne.
  *
- * Un bouton, un palier, une action : **acheter**. Il ouvre la confirmation,
- * puis appelle la route serveur (qui seule connaît le prestataire et le jeton d'API)
- * et redirige vers la page de paiement hébergée.
+ * Un bouton, un palier, une action : **acheter**. Il ouvre la confirmation du
+ * montant, puis le choix du pays, puis appelle la route serveur (qui seule
+ * connaît le prestataire et le jeton d'API) et redirige vers la page de paiement
+ * hébergée.
+ *
+ * Le pays est demandé ici pour la même raison que sur le tunnel d'achat : sans
+ * lui, la route retombait sur le corridor burkinabè par défaut, et un acheteur
+ * d'ailleurs se voyait opposer un refus d'opérateur qui n'était pas le sien.
  *
  * Ce que ce composant ne fait **pas** :
  *   - il ne crédite rien : le quota est écrit par `credit_campaign_quota`, côté
@@ -33,36 +39,55 @@ export function TopupButton({
   className?: string;
   children: React.ReactNode;
 }) {
+  /** Confirmation du montant. */
   const [open, setOpen] = useState(false);
+  /** Choix du pays de paiement. */
+  const [countryOpen, setCountryOpen] = useState(false);
+  const [country, setCountry] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleConfirm = useCallback(async () => {
-    setBusy(true);
+  /**
+   * La confirmation ne paie pas : elle cède la main au choix du pays, seule
+   * étape qui déclenche réellement l'initiation.
+   */
+  const handleConfirm = useCallback(() => {
+    setOpen(false);
     setError(null);
-    try {
-      const res = await fetch('/api/payments/pawapay/initiate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          packId: packIdFromTier(tier),
-          campaignId,
-        }),
-      });
+    setCountryOpen(true);
+  }, []);
 
-      const data = (await res.json()) as { redirectUrl?: string; error?: string };
-      if (!res.ok || !data.redirectUrl) {
-        setError(data.error ?? 'L’initiation du paiement a échoué. Réessayez dans un instant.');
-        return;
+  const runPayment = useCallback(
+    async (countryCode: string) => {
+      setBusy(true);
+      setError(null);
+      setCountry(countryCode);
+      try {
+        const res = await fetch('/api/payments/pawapay/initiate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            packId: packIdFromTier(tier),
+            campaignId,
+            country: countryCode,
+          }),
+        });
+
+        const data = (await res.json()) as { redirectUrl?: string; error?: string };
+        if (!res.ok || !data.redirectUrl) {
+          setError(data.error ?? 'L’initiation du paiement a échoué. Réessayez dans un instant.');
+          setBusy(false);
+          return;
+        }
+        // Redirection vers la page de paiement hébergée (Mobile Money).
+        window.location.href = data.redirectUrl;
+      } catch {
+        setError('Connexion impossible au service de paiement. Vérifiez votre réseau.');
+        setBusy(false);
       }
-      // Redirection vers la page de paiement hébergée (Mobile Money).
-      window.location.href = data.redirectUrl;
-    } catch {
-      setError('Connexion impossible au service de paiement. Vérifiez votre réseau.');
-    } finally {
-      setBusy(false);
-    }
-  }, [tier, campaignId]);
+    },
+    [tier, campaignId],
+  );
 
   return (
     <>
@@ -83,6 +108,28 @@ export function TopupButton({
         tier={tier}
         busy={busy}
         error={error}
+      />
+
+      <CountryPickerModal
+        open={countryOpen}
+        defaultCountry={country}
+        loading={busy}
+        error={error}
+        summary={{
+          label: `+${new Intl.NumberFormat('fr-FR').format(tier.downloads)} téléchargements`,
+          amount: formatFcfaTier(tier.priceFcfa),
+        }}
+        onClose={() => {
+          if (busy) return;
+          setCountryOpen(false);
+          setError(null);
+        }}
+        onConfirm={({ countryCode }) => {
+          void runPayment(countryCode);
+        }}
+        onRetry={() => {
+          if (country) void runPayment(country);
+        }}
       />
     </>
   );
