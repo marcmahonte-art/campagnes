@@ -12,6 +12,7 @@ import type {
 import { createDescriptor } from '@/lib/descriptor';
 import { isCampaignKind } from '@/lib/campaign-kinds';
 import { FREE_DOWNLOADS, toQuota } from '@/lib/quota';
+import { maxCampaigns } from '@/lib/plans';
 import { SHARE_EVENTS, type ShareEventType, type ShareStats } from '@/lib/share';
 import type {
   Backend,
@@ -410,6 +411,19 @@ export const localBackend: Backend = {
     const db = readDb();
     if (db.campaigns.some((c) => c.slug === input.slug)) {
       return { error: 'Ce slug est déjà utilisé.' };
+    }
+    /*
+     * La formule Gratuit est limitée à 1 campagne par compte — sinon il
+     * suffirait de créer une campagne neuve pour repartir avec un quota
+     * offert. Même règle que le trigger SQL côté Supabase : la limite porte
+     * sur les nouvelles créations, jamais sur l'existant.
+     */
+    const owner = db.users.find((u) => u.id === input.ownerId);
+    const cap = maxCampaigns(owner?.plan);
+    if (cap !== null && db.campaigns.filter((c) => c.owner_id === input.ownerId).length >= cap) {
+      return {
+        error: `La formule Gratuit est limitée à ${cap} campagne. Passez à la formule Créateur pour en créer davantage.`,
+      };
     }
     const campaign: Campaign = {
       id: uid(),

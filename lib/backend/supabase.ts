@@ -12,6 +12,7 @@ import type {
 import { parseDescriptor } from '@/lib/descriptor';
 import { isCampaignKind } from '@/lib/campaign-kinds';
 import { FREE_DOWNLOADS, toClaim, toQuota } from '@/lib/quota';
+import { FREE_MAX_CAMPAIGNS, maxCampaigns } from '@/lib/plans';
 import { toPaymentRecord } from '@/lib/payments/history';
 import { supabaseBrowser } from '@/lib/supabase/client';
 import type { ShareEventType, ShareStats } from '@/lib/share';
@@ -35,6 +36,16 @@ import type {
  */
 
 type Row = Record<string, unknown>;
+
+/**
+ * Message unique du refus de création au-delà de la limite Gratuit.
+ *
+ * Le client, le mode démo et la remontée du trigger SQL aboutissent tous à
+ * cette phrase : un même refus ne s'écrit qu'une fois.
+ */
+function freeCampaignLimitMessage(cap: number): string {
+  return `La formule Gratuit est limitée à ${cap} campagne. Passez à la formule Créateur pour en créer davantage.`;
+}
 
 function rowToUser(row: Row): User {
   return {
@@ -384,6 +395,29 @@ export const supabaseBackend: Backend = {
   },
 
   async createCampaign(input: CreateCampaignInput): Promise<Result<Campaign>> {
+    /*
+     * La formule Gratuit est limitée à 1 campagne par compte : sans cette
+     * limite, créer une campagne neuve redonnerait un quota offert complet.
+     * Le contrôle ici donne un message clair ; le trigger
+     * `enforce_free_campaign_limit` (migration 0023) reste le filet côté base
+     * — un appel direct à l'API ne contourne rien.
+     */
+    const { data: owner } = await supabaseBrowser()
+      .from('users')
+      .select('plan')
+      .eq('id', input.ownerId)
+      .maybeSingle();
+    const cap = maxCampaigns((owner as { plan?: string } | null)?.plan ?? null);
+    if (cap !== null) {
+      const { count } = await supabaseBrowser()
+        .from('campaigns')
+        .select('id', { count: 'exact', head: true })
+        .eq('owner_id', input.ownerId);
+      if ((count ?? 0) >= cap) {
+        return { error: freeCampaignLimitMessage(cap) };
+      }
+    }
+
     const { data, error } = await supabaseBrowser()
       .from('campaigns')
       .insert({
@@ -396,7 +430,14 @@ export const supabaseBackend: Backend = {
       })
       .select('*')
       .single();
-    if (error) return { error: message(error, 'La création de la campagne a échoué.') };
+    if (error) {
+      // Le trigger a tranché (création concurrente, ou appel hors client) :
+      // on s'aligne sur son verdict, avec le même message.
+      if (error.message?.includes('FREE_CAMPAIGN_LIMIT')) {
+        return { error: freeCampaignLimitMessage(FREE_MAX_CAMPAIGNS) };
+      }
+      return { error: message(error, 'La création de la campagne a échoué.') };
+    }
     return { data: rowToCampaign(data as Row) };
   },
 

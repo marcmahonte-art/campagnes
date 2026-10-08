@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowLeft,
-  BadgeCheck,
   Download,
   ImagePlus,
   Loader2,
@@ -36,8 +35,10 @@ import { Button, ButtonLink } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { InlineError, Spinner } from '@/components/ui/feedback';
+import { useToast } from '@/components/ui/toast';
 import { ParticipantStage } from '@/components/participant/participant-stage';
 import { SharePanel } from '@/components/participant/share-panel';
+import { WatermarkUpsell } from '@/components/participant/watermark-upsell';
 import { backend } from '@/lib/backend';
 import { distributionService } from '@/lib/distribution-service';
 import { PrivateExportCoordinator, PrivateExportUnavailable, technicalHash, type PreparedPrivateExport } from '@/lib/distribution-export';
@@ -259,12 +260,6 @@ export function ParticipantJourney({
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   /**
-   * Vrai dès qu'un visuel a été téléchargé. Ne débloque rien et ne cache rien :
-   * l'étape de partage change seulement d'accroche. Un participant qui repart
-   * avec son image sans rien partager a parfaitement rempli son parcours.
-   */
-  const [downloaded, setDownloaded] = useState(false);
-  /**
    * Quota de la campagne, lu dès le chargement. `null` tant qu'il n'est pas
    * connu — on ne suppose jamais qu'il est ouvert, sinon un participant verrait
    * le bouton de téléchargement avant de savoir qu'il est bloqué.
@@ -276,6 +271,8 @@ export function ParticipantJourney({
   const exportBusy = useRef(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const notify = useToast();
 
   /* ---------------- Raccourcis clavier ---------------- */
   useEffect(() => {
@@ -422,7 +419,7 @@ export function ParticipantJourney({
           });
           setConfirmedFile(file);
           downloadBlob(file.blob, file.filename);
-          setDownloaded(true);
+                    notify('Image enregistrée ✓');
           return;
         }
         /*
@@ -470,7 +467,7 @@ export function ParticipantJourney({
           downloadBlob(result.blob, exportFilename(campaign.name, result.extension));
         }
 
-        setDownloaded(true);
+                notify('Image enregistrée ✓');
 
         /*
          * Le téléchargement est le seul instant du parcours que la plateforme
@@ -491,7 +488,7 @@ export function ParticipantJourney({
         setProgress(0);
       }
     },
-    [campaign, composed, photo, distributionToken, exportPlan, blocked, accessUnknown, sharing],
+    [campaign, composed, photo, distributionToken, exportPlan, blocked, accessUnknown, sharing, notify],
   );
 
   const runWatermarkedExport = useCallback(
@@ -512,7 +509,7 @@ export function ParticipantJourney({
           });
           downloadBlob(result.blob, exportFilename(campaign.name, result.extension));
         }
-        setDownloaded(true);
+                notify('Image enregistrée ✓');
       } catch (e) {
         setError(e instanceof Error ? e.message : "L'enregistrement a échoué.");
       } finally {
@@ -520,7 +517,7 @@ export function ParticipantJourney({
         setProgress(0);
       }
     },
-    [campaign, composed, distributionToken, sharing],
+    [campaign, composed, distributionToken, sharing, notify],
   );
 
   /* ---------------- États transitoires ---------------- */
@@ -1333,58 +1330,16 @@ export function ParticipantJourney({
                 )}
 
                   {/*
-                    Bannière du filigrane.
+                    Incitation au compte Créateur, à la place du simple constat.
 
-                    Elle dit la vérité, et rien de plus. Deux raisons distinctes
-                    posent le badge : la formule du créateur, ou le fait que ce
-                    visuel est obtenu sans lien de distribution. Le texte doit
-                    donc éviter de promettre que « seul le créateur peut le
-                    retirer » — c'est faux pour un cadre Pro accédé depuis la
-                    galerie.
-
-                    On ne propose aucun bouton d'achat : le participant n'a pas
-                    de compte, et un bouton qui n'active rien serait un mensonge.
-                    Le lien mène à la page des formules, qui explique elle-même
-                    ce qu'elles changent.
+                    Le texte vit dans `WatermarkUpsell`, parce qu'il change selon
+                    la **raison** du badge : le créateur d'une campagne Gratuit
+                    peut réellement le retirer, celui dont le visuel est repris
+                    depuis la galerie doit distribuer. Écrit ici, le même texte
+                    promettrait la même chose dans les deux cas — et mentirait
+                    dans l'un des deux.
                   */}
-                  {showWatermark && (
-                    <div className="mt-4 flex items-start gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3.5">
-                      <BadgeCheck
-                        className="mt-0.5 size-4 shrink-0 text-purple"
-                        strokeWidth={1.75}
-                        aria-hidden
-                      />
-                      <div>
-                        {/*
-                          Une phrase par raison. `fromPublicOnly` : le badge est
-                          posé **malgré** la formule du créateur — donc annoncer
-                          « une formule payante le retire » serait faux, et le
-                          lien vers les formules n'aurait rien à y faire. Il
-                          n'apparaît que dans l'autre cas, où il dit vrai.
-                        */}
-                        {fromPublicOnly ? (
-                          <p className="text-[13px] leading-relaxed text-gray-600">
-                            Ce visuel porte le badge « Créé avec Campagnes » : il est obtenu
-                            depuis la galerie, sans lien de distribution. Seule une campagne
-                            distribuée par son créateur en est exemptée.
-                          </p>
-                        ) : (
-                          <>
-                            <p className="text-[13px] leading-relaxed text-gray-600">
-                              Ce visuel porte le badge « Créé avec Campagnes ». Il est ajouté par
-                              le créateur de la campagne : seul son compte peut le retirer.
-                            </p>
-                            <Link
-                              href="/tarifs"
-                              className="mt-1.5 inline-block text-[13px] font-medium text-ink underline underline-offset-2"
-                            >
-                              Voir ce que retire une formule payante
-                            </Link>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  )}
+                  {showWatermark && <WatermarkUpsell fromPublicOnly={fromPublicOnly} />}
 
                 {/*
                   Étape de partage. Elle vient après l'enregistrement, jamais
@@ -1394,7 +1349,7 @@ export function ParticipantJourney({
                   ne rien proposer que proposer un lien mort.
                 */}
                 {sharing && !blocked && (
-                  <SharePanel campaign={campaign} downloaded={downloaded} />
+                  <SharePanel campaign={campaign} />
                 )}
               </>
             ) : (

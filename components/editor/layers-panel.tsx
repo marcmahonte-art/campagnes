@@ -29,6 +29,11 @@ interface LayersPanelProps {
   onMoveUp: (id: string) => void;
   onMoveDown: (id: string) => void;
   onDuplicate: (id: string) => void;
+  /**
+   * Dupliquer, c'est ajouter : un compte sans Frame Pro ne duplique donc ni un
+   * texte ni une forme. Retourné par l'appelant, qui connaît la formule.
+   */
+  canDuplicate?: (id: string) => boolean;
   onDelete: (id: string) => void;
   /** Désigne — ou retire — la zone du participant sur ce calque. */
   onSetPhotoZone: (id: string | null) => void;
@@ -94,6 +99,7 @@ export function LayersPanel({
   onMoveUp,
   onMoveDown,
   onDuplicate,
+  canDuplicate,
   onDelete,
   onSetPhotoZone,
 }: LayersPanelProps) {
@@ -106,6 +112,11 @@ export function LayersPanel({
    */
   const sorted = [...layers].sort((a, b) => b.z - a.z);
   const atLimit = maxLayers !== null && maxLayers !== undefined && layers.length >= maxLayers;
+  /*
+   * Sans information de formule, la duplication reste autorisée (comportement
+   * historique) : le verrou n'existe que là où l'appelant le renseigne.
+   */
+  const duplicateAllowed = (id: string) => (canDuplicate ? canDuplicate(id) : true);
 
   return (
     <div className="flex flex-col gap-3">
@@ -190,9 +201,13 @@ export function LayersPanel({
                     </IconAction>
 
                     <IconAction
-                      label={`Dupliquer « ${layerTitle(layer)} »`}
+                      label={
+                        duplicateAllowed(layer.id)
+                          ? `Dupliquer « ${layerTitle(layer)} »`
+                          : `Dupliquer « ${layerTitle(layer)} » — réservé à la formule Créateur`
+                      }
                       onClick={() => onDuplicate(layer.id)}
-                      disabled={atLimit}
+                      disabled={atLimit || !duplicateAllowed(layer.id)}
                     >
                       <Copy className="size-3.5" />
                     </IconAction>
