@@ -41,11 +41,11 @@ export interface Plan {
 /**
  * N5 — rien ici qui ne soit développé.
  *
- * `campaigns_unlimited` est retiré : aucune limite de nombre de campagnes
- * n'existe dans le produit, donc l'annoncer reviendrait à promettre un
- * déverrouillage qui n'a pas lieu d'être. Il en va de même des modules
- * entreprise (`domain`, `multi_user`, `private_gallery`, `reports`) et du
- * `support_priority` : aucun écran, aucune API, aucun différenciateur.
+ * `campaigns_unlimited` n'est pas un module à verrouiller : la limite de
+ * campagnes est quantitative, lue via `maxCampaigns()` (1 en Gratuit, illimité
+ * ensuite). Il en va de même des modules entreprise (`domain`, `multi_user`,
+ * `private_gallery`, `reports`) et du `support_priority` : aucun écran,
+ * aucune API, aucun différenciateur.
  */
 const CREATOR_FEATURES: PlanFeature[] = [
   'no_watermark',
@@ -166,6 +166,26 @@ export function maxLayers(plan: PlanId | string | null | undefined): number | nu
   return hasFeature(plan, 'frame_pro') ? null : FREE_MAX_LAYERS;
 }
 
+/**
+ * Nombre maximal de campagnes pour la formule Gratuit.
+ *
+ * La limite est **par compte, pas par campagne** : sans elle, il suffirait de
+ * créer une nouvelle campagne pour repartir avec un quota offert (voir la
+ * grille tarifaire). Elle ne s'applique qu'aux nouvelles créations — les
+ * campagnes existantes d'un compte gratuit continuent de fonctionner.
+ */
+export const FREE_MAX_CAMPAIGNS = 1;
+
+/**
+ * Plafond de campagnes par compte. `null` = illimité.
+ *
+ * Un seul point de vérité : le dashboard, le formulaire de création, le client
+ * Supabase et le trigger SQL appliquent tous cette règle, lue ici.
+ */
+export function maxCampaigns(plan: PlanId | string | null | undefined): number | null {
+  return isPaidPlan(plan) ? null : FREE_MAX_CAMPAIGNS;
+}
+
 /* ------------------------------------------------------------------ */
 /* Libellés et formatage                                               */
 /* ------------------------------------------------------------------ */
@@ -276,7 +296,13 @@ export const COMPARISON: ComparisonRow[] = [
     creator: PRICING_PLANS.creator.watermarkLabel,
     organization: PRICING_PLANS.organization.watermarkLabel,
   },
-  { group: 'Général', label: 'Campagnes', free: true, creator: true, organization: true },
+  {
+    group: 'Général',
+    label: 'Campagnes',
+    free: `${FREE_MAX_CAMPAIGNS}`,
+    creator: 'Illimitées',
+    organization: 'Illimitées',
+  },
   { group: 'Général', label: 'Galerie publique', free: true, creator: true, organization: true },
   {
     group: 'Général',
@@ -292,6 +318,7 @@ export const COMPARISON: ComparisonRow[] = [
     creator: true,
     organization: true,
   },
+  { group: 'Création', label: 'Formes et textes', free: false, creator: true, organization: true },
   { group: 'Création', label: 'Photo', free: true, creator: true, organization: true },
   { group: 'Création', label: 'Vidéo', free: true, creator: true, organization: true },
   { group: 'Création', label: '3 formats', free: true, creator: true, organization: true },
@@ -330,7 +357,13 @@ export const PREMIUM_MODULES: PremiumModule[] = [
     id: 'frame-pro',
     name: 'Frame Pro',
     feature: 'frame_pro',
-    description: 'Cadres avancés, multi-calques, templates premium.',
+    /*
+     * Description alignée sur les verrous réels : ce module ouvre les formes,
+     * les textes et le nombre de calques. Les modèles sont un module à part
+     * (`templates_premium`) — les annoncer ici promettrait un déverrouillage
+     * que cette entrée ne donne pas.
+     */
+    description: 'Formes, textes et calques illimités dans le cadre.',
     availableFrom: 'creator',
   },
   {

@@ -12,6 +12,7 @@ import { CampaignTypeSelectorModal } from '@/components/campaign/type-selector-m
 import { PlanBadge } from '@/components/plans/plan-badge';
 import { backend } from '@/lib/backend';
 import { useSession } from '@/lib/backend/session';
+import { maxCampaigns } from '@/lib/plans';
 import { PRICING_PLANS } from '@/lib/pricing/config';
 import type { CampaignKind, CampaignWithFrame } from '@/lib/types';
 
@@ -20,6 +21,7 @@ export default function DashboardPage() {
   const { user } = useSession();
   const [campaigns, setCampaigns] = useState<CampaignWithFrame[] | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [limitNotice, setLimitNotice] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -34,6 +36,23 @@ export default function DashboardPage() {
 
   const published = campaigns?.filter((c) => c.status === 'published').length ?? 0;
   const drafts = campaigns?.filter((c) => c.status === 'draft').length ?? 0;
+
+  /*
+   * La formule Gratuit est limitée à 1 campagne par compte (`maxCampaigns`).
+   * Le bouton reste visible et cliquable — un bouton muet ferait croire à une
+   * panne — mais il ouvre l'invitation à passer Créateur au lieu du sélecteur.
+   * Le refus côté backend et le trigger SQL restent le filet.
+   */
+  const cap = user ? maxCampaigns(user.plan) : null;
+  const limitReached = cap !== null && (campaigns?.length ?? 0) >= cap;
+
+  function handleNewCampaign() {
+    if (limitReached) {
+      setLimitNotice(true);
+      return;
+    }
+    setPickerOpen(true);
+  }
 
   return (
     <div className="flex flex-col gap-8">
@@ -53,12 +72,37 @@ export default function DashboardPage() {
           variant="primary"
           size="lg"
           className="shrink-0"
-          onClick={() => setPickerOpen(true)}
+          onClick={handleNewCampaign}
         >
           <Plus className="size-4" strokeWidth={2} aria-hidden />
           Nouvelle campagne
         </Button>
       </header>
+
+      {/*
+        L'invitation reste à l'écran tant que la limite est atteinte : on ne
+        cache jamais ce qui bloque, et on donne la formule qui le débloque.
+      */}
+      {limitNotice && limitReached && (
+        <Card className="flex flex-col gap-2 border-purple/30 bg-purple/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-[13px] leading-relaxed text-gray-700">
+            La formule Gratuit est limitée à {cap} campagne. Votre campagne
+            existante continue de fonctionner — la formule Créateur lève la
+            limite.
+          </p>
+          <div className="flex shrink-0 items-center gap-3">
+            <Link
+              href="/dashboard/acheter?plan=creator"
+              className="text-[13px] font-medium text-purple underline underline-offset-4 hover:text-ink"
+            >
+              Passer à Créateur
+            </Link>
+            <Button variant="ghost" size="sm" onClick={() => setLimitNotice(false)}>
+              Fermer
+            </Button>
+          </div>
+        </Card>
+      )}
 
       {user && campaigns !== null && <MonetisationBanner plan={user.plan} campaigns={campaigns} />}
 

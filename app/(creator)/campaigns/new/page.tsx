@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowRight, Pencil, Wand2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -11,6 +12,7 @@ import { KindPicker } from '@/components/ui/kind-picker';
 import { InlineError, Spinner } from '@/components/ui/feedback';
 import { backend } from '@/lib/backend';
 import { useSession } from '@/lib/backend/session';
+import { maxCampaigns } from '@/lib/plans';
 import { isValidSlug, slugFromName, uniqueSlug } from '@/lib/slug';
 import { defaultRatioFor, isCampaignKind, kindSpec } from '@/lib/campaign-kinds';
 import { ratioSpec } from '@/lib/ratios';
@@ -45,10 +47,32 @@ export default function NewCampaignPage() {
   /** Cadre repris depuis la galerie (`?from=<slug>`), s'il y en a un. */
   const [source, setSource] = useState<GalleryItem | null>(null);
   const [sourceLoading, setSourceLoading] = useState(false);
+  /** Nombre de campagnes du compte — la limite Gratuit se mesure avant le formulaire. */
+  const [campaignCount, setCampaignCount] = useState<number | null>(null);
 
   useEffect(() => {
     void backend.listSlugs().then(setExistingSlugs);
   }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    let alive = true;
+    void backend.listCampaigns(user.id).then((list) => {
+      if (alive) setCampaignCount(list.length);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [user]);
+
+  /*
+   * La formule Gratuit est limitée à 1 campagne par compte : on le dit AVANT
+   * le formulaire, pas après l'envoi. Le backend et le trigger SQL refusent
+   * de toute façon — cet écran évite de faire remplir un formulaire voué au
+   * refus.
+   */
+  const cap = user ? maxCampaigns(user.plan) : null;
+  const limitReached = cap !== null && campaignCount !== null && campaignCount >= cap;
 
   /*
    * Reprise d'un cadre de la galerie.
@@ -124,6 +148,41 @@ export default function NewCampaignPage() {
 
   const spec = kindSpec(kind);
   const KindIcon = spec.icon;
+
+  /*
+   * Limite Gratuit atteinte : on explique et on donne la porte de sortie,
+   * sans présenter un formulaire que le serveur refuserait. Les campagnes
+   * existantes continuent de fonctionner — rien n'est retiré.
+   */
+  if (limitReached) {
+    return (
+      <div className="mx-auto max-w-[640px]">
+        <header className="mb-8">
+          <span className="text-[13px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+            Nouvelle campagne
+          </span>
+          <h1 className="mt-3 text-[28px] font-bold leading-tight md:text-[36px]">
+            La formule Gratuit est limitée à {cap} campagne
+          </h1>
+        </header>
+        <Card className="flex flex-col gap-4 p-5 md:p-6">
+          <p className="text-sm leading-relaxed text-gray-600">
+            Votre campagne existante continue de fonctionner, rien n’est retiré. Pour créer
+            d’autres campagnes, la formule Créateur lève la limite — et débloque aussi les
+            formes, les textes et les modèles de cadres.
+          </p>
+          <div className="flex items-center justify-end gap-3">
+            <Button type="button" variant="ghost" onClick={() => router.push('/dashboard')}>
+              Retour au tableau de bord
+            </Button>
+            <Link href="/dashboard/acheter?plan=creator">
+              <Button variant="primary" size="lg">Passer à Créateur</Button>
+            </Link>
+          </div>
+        </Card>
+      </div>
+    );
+  }
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
