@@ -184,6 +184,16 @@ export function FramePanel({
     PREMIUM_MODULES.find((m) => m.feature === 'templates_premium')?.availableFrom ?? 'creator';
   const templatesPlan = PLANS[templatesFrom];
 
+  /*
+   * Formes et textes : module Frame Pro (`frame_pro`). Même discipline que les
+   * modèles — l'outil reste visible, verrouillé, avec la formule qui le
+   * débloque. L'image reste libre : c'est le cœur du cadre, pas un module.
+   */
+  const compositionUnlocked = hasFeature(plan, 'frame_pro');
+  const frameProFrom =
+    PREMIUM_MODULES.find((m) => m.feature === 'frame_pro')?.availableFrom ?? 'creator';
+  const frameProPlan = PLANS[frameProFrom];
+
   return (
     <div className="flex flex-col gap-5">
       <PanelHeading title="Mon cadre" hint={spec.detail} />
@@ -233,8 +243,28 @@ export function FramePanel({
             <ImagePlus className="size-4" strokeWidth={1.75} aria-hidden />
             Image
           </Button>
-          <Button variant="ghost" size="sm" onClick={onAddText} disabled={limitReached}>
-            <Type className="size-4" strokeWidth={1.75} aria-hidden />
+          {/*
+            Le bouton Texte ne disparaît pas en formule Gratuit : il reste
+            visible, verrouillé, et la note en dessous dit quelle formule
+            l'ouvre. Un bouton muet ferait croire à une panne.
+          */}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={compositionUnlocked ? onAddText : undefined}
+            disabled={limitReached || !compositionUnlocked}
+            aria-disabled={limitReached || !compositionUnlocked}
+            title={
+              compositionUnlocked
+                ? undefined
+                : `Les textes sont réservés à la formule ${frameProPlan.name}.`
+            }
+          >
+            {compositionUnlocked ? (
+              <Type className="size-4" strokeWidth={1.75} aria-hidden />
+            ) : (
+              <Lock className="size-4 text-gray-400" strokeWidth={1.75} aria-hidden />
+            )}
             Texte
           </Button>
         </div>
@@ -246,8 +276,24 @@ export function FramePanel({
         */}
         <div className="flex flex-col gap-1.5 pt-1">
           <span className="text-[11px] text-gray-500">Ou une forme</span>
-          <ShapePalette onPick={onAddShape} disabled={busy || limitReached} />
+          <ShapePalette
+            onPick={onAddShape}
+            disabled={busy || limitReached || !compositionUnlocked}
+          />
         </div>
+
+        {!compositionUnlocked && (
+          <p className="flex flex-wrap items-center gap-1.5 text-[11px] leading-relaxed text-gray-500">
+            <PlanBadge plan={frameProFrom} />
+            <span>Formes et textes réservés à la formule {frameProPlan.name}.</span>
+            <Link
+              href="/dashboard/acheter?plan=creator"
+              className="underline underline-offset-4 hover:text-ink"
+            >
+              Débloquer
+            </Link>
+          </p>
+        )}
 
         {maxLayers !== null && (
           <p className="text-[11px] text-gray-400">
@@ -331,9 +377,15 @@ export function LayerPanel({
   onToggleZone,
   onToggleLock,
   onToggleVisible,
+  duplicateLocked = false,
 }: {
   layer: Layer;
   ratio: Ratio;
+  /**
+   * Dupliquer un texte ou une forme, c'est en ajouter un : hors Frame Pro,
+   * l'action reste visible mais verrouillée, comme les boutons d'ajout.
+   */
+  duplicateLocked?: boolean;
   /** Ce calque délimite la zone photo du parcours participant. */
   isZone: boolean;
   /** Le calque qui délimite déjà la zone, s'il s'agit d'un autre. */
@@ -651,11 +703,21 @@ export function LayerPanel({
         <Button
           variant="ghost"
           size="sm"
-          onClick={onDuplicate}
-          title="Dupliquer l'élément (Ctrl+D)"
+          onClick={duplicateLocked ? undefined : onDuplicate}
+          disabled={duplicateLocked}
+          aria-disabled={duplicateLocked}
+          title={
+            duplicateLocked
+              ? 'Dupliquer un texte ou une forme est réservé à la formule Créateur.'
+              : "Dupliquer l'élément (Ctrl+D)"
+          }
           className="h-9 gap-1.5 text-[11px] border border-gray-200 bg-white"
         >
-          <Copy className="size-3.5 text-gray-500" />
+          {duplicateLocked ? (
+            <Lock className="size-3.5 text-gray-400" />
+          ) : (
+            <Copy className="size-3.5 text-gray-500" />
+          )}
           Dupliquer
         </Button>
         <Button

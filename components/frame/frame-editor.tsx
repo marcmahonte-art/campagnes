@@ -1159,6 +1159,15 @@ export function FrameEditor({
       const source = descriptorRef.current.layers.find((l) => l.id === targetId);
       if (!source) return;
 
+      /*
+       * Dupliquer un texte ou une forme, c'est en AJOUTER un : la règle est
+       * donc celle des boutons d'ajout (module Frame Pro). Sans cette garde, un
+       * compte Gratuit qui a hérité d'un texte — reprise d'un cadre de la
+       * galerie — pourrait en fabriquer d'autres en contournant le verrou.
+       * L'image reste libre : c'est le cœur du cadre, pas un module.
+       */
+      if (source.type !== 'image' && !hasFeature(plan, 'frame_pro')) return;
+
       const s = specRef.current;
       const offset = Math.round(Math.min(s.width, s.height) * 0.02);
 
@@ -1209,7 +1218,7 @@ export function FrameEditor({
       setSelectedId(copy.id);
       onChange(next);
     },
-    [applyLocks, buildObjects, layerLimitReached, onChange, selectedId],
+    [applyLocks, buildObjects, layerLimitReached, onChange, plan, selectedId],
   );
 
   /**
@@ -1337,6 +1346,16 @@ export function FrameEditor({
    */
   const templatesUnlocked = hasFeature(plan, 'templates_premium');
 
+  /**
+   * Formes et textes : module Frame Pro (`frame_pro`).
+   *
+   * Les boutons d'ajout du panneau portent déjà le verrou ; cette lecture sert
+   * aux chemins qui **ajoutent** sans passer par un bouton d'ajout — la
+   * duplication d'un calque existant. Même discipline que les modèles : on ne
+   * se repose pas sur l'état d'un bouton pour protéger un droit.
+   */
+  const compositionUnlocked = hasFeature(plan, 'frame_pro');
+
   const openTemplates = useCallback(() => {
     if (!templatesUnlocked) {
       const required =
@@ -1460,6 +1479,10 @@ export function FrameEditor({
         onMoveUp={(id) => shiftLayer(id, 1)}
         onMoveDown={(id) => shiftLayer(id, -1)}
         onDuplicate={(id) => void duplicateSelected(id)}
+        canDuplicate={(id) => {
+          const layer = descriptor.layers.find((l) => l.id === id);
+          return layer?.type === 'image' || compositionUnlocked;
+        }}
         onDelete={deleteLayer}
         onSetPhotoZone={setPhotoZone}
       />
@@ -1471,6 +1494,7 @@ export function FrameEditor({
         otherZone={zoneLayer && zoneLayer.id !== selectedLayer.id ? zoneLayer : null}
         onPatch={patchSelected}
         onDelete={deleteSelected}
+        duplicateLocked={selectedLayer.type !== 'image' && !compositionUnlocked}
         onDuplicate={() => void duplicateSelected()}
         onOrder={moveSelected}
         onAlignHorizontal={alignHorizontal}

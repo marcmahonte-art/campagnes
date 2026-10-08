@@ -10,6 +10,8 @@ let passed = 0;
 async function check(label, run) { await run(); passed++; console.log(`OK ${label}`); }
 async function rejects(run) { let rejected = false; try { await run(); } catch { rejected = true; } assert.equal(rejected, true, 'Le garde-fou doit refuser réellement'); }
 const A = randomUUID(), B = randomUUID(), C = randomUUID(), F = randomUUID(), L = randomUUID();
+/* Le nombre est lu, jamais figé : une migration ajoutée doit se voir ici. */
+const migrationCount = fs.readdirSync(path.join(root, 'supabase/migrations')).filter((file) => file.endsWith('.sql')).length;
 const token = 'historique-temoin';
 const db = new PGlite({ extensions: { pgcrypto } });
 async function value(sql, args = []) { const result = await db.query(sql, args); return result.rows[0]?.value; }
@@ -55,7 +57,7 @@ async function prepare() {
 }
 (async()=> {
   await prepare();
-  await check('Installation des 22 migrations et baseline historique conservée',async()=> {
+  await check(`Installation des ${migrationCount} migrations et baseline historique conservée`,async()=> {
     const row=(await db.query('select token,quota_total,quota_used,history_used,history_delta,funding_origin from distribution_links where id=$1',[L])).rows[0];
     assert.deepEqual(row,{token,quota_total:3,quota_used:1,history_used:1,history_delta:1,funding_origin:'historical'});
     assert.equal(await value('select count(*)::integer as value from distribution_usages'),0);
@@ -205,6 +207,6 @@ async function prepare() {
     });
   });
   console.log(`\n${passed} groupes SQL réussis. Moteur PostgreSQL embarqué mono-session : Promise.all est sérialisé ; la concurrence multi-connexion reste à vérifier avant production.`);
-  fs.writeFileSync(path.join(root,'outputs/distribution-tests-sql.json'),JSON.stringify({passed,engine:'PostgreSQL PGlite',migrationCount:22,multiConnectionConcurrency:false},null,2));
+  fs.writeFileSync(path.join(root,'outputs/distribution-tests-sql.json'),JSON.stringify({passed,engine:'PostgreSQL PGlite',migrationCount,multiConnectionConcurrency:false},null,2));
   await db.close();
 })().catch(async(error)=>{console.error('ÉCHEC SQL',error.message);try{await db.close();}catch{}process.exitCode=1;});
