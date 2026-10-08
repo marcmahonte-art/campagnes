@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowLeft,
-  BadgeCheck,
   Download,
   ImagePlus,
   Loader2,
@@ -39,6 +38,7 @@ import { InlineError, Spinner } from '@/components/ui/feedback';
 import { useToast } from '@/components/ui/toast';
 import { ParticipantStage } from '@/components/participant/participant-stage';
 import { SharePanel } from '@/components/participant/share-panel';
+import { WatermarkUpsell } from '@/components/participant/watermark-upsell';
 import { backend } from '@/lib/backend';
 import { distributionService } from '@/lib/distribution-service';
 import { PrivateExportCoordinator, PrivateExportUnavailable, technicalHash, type PreparedPrivateExport } from '@/lib/distribution-export';
@@ -1330,58 +1330,16 @@ export function ParticipantJourney({
                 )}
 
                   {/*
-                    Bannière du filigrane.
+                    Incitation au compte Créateur, à la place du simple constat.
 
-                    Elle dit la vérité, et rien de plus. Deux raisons distinctes
-                    posent le badge : la formule du créateur, ou le fait que ce
-                    visuel est obtenu sans lien de distribution. Le texte doit
-                    donc éviter de promettre que « seul le créateur peut le
-                    retirer » — c'est faux pour un cadre Pro accédé depuis la
-                    galerie.
-
-                    On ne propose aucun bouton d'achat : le participant n'a pas
-                    de compte, et un bouton qui n'active rien serait un mensonge.
-                    Le lien mène à la page des formules, qui explique elle-même
-                    ce qu'elles changent.
+                    Le texte vit dans `WatermarkUpsell`, parce qu'il change selon
+                    la **raison** du badge : le créateur d'une campagne Gratuit
+                    peut réellement le retirer, celui dont le visuel est repris
+                    depuis la galerie doit distribuer. Écrit ici, le même texte
+                    promettrait la même chose dans les deux cas — et mentirait
+                    dans l'un des deux.
                   */}
-                  {showWatermark && (
-                    <div className="mt-4 flex items-start gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3.5">
-                      <BadgeCheck
-                        className="mt-0.5 size-4 shrink-0 text-purple"
-                        strokeWidth={1.75}
-                        aria-hidden
-                      />
-                      <div>
-                        {/*
-                          Une phrase par raison. `fromPublicOnly` : le badge est
-                          posé **malgré** la formule du créateur — donc annoncer
-                          « une formule payante le retire » serait faux, et le
-                          lien vers les formules n'aurait rien à y faire. Il
-                          n'apparaît que dans l'autre cas, où il dit vrai.
-                        */}
-                        {fromPublicOnly ? (
-                          <p className="text-[13px] leading-relaxed text-gray-600">
-                            Ce visuel porte le badge « Créé avec Campagnes » : il est obtenu
-                            depuis la galerie, sans lien de distribution. Seule une campagne
-                            distribuée par son créateur en est exemptée.
-                          </p>
-                        ) : (
-                          <>
-                            <p className="text-[13px] leading-relaxed text-gray-600">
-                              Ce visuel porte le badge « Créé avec Campagnes ». Il est ajouté par
-                              le créateur de la campagne : seul son compte peut le retirer.
-                            </p>
-                            <Link
-                              href="/tarifs"
-                              className="mt-1.5 inline-block text-[13px] font-medium text-ink underline underline-offset-2"
-                            >
-                              Voir ce que retire une formule payante
-                            </Link>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  )}
+                  {showWatermark && <WatermarkUpsell fromPublicOnly={fromPublicOnly} />}
 
                 {/*
                   Étape de partage. Elle vient après l'enregistrement, jamais

@@ -95,6 +95,11 @@ docs/**/*_files/
 # régénérables à la demande, jamais des livrables. Les captures retenues
 # sont dans `docs/monetisation/ui/captures/`.
 tools/tarifs-check/.tmp/
+
+# Profils Chrome des sondes de parcours participant : recréés à chaque
+# exécution, sans valeur, et jamais des livrables.
+tools/participant-ui-check/.tmp/
+tools/watermark-upsell-check/.tmp/
 tools/.u1-crops/
 
 # Profils Chrome laissés par les sondes headless (.u1-chrome-profile*) :
