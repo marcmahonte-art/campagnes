@@ -1,5 +1,6 @@
 import type { IText } from 'fabric';
 import { DEFAULT_LINE_HEIGHT } from './descriptor';
+import { importFabric } from './fabric-runtime';
 import type { TextLayer } from './types';
 
 /**
@@ -33,7 +34,7 @@ export function arcPathData(width: number, curve: number): string {
 
 /** Applique — ou retire — la courbure sur un objet texte déjà construit. */
 export async function applyCurve(text: IText, curve: number): Promise<void> {
-  const { Path } = await import('fabric');
+  const { Path } = await importFabric();
 
   if (!curve) {
     text.set({ path: undefined });
@@ -216,7 +217,7 @@ function applyBoxScale(text: IText, _targetWidth: number, _targetHeight: number)
  * `text.width` et non sur la valeur du descripteur.
  */
 export async function createBrandGradient() {
-  const { Gradient } = await import('fabric');
+  const { Gradient } = await importFabric();
   return new Gradient({
     type: 'linear',
     gradientUnits: 'percentage',
@@ -245,7 +246,7 @@ export async function createTextObject(
   layer: TextLayer,
   options: TextObjectOptions = {},
 ): Promise<IText> {
-  const { IText } = await import('fabric');
+  const { IText } = await importFabric();
   const interactive = options.interactive ?? false;
 
   const text = new IText(layer.text, {

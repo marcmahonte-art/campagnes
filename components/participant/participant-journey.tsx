@@ -39,6 +39,11 @@ import { useToast } from '@/components/ui/toast';
 import { ParticipantStage } from '@/components/participant/participant-stage';
 import { SharePanel } from '@/components/participant/share-panel';
 import { WatermarkUpsell } from '@/components/participant/watermark-upsell';
+import {
+  WatermarkPassButton,
+  WatermarkPassStatus,
+} from '@/components/participant/watermark-pass-button';
+import { useWatermarkPass } from '@/components/participant/use-watermark-pass';
 import { backend } from '@/lib/backend';
 import { distributionService } from '@/lib/distribution-service';
 import { PrivateExportCoordinator, PrivateExportUnavailable, technicalHash, type PreparedPrivateExport } from '@/lib/distribution-export';
@@ -73,7 +78,6 @@ import { useHistory } from '@/components/editor/use-history';
 import { PHOTO_FILTER_PRESETS, type PhotoFilter } from '@/lib/photo-filters';
 import { blockedMessage, privateLinkBlockedMessage, remaining } from '@/lib/quota';
 import { exportPlanFor, shouldWatermark } from '@/lib/watermark-policy';
-import { PARTICIPANT_PAYMENT } from '@/lib/pricing/config';
 import { FONTS } from '@/lib/fonts';
 import type { CampaignQuota, GalleryItem } from '@/lib/types';
 
@@ -274,6 +278,13 @@ export function ParticipantJourney({
 
   const notify = useToast();
 
+  /*
+   * Le pass « Sans filigrane » est propre à ce navigateur (cookie `cn_bid`). On
+   * le lit une fois ici, et une seule source alimente deux décisions : ce que
+   * l'aperçu montre, et par quel chemin part le PNG.
+   */
+  const pass = useWatermarkPass();
+
   /* ---------------- Raccourcis clavier ---------------- */
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -365,6 +376,21 @@ export function ParticipantJourney({
   const accessUnknown = distributionToken ? !privateAccessReady : quota === null;
   const left = quota ? remaining(quota.used, quota.quota) : null;
 
+  /**
+   * La bulle « Promo » du pass apparaît-elle ?
+   *
+   * Quatre conditions, et chacune a une raison :
+   *   - `sharing` : jamais sur un lien privé — le client a acheté sa diffusion,
+   *     on ne revend rien à ses invités ;
+   *   - `showWatermark` : s'il n'y a pas de badge, il n'y a rien à retirer ;
+   *   - `!blocked` : un pass retire le filigrane, il ne rouvre pas un quota
+   *     épuisé. La promettre sur une campagne fermée serait un mensonge ;
+   *   - `!accessUnknown` : on ne sollicite pas avant de savoir si la campagne
+   *     accepte encore des téléchargements. Afficher puis retirer la bulle une
+   *     seconde plus tard est pire que de ne rien montrer.
+   */
+  const showPassPromo = sharing && showWatermark && !blocked && !accessUnknown;
+
   /* ---------------- Choix de la photo ---------------- */
   const choosePhoto = useCallback(
     async (file: File | undefined) => {
@@ -389,6 +415,60 @@ export function ParticipantJourney({
     },
     [zone, photo, setPhoto],
   );
+
+  /**
+   * Export PNG **sans filigrane**, rendu par le serveur.
+   *
+   * C'est le seul chemin qui retire le badge. Le client n'envoie que ce qui lui
+   * appartient — sa photo, son placement, son style — et reçoit une image déjà
+   * composée. Il ne peut donc pas retirer le badge lui-même : la décision et le
+   * dessin du badge vivent côté serveur, après vérification du pass.
+   *
+   * Le **quota** est réservé par le serveur (même fonction SQL que le parcours
+   * public) : c'est ce qui empêche un détenteur de pass de contourner la limite
+   * de la campagne en appelant la route directement. On récupère l'état du quota
+   * dans les en-têtes pour garder l'écran juste.
+   */
+  const requestServerExport = useCallback(async (): Promise<{
+    blob: Blob;
+    used: number | null;
+    quota: number | null;
+  }> => {
+    if (!campaign || !photo || !placement) throw new Error('Visuel incomplet.');
+    const res = await fetch('/api/passes/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        slug: campaign.slug,
+        photo: {
+          src: photo.src,
+          naturalWidth: photo.naturalWidth,
+          naturalHeight: photo.naturalHeight,
+        },
+        placement: { zoom: placement.zoom, x: placement.x, y: placement.y },
+        style: { filter: style.filter, text: style.text },
+      }),
+    });
+
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { code?: string };
+      // Quota épuisé : c'est le même refus que le parcours public, pas une panne.
+      if (body.code === 'PASS_QUOTA_CLOSED') throw new Error(blockedMessage(campaign.name));
+      if (res.status === 403) throw new Error('Votre pass n’est plus actif. Rechargez la page.');
+      throw new Error('Le rendu sans filigrane a échoué. Réessayez dans un instant.');
+    }
+
+    const usedHeader = res.headers.get('X-Quota-Used');
+    const totalHeader = res.headers.get('X-Quota-Total');
+    const used = usedHeader ? Number(usedHeader) : NaN;
+    const total = totalHeader ? Number(totalHeader) : NaN;
+
+    return {
+      blob: await res.blob(),
+      used: Number.isFinite(used) ? used : null,
+      quota: Number.isFinite(total) ? total : null,
+    };
+  }, [campaign, photo, placement, style]);
 
   /* ---------------- Export ---------------- */
   const runExport = useCallback(
@@ -422,6 +502,22 @@ export function ParticipantJourney({
                     notify('Image enregistrée ✓');
           return;
         }
+        /*
+         * Pass « Sans filigrane » actif : le PNG est rendu par le serveur, sans
+         * badge. Le serveur réserve lui-même l'unité de quota (même fonction
+         * SQL que ci-dessous) — on ne la réserve donc pas deux fois ici.
+         */
+        if (kind === 'png' && pass.active && sharing) {
+          const { blob, used, quota: total } = await requestServerExport();
+          if (used !== null && total !== null) {
+            setQuota({ used, quota: total, open: used < total });
+          }
+          downloadBlob(blob, exportFilename(campaign.name, 'png'));
+          notify('Image enregistrée ✓');
+          void backend.recordShareEvent(campaign.id, 'share_download').catch(() => {});
+          return;
+        }
+
         /*
          * Le quota est réservé **avant** le rendu, jamais après : un export
          * coûteux que personne ne pourrait récupérer ne doit pas consommer une
@@ -488,7 +584,7 @@ export function ParticipantJourney({
         setProgress(0);
       }
     },
-    [campaign, composed, photo, distributionToken, exportPlan, blocked, accessUnknown, sharing, notify],
+    [campaign, composed, photo, distributionToken, exportPlan, blocked, accessUnknown, sharing, notify, pass.active, requestServerExport],
   );
 
   const runWatermarkedExport = useCallback(
@@ -589,7 +685,7 @@ export function ParticipantJourney({
         </div>
       </header>
 
-      <main className="container-shell py-4 md:py-8">
+      <main className={cn('container-shell py-4 md:py-8', showPassPromo && 'pb-24 md:pb-8')}>
         <div className="mx-auto max-w-2xl">
           {/* ---------------- Titre ---------------- */}
           <div className="text-center">
@@ -628,7 +724,7 @@ export function ParticipantJourney({
                   photo={photo}
                   placement={placement}
                   style={style}
-                  watermark={showWatermark || blocked}
+                  watermark={(showWatermark && !pass.active) || blocked}
                   textFocusKey={textFocusKey}
                   onPlacementChange={setPlacementFromCanvas}
                   onTextChange={setTextFromCanvas}
@@ -1326,8 +1422,28 @@ export function ParticipantJourney({
                       />
                     </div>
                   )}
+
+                  {animated && pass.active && (
+                    <p className="mt-3 text-[12px] leading-relaxed text-gray-500">
+                      Le pass 24 h concerne l’export PNG. La vidéo conserve le filigrane.
+                    </p>
+                  )}
                 </div>
                 )}
+
+                  {/*
+                    Le pass « Sans filigrane » — son **état**, ici, dans le flux,
+                    juste sous les boutons d'export : pass actif avec son compte à
+                    rebours, ou paiement en cours de vérification. Rien d'autre :
+                    quand aucun pass n'existe, ce composant ne rend rien.
+
+                    L'**offre**, elle, ne vit plus à cet endroit. Elle est portée
+                    par la bulle flottante (`WatermarkPassButton`, montée à la
+                    racine du parcours) : une carte insérée dans le flux se perdait
+                    dès que le participant faisait défiler la page pour composer
+                    son visuel, et elle prenait la place des boutons qu'il cherche.
+                  */}
+                  {sharing && showWatermark && !blocked && <WatermarkPassStatus pass={pass} />}
 
                   {/*
                     Incitation au compte Créateur, à la place du simple constat.
@@ -1338,8 +1454,12 @@ export function ParticipantJourney({
                     depuis la galerie doit distribuer. Écrit ici, le même texte
                     promettrait la même chose dans les deux cas — et mentirait
                     dans l'un des deux.
+
+                    Elle s'efface quand le participant détient un pass : le badge
+                    est alors déjà retiré pour lui, l'invitation n'a plus d'objet
+                    et contredirait le pass affiché juste au-dessus.
                   */}
-                  {showWatermark && <WatermarkUpsell fromPublicOnly={fromPublicOnly} />}
+                  {showWatermark && !pass.active && <WatermarkUpsell fromPublicOnly={fromPublicOnly} />}
 
                 {/*
                   Étape de partage. Elle vient après l'enregistrement, jamais
@@ -1431,8 +1551,8 @@ export function ParticipantJourney({
                   campagne.
                 </p>
                 <p className="text-xs leading-relaxed text-gray-400">
-                  Le retrait du filigrane participant est prévu à {PARTICIPANT_PAYMENT.label} par
-                  Mobile Money, valable 24 h.
+                  La limite porte sur le nombre de téléchargements de la campagne. Le pass « Sans
+                  filigrane » retire le filigrane ; il ne rouvre pas une campagne épuisée.
                 </p>
                 <Button
                   variant="secondary"
@@ -1487,6 +1607,15 @@ export function ParticipantJourney({
           </div>
         </div>
       </main>
+
+      {/*
+        La bulle d'achat du pass. Montée **à la racine**, hors du flux : elle
+        reste ancrée en bas de l'écran pendant tout le défilement, au lieu de
+        disparaître dès que le participant descend composer son visuel. Le
+        décalage `pb-24` du `main` ci-dessus lui laisse la place, pour qu'elle ne
+        recouvre jamais le dernier bloc de la page.
+      */}
+      {showPassPromo && <WatermarkPassButton pass={pass} />}
     </div>
   );
 }

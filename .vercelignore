@@ -2,6 +2,13 @@
 # téléverser `.next` (≈190 Mo) ferait dépasser la limite de 100 Mo.
 .next
 
+# Caches de build laissés par les harnais. Le `.gitignore` ne suffit pas : la
+# CLI Vercel ne lit que ce fichier, et `.next-distribution` pèse 264 Mo — assez
+# pour faire échouer le téléversement.
+.next-distribution
+.next-old-*
+.next.stale
+
 # Données de travail déjà hors historique (voir .gitignore) : aucune influence
 # sur le build, et elles pèsent des centaines de Mo.
 .premium-shots/

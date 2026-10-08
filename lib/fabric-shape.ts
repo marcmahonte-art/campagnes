@@ -1,5 +1,6 @@
 import type { FabricObject } from 'fabric';
 import { ratioSpec } from './ratios';
+import { importFabric } from './fabric-runtime';
 import type { Ratio, ShapeLayer } from './types';
 import { createBrandGradient } from './fabric-text';
 
@@ -144,7 +145,7 @@ export async function createShapeObject(
   ratio: Ratio,
   options: ShapeObjectOptions = {},
 ): Promise<FabricObject> {
-  const { Ellipse, Polygon, Rect } = await import('fabric');
+  const { Ellipse, Polygon, Rect } = await importFabric();
 
   const w = Math.max(1, layer.w);
   const h = Math.max(1, layer.h);

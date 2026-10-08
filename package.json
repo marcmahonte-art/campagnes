@@ -32,6 +32,8 @@
     "check:clone": "tsc -p tools/clone-check/tsconfig.json && node tools/clone-check/build/tools/clone-check/check-clone.js",
     "check:frame-render": "tsc -p tools/frame-render-check/tsconfig.json && node tools/frame-render-check/run.js",
     "check:free-limit": "node tools/free-limit-check/check-free-limit.cjs",
+    "check:render-server": "tsc -p tools/server-render-spike/tsconfig.json && node -r ./tools/alias-hook.cjs tools/server-render-spike/build/tools/server-render-spike/spike.js",
+    "check:watermark-pass": "tsc -p tools/watermark-pass-check/tsconfig.json && node -r ./tools/alias-hook.cjs tools/watermark-pass-check/build/tools/watermark-pass-check/check-watermark-pass.js && node tools/watermark-pass-check/check-pass-sql.cjs",
     "check:upsell": "node tools/watermark-upsell-check/check-upsell.cjs",
     "check:ui-tarifs": "node tools/tarifs-check/check-ui-tarifs.cjs",
     "check:ui-tarifs:rendu": "npm run build && node tools/tarifs-check/check-rendu-tarifs.cjs",

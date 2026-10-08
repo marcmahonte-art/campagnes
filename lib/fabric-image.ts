@@ -19,6 +19,8 @@
 
 import type { FabricImage } from 'fabric';
 import { applyPhotoFilter } from './photo-filters';
+import { importFabric } from './fabric-runtime';
+import { resolveAssetAsync } from './render/assets';
 import type { PhotoZone } from './descriptor';
 import type { ImageLayer } from './types';
 
@@ -43,7 +45,7 @@ export async function createImageObject(
   layer: ImageLayer,
   options: ImageObjectOptions = {},
 ): Promise<FabricImage> {
-  const { FabricImage: FabricImageClass, Rect } = await import('fabric');
+  const { FabricImage: FabricImageClass, Rect } = await importFabric();
 
   const image = await FabricImageClass.fromURL(layer.src, { crossOrigin: 'anonymous' });
   const naturalWidth = image.width || layer.w;

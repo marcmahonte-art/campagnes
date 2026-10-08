@@ -49,9 +49,11 @@ export default function CookiesPage() {
 
       <LegalBlock id="necessaires" title="2. Cookies nécessaires">
         <p>
-          Le site dépose <strong className="font-medium text-ink">un seul</strong> cookie :
-          le cookie de session qui maintient un créateur connecté à son compte.
+          Le site dépose deux cookies, tous deux strictement nécessaires au fonctionnement. Aucun
+          n’est publicitaire, analytique ou de suivi.
         </p>
+
+        <p className="font-medium text-ink">Cookie de session créateur</p>
         <ul className="list-disc space-y-1.5 pl-5">
           <li>
             <strong className="font-medium text-ink">Nom</strong> — commence par{' '}
@@ -72,9 +74,35 @@ export default function CookiesPage() {
             devient impossible. C’est pourquoi il est considéré comme strictement nécessaire.
           </li>
         </ul>
+
+        <p className="font-medium text-ink">Cookie de pass « Sans filigrane »</p>
+        <ul className="list-disc space-y-1.5 pl-5">
+          <li>
+            <strong className="font-medium text-ink">Nom</strong> —{' '}
+            <code className="text-[13px]">cn_bid</code>. Il est <em>HttpOnly</em> : inaccessible au
+            code de la page.
+          </li>
+          <li>
+            <strong className="font-medium text-ink">Rôle</strong> — retenir un identifiant
+            aléatoire qui relie un pass « Sans filigrane » acheté sans compte au navigateur qui l’a
+            acheté. Il ne contient aucune donnée personnelle : ni email, ni numéro Mobile Money, ni
+            identifiant de transaction.
+          </li>
+          <li>
+            <strong className="font-medium text-ink">Quand il est posé</strong> — uniquement au
+            moment où un participant lance l’achat d’un pass. Consulter une campagne ou télécharger
+            un visuel ne le dépose pas.
+          </li>
+          <li>
+            <strong className="font-medium text-ink">Durée</strong> — 30 jours, plus longue que le
+            pass lui-même (24 h), pour que le droit reste lisible ; le pass, lui, expire au bout de
+            24 h.
+          </li>
+        </ul>
+
         <p>
           Un visiteur qui consulte une campagne <strong className="font-medium text-ink">sans
-          compte</strong> ne reçoit aucun cookie de notre part.
+          compte</strong> et sans acheter de pass ne reçoit aucun cookie de notre part.
         </p>
       </LegalBlock>
 
@@ -119,7 +147,7 @@ export default function CookiesPage() {
 
       <LegalBlock id="gestion" title="6. Gestion des cookies">
         <p>
-          Le seul cookie utilisé étant nécessaire au fonctionnement, le site{' '}
+          Les cookies utilisés étant nécessaires au fonctionnement, le site{' '}
           <strong className="font-medium text-ink">n’affiche pas de bandeau de consentement</strong> :
           il n’y a rien à consentir, et un bandeau qui ne protège rien ne ferait qu’encombrer
           l’écran.
@@ -131,7 +159,9 @@ export default function CookiesPage() {
           campagne, continuera de fonctionner.
         </p>
         <p>
-          Se déconnecter depuis les réglages supprime également le cookie de session.
+          Supprimer le cookie <code className="text-[13px]">cn_bid</code> détache le pass « Sans
+          filigrane » de votre navigateur : le pass reste valable 24 h, mais il ne sera plus
+          reconnu. Se déconnecter depuis les réglages supprime le cookie de session.
         </p>
       </LegalBlock>
 
