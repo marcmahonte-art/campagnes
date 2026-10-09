@@ -19,6 +19,7 @@ import { DEFAULT_MOTION_DURATION, sampleAt, type MotionPlan } from './motion';
 import { hasFeature, type PlanId } from './plans';
 import { PARTICIPANT_PHOTO_ID, PARTICIPANT_TEXT_ID, effectiveMotion, photoZone } from './descriptor';
 import { addBadge } from './watermark';
+import { importFabric } from './fabric-runtime';
 import type { Descriptor, Layer } from './types';
 
 export interface ExportProgress {
@@ -54,8 +55,13 @@ interface BaseTransform {
 interface RenderTarget {
   /** Le canvas Fabric hors écran, à la résolution native. */
   canvas: import('fabric').StaticCanvas;
-  /** Son élément DOM — c'est lui qu'on capture en flux vidéo. */
-  element: HTMLCanvasElement;
+  /**
+   * Son élément DOM — c'est lui qu'on capture en flux vidéo.
+   * `undefined` côté serveur : le rendu y passe par `toDataUrl()`.
+   */
+  element: HTMLCanvasElement | undefined;
+  /** Sortie PNG, quel que soit l'environnement. */
+  toDataUrl: () => string;
   /** Les objets, dans l'ordre du descripteur (croissant sur z). */
   objects: import('fabric').FabricObject[];
   /** Leurs transformations d'origine, pour repartir de zéro à chaque rendu. */
@@ -66,7 +72,7 @@ interface RenderTarget {
 }
 
 async function buildRenderTarget(descriptor: Descriptor): Promise<RenderTarget> {
-  const { StaticCanvas } = await import('fabric');
+  const { StaticCanvas } = await importFabric();
   const spec = ratioSpec(descriptor.ratio);
 
   /**
@@ -78,8 +84,14 @@ async function buildRenderTarget(descriptor: Descriptor): Promise<RenderTarget> 
   const zone = photoZone(descriptor);
   const clipPhoto = Boolean(descriptor.photo_anchor);
 
-  const element = document.createElement('canvas');
-  const canvas = new StaticCanvas(element, {
+  /*
+   * Côté serveur il n'y a pas de document : on laisse Fabric créer son propre
+   * canvas (build `fabric/node`, adossé à node-canvas). Le reste de la
+   * construction est **identique** — c'est la condition pour que le fichier
+   * produit ressemble à l'aperçu.
+   */
+  const element = typeof document === 'undefined' ? undefined : document.createElement('canvas');
+  const canvas = new StaticCanvas(element as HTMLCanvasElement, {
     width: spec.width,
     height: spec.height,
     backgroundColor: 'transparent',
@@ -154,6 +166,7 @@ async function buildRenderTarget(descriptor: Descriptor): Promise<RenderTarget> 
     objects,
     bases,
     layers,
+    toDataUrl: () => canvas.toDataURL({ format: 'png', multiplier: 1 }),
     dispose: () => {
       void canvas.dispose();
     },
@@ -239,7 +252,7 @@ export async function exportPng(options: ExportOptions): Promise<string> {
     if (!hasFeature(options.plan, 'no_watermark')) await addWatermark(target);
     bringParticipantTextToFront(target);
     target.canvas.renderAll();
-    return target.element.toDataURL('image/png');
+    return target.toDataUrl();
   } finally {
     target.dispose();
   }
@@ -308,6 +321,7 @@ export async function exportVideo(options: ExportOptions): Promise<VideoResult> 
      */
     const motion = effectiveMotion(descriptor);
 
+    if (!target.element) throw new Error("La vidéo n'est produite que dans le navigateur.");
     const stream = target.element.captureStream(fps);
     const recorder = new MediaRecorder(stream, {
       mimeType,

@@ -17,6 +17,8 @@
  */
 
 import type { FabricObject, StaticCanvas } from 'fabric';
+import { importFabric } from './fabric-runtime';
+import { resolveAssetAsync } from './render/assets';
 
 export const BADGE_LABEL = 'Créé avec';
 /** Logo fond clair (lettres noires + terminaison dégradée). */
@@ -118,7 +120,7 @@ export async function addBadge(
   canvasWidth: number,
   canvasHeight: number,
 ): Promise<void> {
-  const { FabricImage, IText, Rect, Shadow } = await import('fabric');
+  const { FabricImage, IText, Rect, Shadow } = await importFabric();
 
   /*
    * Le logo est chargé depuis `public/`. S'il manque, le badge reste lisible :
@@ -126,7 +128,7 @@ export async function addBadge(
    */
   let logo: Awaited<ReturnType<typeof FabricImage.fromURL>> | null = null;
   try {
-    logo = await FabricImage.fromURL(BADGE_LOGO_SRC);
+    logo = await FabricImage.fromURL(await resolveAssetAsync(BADGE_LOGO_SRC));
   } catch {
     logo = null;
   }

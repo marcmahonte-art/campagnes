@@ -49,6 +49,11 @@ docs/**/*.jpeg
 docs/siao/
 docs/echantillon/
 
+# Sources de design de la bulle promo (EPS, AI, PDF) : brouillons de production
+# de plusieurs dizaines de Mo, sans rapport avec le code. Le rendu retenu vit
+# dans le composant ; ces fichiers ne sont pas des livrables.
+docs/participant/promo/
+
 # Archives de polices : volumineuses, régénérables depuis leur source.
 *.zip
 
@@ -95,6 +100,11 @@ docs/**/*_files/
 # régénérables à la demande, jamais des livrables. Les captures retenues
 # sont dans `docs/monetisation/ui/captures/`.
 tools/tarifs-check/.tmp/
+
+# Profils Chrome des sondes de parcours participant : recréés à chaque
+# exécution, sans valeur, et jamais des livrables.
+tools/participant-ui-check/.tmp/
+tools/watermark-upsell-check/.tmp/
 tools/.u1-crops/
 
 # Profils Chrome laissés par les sondes headless (.u1-chrome-profile*) :

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { ParticipantJourney } from '@/components/participant/participant-journey';
+import { ToastProvider } from '@/components/ui/toast';
 import { distributionService } from '@/lib/distribution-service';
 import type { PrivateCampaignAccess, DistributionExportRequest } from '@/lib/backend/types';
 import { technicalHash } from '@/lib/distribution-export';
@@ -38,6 +39,10 @@ export default function PrivateParticipantPage() {
       <button className="rounded-full border border-gray-300 px-5 py-2 text-sm" onClick={() => setRetry((value) => value + 1)}>Réessayer</button>
     </main>
   );
-  return <ParticipantJourney key={token} campaign={campaign} loading={!current.access} sharing={false}
-    distributionToken={token} privateAccessReady={current.access?.kind === 'distributed'} clientLogoUrl={campaign?.clientLogoUrl ?? null} />;
+  return (
+    <ToastProvider>
+      <ParticipantJourney key={token} campaign={campaign} loading={!current.access} sharing={false}
+        distributionToken={token} privateAccessReady={current.access?.kind === 'distributed'} clientLogoUrl={campaign?.clientLogoUrl ?? null} />
+    </ToastProvider>
+  );
 }

@@ -19,7 +19,7 @@
  */
 import type { FabricObject } from 'fabric';
 import { createShapeObject, strokeWidthPx, applyShapePaint } from '../../lib/fabric-shape';
-import { SHAPES } from '../../lib/shapes';
+import { SHAPES, previewViewBox } from '../../lib/shapes';
 import {
   makeShapeLayer,
   makeTextLayer,
@@ -50,6 +50,23 @@ function checkTrue(label: string, value: boolean): void {
   console.log(`  ${value ? 'ok  ' : 'FAIL'} ${label}`);
 }
 
+/*
+ * La boîte d'une forme, telle que le descripteur l'émet : `width × scaleX`.
+ *
+ * C'est la seule lecture juste, et elle vaut pour les deux familles. Une
+ * primitive est construite à l'échelle 1, donc `width × 1` = `width`. Une forme
+ * tracée est mise à l'échelle depuis la boîte du descripteur, donc `width` seul
+ * désigne l'emprise intrinsèque du chemin — un nombre qui n'a aucun sens pour
+ * l'utilisateur (le tracé d'une colline fait 2 655 unités de large).
+ */
+function boxWidth(obj: FabricObject): number {
+  return (obj.width ?? 0) * (obj.scaleX ?? 1);
+}
+
+function boxHeight(obj: FabricObject): number {
+  return (obj.height ?? 0) * (obj.scaleY ?? 1);
+}
+
 const RATIO: Ratio = '1:1';
 const BOX = { x: 100, y: 200, w: 300, h: 240 };
 
@@ -77,8 +94,8 @@ async function main(): Promise<void> {
     console.log(`\n[${spec.value}] (${obj.constructor.name})`);
     check('left', obj.left as number, BOX.x);
     check('top', obj.top as number, BOX.y);
-    check('width (géométrie nue)', obj.width as number, BOX.w);
-    check('height (géométrie nue)', obj.height as number, BOX.h);
+    check('width (géométrie nue)', boxWidth(obj), BOX.w);
+    check('height (géométrie nue)', boxHeight(obj), BOX.h);
     check('angle', obj.angle as number, 0);
 
     const points = (obj as unknown as { points?: Array<{ x: number; y: number }> }).points;
@@ -115,15 +132,16 @@ async function main(): Promise<void> {
     const a = await createShapeObject(plain, RATIO);
     const b = await createShapeObject(stroked, RATIO);
     // `width` reste la géométrie : c'est ce que lit l'émission du descripteur.
-    check(`[${spec.value}] width nue inchangée par le contour`, b.width as number, a.width as number);
+    check(`[${spec.value}] width nue inchangée par le contour`, boxWidth(b), boxWidth(a));
     // `getScaledWidth()` ajoute le contour : c'est précisément ce qu'il ne faut
     // PAS lire pour une forme. On documente l'écart.
     const scaled = b.getScaledWidth();
-    const expected = BOX.w + 27;
-    check(`[${spec.value}] getScaledWidth() = boîte + contour`, scaled, expected, 1.1);
+    if (spec.kind === 'primitive') {
+      check(`[${spec.value}] getScaledWidth() = boîte + contour`, scaled, BOX.w + 27, 1.1);
+    }
     checkTrue(
-      `[${spec.value}] la géométrie nue (${b.width}) est bien plus petite que getScaledWidth() (${scaled})`,
-      (b.width as number) < scaled,
+      `[${spec.value}] la géométrie nue (${boxWidth(b).toFixed(1)}) est bien plus petite que getScaledWidth() (${scaled.toFixed(1)})`,
+      boxWidth(b) < scaled,
     );
   }
 
@@ -235,8 +253,8 @@ async function main(): Promise<void> {
       const a = await createShapeObject(good, RATIO);
       good = {
         ...good,
-        w: Math.round((a.width as number) * (a.scaleX as number)),
-        h: Math.round((a.height as number) * (a.scaleY as number)),
+        w: Math.round(boxWidth(a)),
+        h: Math.round(boxHeight(a)),
       };
 
       const b = await createShapeObject(bad, RATIO);
@@ -402,6 +420,60 @@ async function main(): Promise<void> {
     if (anchor && !tpl.descriptor.layers.some((l) => l.id === anchor)) anchorsResolve = false;
   }
   checkTrue('la zone photo de chaque modèle désigne un calque existant', anchorsResolve);
+
+  console.log('\n=== 12. Formes tracées : un vrai chemin, pas un repli silencieux ===');
+  /*
+   * Le risque propre à cette famille : `createShapeObject` retombe sur un
+   * rectangle quand la forme n'est pas reconnue. Une faute de frappe dans une
+   * valeur du catalogue donnerait donc une forme qui s'ajoute, se déplace et se
+   * colorie normalement — mais qui est un rectangle. Le créateur ne verrait
+   * rien, et le contrôle de boîte ci-dessus passerait quand même. On vérifie
+   * donc explicitement le type d'objet et la présence du tracé.
+   */
+  const tracedSpecs = SHAPES.filter((spec) => spec.kind === 'traced');
+  checkTrue(`le catalogue porte des formes tracées (${tracedSpecs.length})`, tracedSpecs.length > 0);
+
+  for (const spec of tracedSpecs) {
+    const obj = await createShapeObject(layer(spec.value), RATIO);
+    /*
+     * On ne peut pas se fier à `constructor.name` : le build de Fabric utilisé
+     * ici est minifié, et le constructeur s'appelle alors `e`. On lit donc le
+     * type déclaré par Fabric lui-même, qui est une chaîne posée à l'exécution,
+     * et la présence du tracé analysé.
+     */
+    const asPath = obj as unknown as { path?: unknown[]; type?: string };
+    checkEqual(`[${spec.value}] objet Fabric`, asPath.type, 'path');
+    checkTrue(
+      `[${spec.value}] le tracé porte du dessin`,
+      Array.isArray(asPath.path) && asPath.path.length > 0,
+    );
+    checkTrue(
+      `[${spec.value}] l'aperçu déclare une emprise`,
+      /^-?[\d.]+ -?[\d.]+ [\d.]+ [\d.]+$/.test(previewViewBox(spec)),
+    );
+    // Aucune forme tracée n'a de coins : l'arrondi ne doit pas la suivre.
+    checkEqual(`[${spec.value}] pas d'arrondi`, spec.hasRadius, false);
+  }
+
+  // Le dégradé de marque se pose aussi sur un tracé : c'est le remplissage
+  // premium, et une forme qui le refuserait en silence serait un piège.
+  const gradient = await createShapeObject(layer('blob', { fill: 'brand-gradient' }), RATIO);
+  checkTrue(
+    'le dégradé de marque se pose sur un tracé',
+    typeof gradient.fill === 'object' && gradient.fill !== null,
+  );
+
+  // Régler la teinte d'un tracé déjà posé, sans le reconstruire.
+  const paintedPath = await createShapeObject(layer('blob'), RATIO);
+  applyShapePaint(
+    paintedPath,
+    layer('blob', { fill: '#00FF00', stroke: '#0000FF', strokeWidth: 0.06 }),
+    RATIO,
+  );
+  checkEqual('teinte appliquée à un tracé', paintedPath.fill, '#00FF00');
+  checkEqual('contour appliqué à un tracé', paintedPath.stroke, '#0000FF');
+  check('contour en pixels', paintedPath.strokeWidth as number, 65);
+  check('boîte intacte après réglage', boxWidth(paintedPath), BOX.w);
 
   console.log(`\n${failures === 0 ? 'TOUT EST VERT' : `${failures} ÉCHEC(S)`}`);
   process.exit(failures === 0 ? 0 : 1);

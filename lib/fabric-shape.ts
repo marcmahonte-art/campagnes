@@ -1,5 +1,7 @@
 import type { FabricObject } from 'fabric';
 import { ratioSpec } from './ratios';
+import { importFabric } from './fabric-runtime';
+import { shapeSpec } from './shapes';
 import type { Ratio, ShapeLayer } from './types';
 import { createBrandGradient } from './fabric-text';
 
@@ -11,9 +13,12 @@ import { createBrandGradient } from './fabric-text';
  * appliqué partout, et il n'existe aucun endroit où une forme pourrait être
  * dessinée deux fois de deux façons différentes.
  *
- * Une forme est toujours construite à sa taille réelle (`scaleX`/`scaleY` = 1) :
- * la géométrie vient des nombres du descripteur, jamais d'un étirement. C'est
- * ce qui la garde nette à toute résolution.
+ * Les primitives sont construites à leur taille réelle (`scaleX`/`scaleY` = 1) :
+ * la géométrie vient des nombres du descripteur, jamais d'un étirement. Les
+ * formes tracées, elles, portent une mise à l'échelle — mais elle est **calculée
+ * depuis la boîte du descripteur**, jamais relue du canvas. Dans les deux cas la
+ * boîte émise est donc `width × scaleX`, et un aller-retour éditeur → autosave →
+ * reconstruction ne dérive pas.
  */
 
 /** Rayon du branchage intérieur de l'étoile, en fraction du rayon extérieur. */
@@ -144,7 +149,7 @@ export async function createShapeObject(
   ratio: Ratio,
   options: ShapeObjectOptions = {},
 ): Promise<FabricObject> {
-  const { Ellipse, Polygon, Rect } = await import('fabric');
+  const { Ellipse, Path, Polygon, Rect } = await importFabric();
 
   const w = Math.max(1, layer.w);
   const h = Math.max(1, layer.h);
@@ -173,8 +178,29 @@ export async function createShapeObject(
 
     case 'rect':
     case 'line':
-    default:
       return new Rect({ ...paint, width: w, height: h });
+
+    default: {
+      /*
+       * Forme tracée : un chemin de courbes. Fabric mesure l'emprise en lisant
+       * le tracé lui-même, donc la boîte du descripteur s'obtient par mise à
+       * l'échelle du chemin. Rien n'est étiré : un tracé reste vectoriel, il
+       * demeure net à toute résolution.
+       *
+       * `width` et `scaleX` restent ainsi deux grandeurs distinctes, et
+       * l'émission du descripteur — qui lit `width × scaleX` — retombe
+       * exactement sur la boîte voulue, comme pour les autres formes.
+       */
+      const spec = shapeSpec(layer.kind);
+      if (spec.kind !== 'traced') return new Rect({ ...paint, width: w, height: h });
+
+      const path = new Path(spec.d, paint);
+      path.set({
+        scaleX: w / Math.max(1, path.width ?? 1),
+        scaleY: h / Math.max(1, path.height ?? 1),
+      });
+      return path;
+    }
   }
 }
 

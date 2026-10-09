@@ -34,6 +34,14 @@ export interface PaymentCorridor {
   countryCode: string;
   /** Libellé français, affiché à l'utilisateur. */
   country: string;
+  /**
+   * Drapeau, affiché à l'utilisateur devant le nom du pays.
+   *
+   * Il vit ici, avec le reste des données du corridor : une table de drapeaux
+   * écrite dans un composant finirait par diverger de cette liste le jour où
+   * un pays s'ajoute.
+   */
+  flag: string;
   /** Devise du corridor. XOF = franc CFA (BCEAO), aucune décimale. */
   currency: string;
   /** Indicatif téléphonique, pour l'aide à la saisie du numéro. */
@@ -57,6 +65,7 @@ export const PAYMENT_CORRIDORS: PaymentCorridor[] = [
   {
     countryCode: 'BEN',
     country: 'Bénin',
+    flag: '🇧🇯',
     currency: 'XOF',
     dialCode: '+229',
     operators: ['MTN', 'Moov'],
@@ -67,6 +76,7 @@ export const PAYMENT_CORRIDORS: PaymentCorridor[] = [
   {
     countryCode: 'BFA',
     country: 'Burkina Faso',
+    flag: '🇧🇫',
     currency: 'XOF',
     dialCode: '+226',
     operators: ['Orange', 'Moov'],
@@ -77,6 +87,7 @@ export const PAYMENT_CORRIDORS: PaymentCorridor[] = [
   {
     countryCode: 'CIV',
     country: 'Côte d’Ivoire',
+    flag: '🇨🇮',
     currency: 'XOF',
     dialCode: '+225',
     operators: ['Orange', 'MTN', 'Wave'],
@@ -87,6 +98,7 @@ export const PAYMENT_CORRIDORS: PaymentCorridor[] = [
   {
     countryCode: 'SEN',
     country: 'Sénégal',
+    flag: '🇸🇳',
     currency: 'XOF',
     dialCode: '+221',
     operators: ['Orange', 'Free', 'Wave'],
@@ -98,6 +110,7 @@ export const PAYMENT_CORRIDORS: PaymentCorridor[] = [
   {
     countryCode: 'GHA',
     country: 'Ghana',
+    flag: '🇬🇭',
     currency: 'GHS',
     dialCode: '+233',
     operators: ['MTN', 'AirtelTigo', 'Vodafone'],
@@ -108,6 +121,7 @@ export const PAYMENT_CORRIDORS: PaymentCorridor[] = [
   {
     countryCode: 'NGA',
     country: 'Nigéria',
+    flag: '🇳🇬',
     currency: 'NGN',
     dialCode: '+234',
     operators: ['MTN', 'Airtel'],
@@ -118,6 +132,7 @@ export const PAYMENT_CORRIDORS: PaymentCorridor[] = [
   {
     countryCode: 'SLE',
     country: 'Sierra Leone',
+    flag: '🇸🇱',
     currency: 'SLE',
     dialCode: '+232',
     operators: ['Orange'],

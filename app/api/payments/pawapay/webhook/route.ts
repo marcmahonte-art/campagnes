@@ -3,6 +3,8 @@ import { supabaseAdmin } from '@/lib/supabase/admin';
 import { isSupabaseConfigured, SITE_URL } from '@/lib/backend/config';
 import { confirmPayment } from '@/lib/pawapay-confirm';
 import { verifyPawaPayCallback } from '@/lib/pawapay-signature';
+import { getCheckout } from '@/lib/payments/pawapay-checkouts';
+import { activatePassForCheckout } from '@/lib/watermark-pass';
 
 interface PawaPayWebhookPayload {
   depositId: string;
@@ -88,6 +90,71 @@ export async function GET() {
   });
 }
 
+/**
+ * Branche **Checkouts** du callback : le pass « Sans filigrane ».
+ *
+ * Elle ne touche pas à la branche dépôt. Deux produits arrivent sur la même URL
+ * de callback ; on les distingue par leur identifiant, jamais autrement.
+ *
+ * Le callback n'est jamais cru sur parole : le statut final est **re-vérifié**
+ * chez pawaPay (`GET /v2/checkouts/{id}`) avant toute activation. Un `FAILED`,
+ * `EXPIRED` ou `CANCELLED` ne dégrade jamais un pass déjà actif.
+ */
+async function handleCheckoutCallback(item: Record<string, any>) {
+  const checkoutId = String(item.checkoutId);
+  const status = String(item.status ?? '');
+
+  if (!['COMPLETED', 'FAILED', 'EXPIRED', 'CANCELLED'].includes(status)) {
+    return NextResponse.json({ received: true, status });
+  }
+
+  if (!isSupabaseConfigured) {
+    console.warn('[pawaPay Webhook] Checkout reçu en mode local :', checkoutId, status);
+    return NextResponse.json({ received: true, mode: 'local' });
+  }
+
+  const admin = supabaseAdmin();
+  const provider =
+    item?.deposit?.payer?.accountDetails?.provider ??
+    item?.depositsHistory?.[0]?.payer?.accountDetails?.provider ??
+    null;
+
+  if (status === 'COMPLETED') {
+    try {
+      const state = await getCheckout(checkoutId);
+      if (state?.completed) {
+        const result = await activatePassForCheckout(admin, checkoutId, provider, {
+          amount: state.amount,
+          currency: state.currency,
+        });
+        if (result.ok) {
+          console.log(`[pawaPay Webhook] Pass activé (checkout=${checkoutId})`);
+        } else {
+          console.warn(`[pawaPay Webhook] Pass non activé (checkout=${checkoutId}) : ${result.error}`);
+        }
+      } else {
+        console.warn(`[pawaPay Webhook] Checkout non confirmé côté pawaPay : ${checkoutId}`);
+      }
+    } catch (error) {
+      // On acquitte quand même : faire échouer ferait rejouer pawaPay sans fin.
+      console.warn(`[pawaPay Webhook] Vérification checkout impossible (${checkoutId}) :`, error);
+    }
+  } else {
+    // Un échec ne dégrade jamais un pass déjà actif (filtre sur les statuts).
+    await admin
+      .from('watermark_pass_orders')
+      .update({
+        status: status === 'FAILED' ? 'failed' : 'cancelled',
+        failure_code: status,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('checkout_id', checkoutId)
+      .in('status', ['pending', 'waiting_payment', 'processing']);
+  }
+
+  return NextResponse.json({ received: true });
+}
+
 export async function POST(request: NextRequest) {
   try {
     /*
@@ -131,7 +198,24 @@ export async function POST(request: NextRequest) {
       ? (payload as PawaPayWebhookPayload[])
       : [payload as PawaPayWebhookPayload];
 
-    if (!items.length || !items[0]?.depositId) {
+    if (!items.length) {
+      return NextResponse.json({ error: 'Payload vide.' }, { status: 400 });
+    }
+
+    /*
+     * Deux produits partagent cette URL de callback : les dépôts (abonnements,
+     * packs) et les checkouts (pass sans filigrane). On les sépare par leur
+     * identifiant, avant toute autre lecture — la branche dépôt reste
+     * strictement inchangée.
+     */
+    const checkoutItem = items.find(
+      (item) => typeof (item as unknown as Record<string, unknown>).checkoutId === 'string',
+    );
+    if (checkoutItem) {
+      return handleCheckoutCallback(checkoutItem as unknown as Record<string, any>);
+    }
+
+    if (!items[0]?.depositId) {
       return NextResponse.json({ error: 'depositId manquant dans le payload.' }, { status: 400 });
     }
 

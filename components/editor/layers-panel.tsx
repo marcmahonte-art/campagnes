@@ -13,7 +13,14 @@ import {
   Type,
   Unlock,
 } from 'lucide-react';
-import { SHAPES, shapeSpec } from '@/lib/shapes';
+import {
+  PREVIEW_BOX,
+  SHAPES,
+  previewPath,
+  previewStrokeWidth,
+  previewViewBox,
+  shapeSpec,
+} from '@/lib/shapes';
 import { cn } from '@/lib/cn';
 import type { Layer } from '@/lib/types';
 
@@ -29,6 +36,11 @@ interface LayersPanelProps {
   onMoveUp: (id: string) => void;
   onMoveDown: (id: string) => void;
   onDuplicate: (id: string) => void;
+  /**
+   * Dupliquer, c'est ajouter : un compte sans Frame Pro ne duplique donc ni un
+   * texte ni une forme. Retourné par l'appelant, qui connaît la formule.
+   */
+  canDuplicate?: (id: string) => boolean;
   onDelete: (id: string) => void;
   /** Désigne — ou retire — la zone du participant sur ce calque. */
   onSetPhotoZone: (id: string | null) => void;
@@ -58,22 +70,30 @@ function layerIcon(layer: Layer) {
   }
   if (layer.type === 'shape') {
     const spec = SHAPES.find((shape) => shape.value === layer.kind);
+    /*
+     * L'aperçu d'une forme tracée a sa propre emprise, qui peut faire plusieurs
+     * centaines d'unités. On rend donc le tracé **dans son repère**, et le
+     * contour est ramené à la même épaisseur apparente que celui des
+     * primitives : sinon un liseré de 2 unités serait invisible sur un tracé de
+     * 800, et la forme évidée disparaîtrait de la liste.
+     */
+    const path = spec ? previewPath(spec) : '';
     return (
       <svg
-        viewBox="0 0 24 24"
+        viewBox={spec ? previewViewBox(spec) : PREVIEW_BOX}
         className="size-3.5 shrink-0"
         style={{ color: layer.fill === 'transparent' ? '#9CA3AF' : layer.fill }}
         aria-hidden
       >
         {/* Le contour est tracé par-dessus : une forme évidée doit rester
             lisible, sinon elle disparaîtrait de la liste. */}
-        <path d={spec?.preview ?? ''} fill="currentColor" />
-        {layer.strokeWidth > 0 && layer.stroke !== 'transparent' && (
+        <path d={path} fill="currentColor" />
+        {spec && layer.strokeWidth > 0 && layer.stroke !== 'transparent' && (
           <path
-            d={spec?.preview ?? ''}
+            d={path}
             fill="none"
             stroke={layer.stroke}
-            strokeWidth={2}
+            strokeWidth={previewStrokeWidth(spec)}
             strokeLinejoin="round"
           />
         )}
@@ -94,6 +114,7 @@ export function LayersPanel({
   onMoveUp,
   onMoveDown,
   onDuplicate,
+  canDuplicate,
   onDelete,
   onSetPhotoZone,
 }: LayersPanelProps) {
@@ -106,6 +127,11 @@ export function LayersPanel({
    */
   const sorted = [...layers].sort((a, b) => b.z - a.z);
   const atLimit = maxLayers !== null && maxLayers !== undefined && layers.length >= maxLayers;
+  /*
+   * Sans information de formule, la duplication reste autorisée (comportement
+   * historique) : le verrou n'existe que là où l'appelant le renseigne.
+   */
+  const duplicateAllowed = (id: string) => (canDuplicate ? canDuplicate(id) : true);
 
   return (
     <div className="flex flex-col gap-3">
@@ -190,9 +216,13 @@ export function LayersPanel({
                     </IconAction>
 
                     <IconAction
-                      label={`Dupliquer « ${layerTitle(layer)} »`}
+                      label={
+                        duplicateAllowed(layer.id)
+                          ? `Dupliquer « ${layerTitle(layer)} »`
+                          : `Dupliquer « ${layerTitle(layer)} » — réservé à la formule Créateur`
+                      }
                       onClick={() => onDuplicate(layer.id)}
-                      disabled={atLimit}
+                      disabled={atLimit || !duplicateAllowed(layer.id)}
                     >
                       <Copy className="size-3.5" />
                     </IconAction>

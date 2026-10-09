@@ -97,6 +97,31 @@ test('aucun code d’opérateur n’est annoncé à l’utilisateur', () => {
   }
 });
 
+/*
+ * Le drapeau vit dans le corridor, pas dans le composant : c'est ce qui garantit
+ * qu'un pays ajouté à la liste arrive affiché. La vérification n'est pas
+ * décorative — un `flag` manquant casse la compilation, mais seulement si le champ
+ * est déclaré requis ; on l'assert ici pour qu'un passage en optionnel ne fasse
+ * pas disparaître des drapeaux en silence.
+ */
+test('chaque corridor porte un drapeau', () => {
+  for (const corridor of PAYMENT_CORRIDORS) {
+    assert.ok(
+      typeof corridor.flag === 'string' && corridor.flag.trim().length > 0,
+      `${corridor.countryCode} : aucun drapeau — la liste des pays s'afficherait sans`,
+    );
+  }
+});
+
+test('les pays proposés au paiement sont ceux ouverts au public', () => {
+  const payable = payableCorridors().map((c) => c.countryCode).sort();
+  assert.deepEqual(
+    payable,
+    ['BEN', 'BFA', 'CIV', 'SEN'],
+    `pays payables inattendus : ${payable.join(', ')}`,
+  );
+});
+
 /* =====================================================================
  * 2. Ce qui est payable — et ce qui ne l'est pas
  * ===================================================================== */

@@ -160,13 +160,18 @@ export interface TextLayer extends LayerBase {
 }
 
 /**
- * Formes géométriques disponibles dans l'éditeur.
+ * Formes disponibles dans l'éditeur.
  *
  * Elles sont **dessinées**, jamais importées : une forme est décrite par des
- * nombres, donc elle reste nette à toute résolution, se rejoue à l'identique
- * côté participant, et ne pèse rien dans la base. Le catalogue est
- * volontairement court — sept formes couvrent l'affiche, la pastille, le
- * bandeau et l'encadré ; au-delà, on chercherait un outil de dessin.
+ * nombres ou par un tracé, donc elle reste nette à toute résolution, se rejoue
+ * à l'identique côté participant, et ne pèse rien dans la base — le descripteur
+ * ne retient que le nom de la forme, jamais son dessin.
+ *
+ * Deux familles : les **primitives** (cercle, rectangle, polygones), décrites
+ * par quelques nombres et dessinées par Fabric ; et les **tracées** (blobs,
+ * vagues, bandeaux), décrites par un chemin de courbes. Les secondes existent
+ * parce qu'une courbe organique ne se réduit pas à des sommets sans perdre sa
+ * douceur.
  */
 export type ShapeKind =
   | 'circle'
@@ -175,7 +180,16 @@ export type ShapeKind =
   | 'triangle'
   | 'diamond'
   | 'star'
-  | 'line';
+  | 'line'
+  | 'round-corner'
+  | 'blob'
+  | 'pebble'
+  | 'mountain'
+  | 'wave'
+  | 'curtain'
+  | 'tilted-frame'
+  | 'hill'
+  | 'soft-blob';
 
 export interface ShapeLayer extends LayerBase {
   type: 'shape';

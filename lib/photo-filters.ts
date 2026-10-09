@@ -25,6 +25,7 @@
  */
 
 import type { filters } from 'fabric';
+import { importFabric } from './fabric-runtime';
 
 /**
  * Filtre Fabric tel qu'attendu par `FabricImage.filters`.
@@ -121,7 +122,7 @@ const BLUR_AMOUNT = 0.3;
 export async function createPhotoFilters(filter: PhotoFilter): Promise<PhotoFilterObject[]> {
   if (filter === 'none') return [];
 
-  const { filters } = await import('fabric');
+  const { filters } = await importFabric();
 
   switch (filter) {
     case 'grayscale':

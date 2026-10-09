@@ -114,6 +114,12 @@ export default function ConfidentialitePage() {
             un cookie de session, déposé à la connexion pour maintenir le créateur connecté ;
           </li>
           <li>
+            si un participant achète un pass « Sans filigrane », un cookie{' '}
+            <code className="text-[13px]">cn_bid</code> contenant un identifiant aléatoire, qui
+            relie le pass au navigateur acheteur. Il ne contient ni email, ni numéro Mobile Money,
+            ni identifiant de transaction ;
+          </li>
+          <li>
             les journaux techniques de l’hébergeur, qui peuvent inclure l’adresse IP, nécessaires
             au fonctionnement et à la sécurité du site ;
           </li>
@@ -176,6 +182,12 @@ export default function ConfidentialitePage() {
             le visuel final est composé et enregistré localement, sur l’appareil de la personne ;
           </li>
           <li>
+            <strong className="font-medium text-ink">exception — le pass « Sans filigrane ».</strong>{' '}
+            Lorsqu’une personne achète ce pass, l’image sans filigrane est produite par nos
+            serveurs : sa photo, son placement et son style sont transmis le temps du rendu, puis
+            renvoyés sous forme d’image. Rien n’en est conservé après la réponse.
+          </li>
+          <li>
             au moment d’un téléchargement, le service enregistre uniquement l’incrément d’un
             compteur, afin d’appliquer la limite fixée par le créateur. Aucune image, aucune
             adresse email et aucune identité ne sont associées à ce décompte.
@@ -191,15 +203,20 @@ export default function ConfidentialitePage() {
         </p>
         <p>
           Les photos des <strong className="font-medium text-ink">participants</strong> suivent un
-          chemin différent : elles ne sont jamais transmises au service. Le créateur ne voit donc
-          jamais les photos de son audience, et nous non plus.
+          chemin différent : elles ne sont pas conservées par le service. Le créateur ne voit donc
+          jamais les photos de son audience, et nous non plus. Une seule exception : lorsqu’un
+          participant achète un pass « Sans filigrane », sa photo est transmise le temps du rendu
+          côté serveur, sans être conservée après la réponse.
         </p>
       </LegalBlock>
 
       <LegalBlock id="cookies" title="7. Cookies et technologies similaires">
         <p>
           Le site dépose un cookie de session, nécessaire pour maintenir un créateur connecté. Il
-          n’existe à ce jour aucun cookie de mesure d’audience, de publicité ou de suivi.
+          dépose également, et uniquement lorsqu’un participant achète un pass « Sans filigrane »,
+          un cookie <code className="text-[13px]">cn_bid</code> : un identifiant aléatoire qui relie
+          le pass au navigateur acheteur, sans aucune donnée personnelle. Il n’existe à ce jour
+          aucun cookie de mesure d’audience, de publicité ou de suivi.
         </p>
         <p>
           Le détail figure sur la page{' '}
@@ -277,8 +294,8 @@ export default function ConfidentialitePage() {
             ni formule ;
           </li>
           <li>
-            la photo d’un participant ne quitte pas son appareil : elle ne peut donc pas être
-            exposée par une faille côté serveur.
+            la photo d’un participant ne quitte pas son appareil, sauf lors d’un rendu « Sans
+            filigrane » ponctuel après achat d’un pass, et n’est jamais conservée côté serveur.
           </li>
         </ul>
         <p>

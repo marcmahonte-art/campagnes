@@ -3,11 +3,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ArrowLeft, CheckCircle2, Clock3, FileText, Loader2, Receipt, Smartphone } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Clock3, FileText, Globe, Loader2, Receipt, Smartphone } from 'lucide-react';
 import { Button, ButtonLink } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { DismissibleNotice, InlineError } from '@/components/ui/feedback';
+import { CountryPickerModal } from '@/components/payments/country-picker-modal';
 import { useSession } from '@/lib/backend/session';
 import type { PlanId } from '@/lib/plans';
 import {
@@ -19,8 +20,7 @@ import {
   type BillingDuration,
 } from '@/lib/pricing/config';
 import {
-  DEFAULT_PAYMENT_COUNTRY,
-  payableCorridors,
+  payableCountriesLabel,
   upcomingCorridors,
 } from '@/lib/payments/corridors';
 
@@ -28,8 +28,6 @@ const PAID_PLANS: PlanId[] = ['creator', 'organization'];
 const CREDIT_PACKS = DISTRIBUTION_PACKS.filter(
   (pack) => pack.priceFcfa !== null && pack.distributions !== null,
 );
-/** Pays où le paiement est ouvert — ceux dont la devise a une grille. */
-const PAYABLE_COUNTRIES = payableCorridors();
 /** Corridors connus de la passerelle mais non tarifés : annoncés, jamais facturés. */
 const UPCOMING_COUNTRIES = upcomingCorridors();
 
@@ -76,8 +74,17 @@ export function CheckoutPage() {
   const [plan, setPlan] = useState<PlanId>(() => validPlan(searchParams.get('plan')));
   const [duration, setDuration] = useState<BillingDuration>(() => validDuration(searchParams.get('duration')));
   const [packId, setPackId] = useState(CREDIT_PACKS[0]?.id ?? 'pack_100');
-  const [country, setCountry] = useState(DEFAULT_PAYMENT_COUNTRY);
-  const [pending, setPending] = useState(false);
+  /**
+   * Pays de paiement. `null` tant que l'utilisateur ne l'a pas choisi : c'est
+   * volontaire, un défaut géographique enverrait un acheteur ivoirien sur le
+   * corridor burkinabè. Il est donc demandé, jamais deviné.
+   */
+  const [country, setCountry] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  /** Initiation en cours : affiché dans le modal, pas sur la page. */
+  const [preparing, setPreparing] = useState(false);
+  /** Échec de l'initiation, affiché dans le modal (jamais de détail technique). */
+  const [paymentError, setPaymentError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<BillingSummary | null>(null);
@@ -198,18 +205,33 @@ export function CheckoutPage() {
     }
   }
 
-  async function startPayment() {
+  /**
+   * Lance le paiement pour le pays choisi.
+   *
+   * Le montant n'est **pas** envoyé : la route le recalcule depuis le plan ou le
+   * pack côté serveur. Le pays, lui, est transmis tel qu'il a été choisi — et
+   * validé à nouveau côté serveur.
+   *
+   * En cas d'échec on reste dans le modal : l'utilisateur garde son produit sous
+   * les yeux et peut réessayer sans reconstituer son panier.
+   */
+  async function startPayment(countryCode: string) {
     if (!user) {
       router.push(`/login?next=${encodeURIComponent('/dashboard/acheter')}`);
       return;
     }
 
-    setPending(true);
+    setPreparing(true);
+    setPaymentError(null);
+    setCountry(countryCode);
     setError(null);
     setNotice(null);
 
     try {
-      const body = type === 'credits' ? { packId, country } : { plan, duration, country };
+      const body = type === 'credits'
+        ? { packId, country: countryCode }
+        : { plan, duration, country: countryCode };
+
       const response = await fetch('/api/payments/pawapay/initiate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -218,15 +240,20 @@ export function CheckoutPage() {
       const data = (await response.json()) as { success?: boolean; redirectUrl?: string; error?: string };
 
       if (!response.ok || !data.success || !data.redirectUrl) {
-        setError(data.error ?? 'Le paiement n’a pas pu être initialisé. Réessayez.');
+        setPaymentError(data.error ?? 'Le paiement n’a pas pu être initialisé. Réessayez.');
+        setPreparing(false);
         return;
       }
 
+      /*
+       * Redirection vers la page de paiement hébergée. On ne passe pas
+       * `preparing` à faux ici : la page est en train de partir, et un retour
+       * d'état laisserait brièvement réapparaître la liste des pays.
+       */
       window.location.href = data.redirectUrl;
     } catch {
-      setError('Impossible de joindre le service de paiement Mobile Money. Réessayez.');
-    } finally {
-      setPending(false);
+      setPaymentError('Impossible de joindre le service de paiement Mobile Money. Réessayez.');
+      setPreparing(false);
     }
   }
 
@@ -363,36 +390,23 @@ export function CheckoutPage() {
           )}
 
           {/*
-           * Le pays n'est pas une formalité : c'est lui qui fixe la devise
-           * envoyée à la passerelle. Sans ce choix, un client ivoirien était
-           * envoyé sur le corridor burkinabè, où son numéro n'existe pas.
+           * Le pays n'est plus un champ de formulaire : il est demandé au moment
+           * de payer, dans le modal. On continue de l'annoncer ici, parce qu'un
+           * pays découvert indisponible après avoir choisi son produit est une
+           * promesse qu'on n'aurait pas dû faire.
            */}
-          <div className="mt-6">
-            <p className="text-[12px] font-semibold uppercase tracking-wide text-gray-400">Pays de paiement</p>
-            <div className="mt-2 grid gap-2 sm:grid-cols-2">
-              {PAYABLE_COUNTRIES.map((corridor) => (
-                <button
-                  key={corridor.countryCode}
-                  type="button"
-                  onClick={() => setCountry(corridor.countryCode)}
-                  className={`rounded-lg border p-3 text-left transition-colors ${
-                    country === corridor.countryCode
-                      ? 'border-purple bg-purple/5 ring-1 ring-purple/20'
-                      : 'border-gray-200 hover:border-gray-400'
-                  }`}
-                >
-                  <span className="block text-[14px] font-semibold text-ink">{corridor.country}</span>
-                  <span className="mt-0.5 block text-[12px] text-gray-500">
-                    {corridor.dialCode} · {corridor.operators.join(', ')}
-                  </span>
-                </button>
-              ))}
-            </div>
-            {UPCOMING_COUNTRIES.length > 0 && (
-              <p className="mt-2 text-[12px] leading-relaxed text-gray-500">
-                Également connectés à la passerelle : {UPCOMING_COUNTRIES.map((corridor) => corridor.country).join(', ')} — grille tarifaire À COMPLÉTER.
-              </p>
-            )}
+          <div className="mt-6 flex items-start gap-2.5 rounded-lg border border-gray-200 bg-gray-50 p-4">
+            <Globe className="mt-0.5 size-4 shrink-0 text-gray-400" aria-hidden />
+            <p className="text-[12px] leading-relaxed text-gray-600">
+              Paiement Mobile Money ouvert en : {payableCountriesLabel()}.
+              {UPCOMING_COUNTRIES.length > 0 && (
+                <>
+                  {' '}Également connectés à la passerelle :{' '}
+                  {UPCOMING_COUNTRIES.map((corridor) => corridor.country).join(', ')} — grille
+                  tarifaire À COMPLÉTER.
+                </>
+              )}
+            </p>
           </div>
 
           <div className="mt-7 flex flex-col gap-4 border-t border-gray-100 pt-5 sm:flex-row sm:items-end sm:justify-between">
@@ -401,13 +415,21 @@ export function CheckoutPage() {
               <p className="mt-1 text-[30px] font-extrabold tracking-tight text-ink tabular-nums">{formatFcfaPrice(selectedAmount)}</p>
               <p className="mt-1 text-[12px] text-gray-500">Pas de reconduction automatique.</p>
             </div>
+            {/*
+             * Le bouton n'initie plus rien par lui-même : il ouvre le choix du
+             * pays. C'est ce choix qui déclenche le paiement — le pays fixe le
+             * corridor et la devise, on ne les devine pas.
+             */}
             <Button
               variant="primary"
               size="lg"
-              onClick={() => void startPayment()}
-              disabled={pending || selectedAmount <= 0}
+              onClick={() => {
+                setPaymentError(null);
+                setPickerOpen(true);
+              }}
+              disabled={selectedAmount <= 0}
             >
-              {pending ? <><Loader2 className="size-4 animate-spin" aria-hidden /> Connexion sécurisée…</> : <><Smartphone className="size-4" aria-hidden /> Payer avec Mobile Money</>}
+              <Smartphone className="size-4" aria-hidden /> Payer maintenant
             </Button>
           </div>
 
@@ -457,6 +479,29 @@ export function CheckoutPage() {
         <Clock3 className="ml-2 size-4" aria-hidden />
         <span>Une confirmation peut prendre quelques instants.</span>
       </div>
+
+      {/*
+       * Le modal de pays est le seul point d'entrée du paiement. Il ne connaît
+       * ni la route ni le prestataire : il remonte un pays, la page décide.
+       */}
+      <CountryPickerModal
+        open={pickerOpen}
+        defaultCountry={country}
+        loading={preparing}
+        error={paymentError}
+        summary={{ label: selectedLabel, amount: formatFcfaPrice(selectedAmount) }}
+        onClose={() => {
+          if (preparing) return;
+          setPickerOpen(false);
+          setPaymentError(null);
+        }}
+        onConfirm={({ countryCode }) => {
+          void startPayment(countryCode);
+        }}
+        onRetry={() => {
+          if (country) void startPayment(country);
+        }}
+      />
     </div>
   );
 }
