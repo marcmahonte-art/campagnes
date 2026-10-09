@@ -14,7 +14,8 @@ import { isCampaignKind } from '@/lib/campaign-kinds';
 import { FREE_DOWNLOADS, toClaim, toQuota } from '@/lib/quota';
 import { FREE_MAX_CAMPAIGNS, maxCampaigns } from '@/lib/plans';
 import {
-  PENDING_PAYMENT_WINDOW_MS,
+  ABANDONED_PAYMENT_WINDOW_MS,
+  REFUSED_PAYMENT_CODE,
   isVisibleInPaymentHistory,
   toPaymentRecord,
   type PaymentRow,
@@ -959,7 +960,7 @@ export const supabaseBackend: Backend = {
    * effet sur ce que la base renvoie.
    *
    * Ce que l'on filtre en revanche, c'est **ce qui mérite d'être montré** :
-   * les paiements annulés et les attentes abandonnées. Voir
+   * les paiements annulés, et les abandons une fois la fenêtre écoulée. Voir
    * `isVisibleInPaymentHistory` — c'est là qu'est la règle, elle n'est pas
    * réécrite ici.
    *
@@ -976,20 +977,34 @@ export const supabaseBackend: Backend = {
     if (!data.user) return [];
 
     /*
-     * `status.neq.pending` OU `created_at` postérieur à la fenêtre : la
-     * seconde branche est ce qui laisse passer une attente encore crédible.
-     * Un `or` PostgREST se sépare par des virgules — la valeur ISO n'en
-     * contient aucune, elle est donc sûre telle quelle.
+     * La même règle, écrite en PostgREST. Elle se lit : « récent, OU ni en
+     * attente ni refusé par le client ».
+     *
+     *   created_at >= fenêtre
+     *   OU ( status <> 'pending' ET ( status <> 'failed'
+     *                                OU failure_code IS NULL
+     *                                OU failure_code <> 'PAYMENT_NOT_APPROVED' ) )
+     *
+     * La branche `failure_code IS NULL` n'est pas décorative : en SQL,
+     * `failure_code <> 'X'` est NULL — donc faux — quand la colonne est NULL.
+     * Sans elle, un paiement échoué sans code serait masqué à tort.
+     *
+     * Un `or` PostgREST se sépare par des virgules ; ni la date ISO ni le code
+     * n'en contiennent, ils passent donc tels quels.
      */
-    const pendingCutoff = new Date(Date.now() - PENDING_PAYMENT_WINDOW_MS).toISOString();
+    const cutoff = new Date(Date.now() - ABANDONED_PAYMENT_WINDOW_MS).toISOString();
 
     const { data: rows, error } = await sb
       .from('payments')
       .select(
-        'deposit_id, amount, currency, status, plan, campaign_id, purchase_type, metadata, created_at, failure_message',
+        'deposit_id, amount, currency, status, plan, campaign_id, purchase_type, metadata, created_at, failure_code, failure_message',
       )
       .neq('status', 'cancelled')
-      .or(`status.neq.pending,created_at.gte.${pendingCutoff}`)
+      .or(
+        `created_at.gte.${cutoff},` +
+          'and(status.neq.pending,' +
+          `or(status.neq.failed,failure_code.is.null,failure_code.neq.${REFUSED_PAYMENT_CODE}))`,
+      )
       .order('created_at', { ascending: false })
       .limit(30);
 

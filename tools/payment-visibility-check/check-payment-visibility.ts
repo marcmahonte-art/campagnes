@@ -13,13 +13,18 @@
  * Deux règles réparent cela, et ce sont elles que le harnais vérifie :
  *
  *   1. un paiement `cancelled` n'a jamais eu lieu → il ne se montre pas ;
- *   2. un `pending` plus vieux que la fenêtre d'attente est un abandon, pas une
- *      attente → il ne se montre plus.
+ *   2. un abandon, une fois la fenêtre écoulée, ne se montre plus. Deux
+ *      situations comptent comme un abandon : un `pending` figé (le client a
+ *      fermé la page avant d'appuyer sur « Pay »), et un `failed` portant
+ *      `PAYMENT_NOT_APPROVED` (le client a refusé l'invite sur son téléphone,
+ *      ou n'a pas saisi son PIN à temps).
  *
- * Ce qui doit RESTER visible est aussi important que ce qui disparaît : un
- * `failed` (refus de l'opérateur) porte une information utile et un motif ; un
- * statut inconnu ne doit jamais être masqué en silence ; une date illisible ne
- * doit pas faire disparaître une ligne. Le harnais couvre les quatre.
+ * Ce qui doit RESTER visible est aussi important que ce qui disparaît : les
+ * échecs techniques (`INSUFFICIENT_BALANCE`, `WALLET_LIMIT_REACHED`…) portent
+ * une information dont le client a besoin ; un statut inconnu ne doit jamais
+ * être masqué en silence ; une date illisible ne doit pas faire disparaître une
+ * ligne. Le harnais couvre les trois, et vérifie aussi que le masquage ne
+ * déborde pas sur les échecs techniques — c'est le faux pas symétrique.
  *
  * On importe la **vraie** fonction du projet : si sa logique change, ce
  * contrôle change avec elle.
@@ -31,7 +36,8 @@
 
 import assert from 'node:assert/strict';
 import {
-  PENDING_PAYMENT_WINDOW_MS,
+  ABANDONED_PAYMENT_WINDOW_MS,
+  REFUSED_PAYMENT_CODE,
   isVisibleInPaymentHistory,
   type PaymentRow,
 } from '../../lib/payments/history';
@@ -104,9 +110,9 @@ test('l’annulation prime sur toute autre considération de date', () => {
 });
 
 /* =====================================================================
- * 2. Ce qui disparaît : une attente abandonnée
+ * 2. Ce qui disparaît : une attente figée, ou un refus du client
  * ===================================================================== */
-section('2. Attente abandonnée → masquée');
+section('2. Abandon → masqué (attente figée, ou refus du client)');
 
 test('une attente de 2 minutes reste visible', () => {
   assert.equal(visible(ligne('pending', ilYA(2 * MINUTE))), true);
@@ -129,14 +135,90 @@ test('une attente de 24 heures est masquée', () => {
 });
 
 test('la borne est exacte : à la fenêtre pile on montre, une milliseconde après on cache', () => {
-  assert.equal(visible(ligne('pending', ilYA(PENDING_PAYMENT_WINDOW_MS))), true);
-  assert.equal(visible(ligne('pending', ilYA(PENDING_PAYMENT_WINDOW_MS + 1))), false);
+  assert.equal(visible(ligne('pending', ilYA(ABANDONED_PAYMENT_WINDOW_MS))), true);
+  assert.equal(visible(ligne('pending', ilYA(ABANDONED_PAYMENT_WINDOW_MS + 1))), false);
 });
 
-test('la fenêtre d’attente vaut bien une heure', () => {
+test('la fenêtre vaut bien une heure', () => {
   // Garde-fou sur la constante : une valeur aberrante (0 ou 30 jours) rendrait
   // les règles ci-dessus vraies par accident.
-  assert.equal(PENDING_PAYMENT_WINDOW_MS, HOUR);
+  assert.equal(ABANDONED_PAYMENT_WINDOW_MS, HOUR);
+});
+
+/* --- Le refus du client, traité comme un abandon --------------------- */
+
+test('un refus du client reste visible pendant la fenêtre', () => {
+  const refuse = ligne('failed', ilYA(5 * MINUTE), {
+    failure_code: REFUSED_PAYMENT_CODE,
+    failure_message: 'Le client n’a pas autorisé le paiement.',
+  });
+  assert.equal(visible(refuse), true);
+});
+
+test('un refus du client est masqué une fois la fenêtre écoulée', () => {
+  const refuse = ligne('failed', ilYA(61 * MINUTE), {
+    failure_code: REFUSED_PAYMENT_CODE,
+  });
+  assert.equal(visible(refuse), false);
+});
+
+test('la borne du refus est la même que celle de l’attente', () => {
+  const auBord = ligne('failed', ilYA(ABANDONED_PAYMENT_WINDOW_MS), {
+    failure_code: REFUSED_PAYMENT_CODE,
+  });
+  const justeApres = ligne('failed', ilYA(ABANDONED_PAYMENT_WINDOW_MS + 1), {
+    failure_code: REFUSED_PAYMENT_CODE,
+  });
+  assert.equal(visible(auBord), true);
+  assert.equal(visible(justeApres), false);
+});
+
+test('le code de refus est bien PAYMENT_NOT_APPROVED', () => {
+  // Garde-fou : si la constante changeait, les règles ci-dessus resteraient
+  // vraies tout en ne couvrant plus le code réellement émis par pawaPay.
+  assert.equal(REFUSED_PAYMENT_CODE, 'PAYMENT_NOT_APPROVED');
+});
+
+test('un échec technique ancien reste visible, avec son motif', () => {
+  // Le client a besoin de lire « solde insuffisant » pour comprendre.
+  for (const code of [
+    'INSUFFICIENT_BALANCE',
+    'WALLET_LIMIT_REACHED',
+    'PAYER_NOT_FOUND',
+    'AMOUNT_OUT_OF_BOUNDS',
+    'UNSPECIFIED_FAILURE',
+  ]) {
+    const ancien = ligne('failed', ilYA(90 * 24 * HOUR), { failure_code: code });
+    assert.equal(visible(ancien), true, `${code} ne doit jamais être masqué`);
+  }
+});
+
+test('un échec sans code reste visible : on n’efface pas sur un doute', () => {
+  assert.equal(visible(ligne('failed', ilYA(90 * 24 * HOUR), { failure_code: null })), true);
+  assert.equal(
+    visible(ligne('failed', ilYA(90 * 24 * HOUR), { failure_code: undefined })),
+    true,
+  );
+});
+
+test('un refus sans date lisible reste visible', () => {
+  const refuse = ligne('failed', null, { failure_code: REFUSED_PAYMENT_CODE });
+  assert.equal(visible(refuse), true);
+  const illisible = ligne('failed', 'pas-une-date', { failure_code: REFUSED_PAYMENT_CODE });
+  assert.equal(visible(illisible), true);
+});
+
+test('un refus très récent n’est jamais masqué par un autre motif', () => {
+  // Un `cancelled` est masqué sans condition ; un refus, non. Les deux ne
+  // doivent pas être confondus.
+  assert.equal(
+    visible(ligne('cancelled', ilYA(1 * MINUTE), { failure_code: REFUSED_PAYMENT_CODE })),
+    false,
+  );
+  assert.equal(
+    visible(ligne('failed', ilYA(1 * MINUTE), { failure_code: REFUSED_PAYMENT_CODE })),
+    true,
+  );
 });
 
 /* =====================================================================
@@ -185,8 +267,13 @@ section('4. TÉMOIN (doit échouer)');
 const beforeWitness = failures;
 
 /*
- * On affirme ici le CONTRAIRE de la règle. Ces trois assertions doivent
+ * On affirme ici le CONTRAIRE de la règle. Ces cinq assertions doivent
  * échouer — sinon les sections 1 à 3 passeraient sur n'importe quoi.
+ *
+ * Les deux premières visent le défaut par excès (tout visible, le bug
+ * d'origine). La quatrième vise le défaut par défaut, symétrique et plus
+ * sournois : masquer TOUS les échecs, y compris « solde insuffisant », ce qui
+ * laisserait le client sans explication.
  */
 test('TÉMOIN (doit échouer) : un paiement annulé présenté comme visible', () => {
   assert.equal(visible(ligne('cancelled', ilYA(1 * MINUTE))), true, 'cas délibérément faux');
@@ -196,23 +283,41 @@ test('TÉMOIN (doit échouer) : une attente de 48 h présentée comme visible', 
   assert.equal(visible(ligne('pending', ilYA(48 * HOUR))), true, 'cas délibérément faux');
 });
 
+test('TÉMOIN (doit échouer) : un refus du client de 48 h présenté comme visible', () => {
+  assert.equal(
+    visible(ligne('failed', ilYA(48 * HOUR), { failure_code: REFUSED_PAYMENT_CODE })),
+    true,
+    'cas délibérément faux',
+  );
+});
+
+test('TÉMOIN (doit échouer) : un échec technique ancien présenté comme masqué', () => {
+  // Le faux pas symétrique : masquer TOUS les échecs. Les autres assertions
+  // doivent le rejeter, sinon la règle serait trop large.
+  assert.equal(
+    visible(ligne('failed', ilYA(90 * 24 * HOUR), { failure_code: 'INSUFFICIENT_BALANCE' })),
+    false,
+    'cas délibérément faux : solde insuffisant ne doit jamais disparaître',
+  );
+});
+
 test('TÉMOIN (doit échouer) : le comportement d’origine (tout visible) présenté comme correct', () => {
   const comportementDOrigine = () => true;
   assert.equal(comportementDOrigine(), false, 'cas délibérément faux : tout est affiché');
 });
 
-test('le harnais a bien vu les trois cas faux', () => {
+test('le harnais a bien vu les cinq cas faux', () => {
   assert.equal(
     failures - beforeWitness,
-    3,
+    5,
     'les témoins n’ont pas échoué : le harnais ne prouve rien',
   );
 });
 
 /* =====================================================================
- * BILAN — on retire les 3 échecs volontaires du compte
+ * BILAN — on retire les échecs volontaires du compte
  * ===================================================================== */
-const TEMOINS = 3;
+const TEMOINS = 5;
 const realFailures = failures - TEMOINS;
 
 console.log(`\n${'='.repeat(60)}`);

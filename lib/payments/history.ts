@@ -28,6 +28,7 @@ export interface PaymentRow {
   purchase_type?: string | null;
   metadata?: Record<string, unknown> | null;
   created_at?: string | null;
+  failure_code?: string | null;
   failure_message?: string | null;
 }
 
@@ -116,13 +117,21 @@ export function toPaymentRecord(row: PaymentRow): PaymentRecord | null {
 /* ------------------------------------------------------------------ */
 
 /**
- * Durée au-delà de laquelle un paiement resté `pending` n'est plus une attente.
+ * Durée pendant laquelle un paiement qui n'a pas eu lieu reste visible.
  *
- * Un paiement Mobile Money se règle en minutes : le client valide sur son
- * téléphone, l'opérateur répond, pawaPay notifie. Une ligne encore `pending`
- * une heure plus tard ne décrit donc aucune attente réelle — elle décrit un
- * parcours abandonné (le client a fermé la page de paiement avant d'appuyer sur
- * « Pay », et pawaPay n'a jamais enregistré de dépôt).
+ * Deux situations, une seule durée :
+ *
+ *   - une ligne restée `pending` — le client a fermé la page de paiement avant
+ *     d'appuyer sur « Pay », pawaPay n'a jamais enregistré de dépôt, et rien ne
+ *     reviendra jamais la clore ;
+ *   - une ligne `failed` portant le code `PAYMENT_NOT_APPROVED` — le client a
+ *     refusé l'invite sur son téléphone, ou n'a pas saisi son PIN à temps.
+ *     pawaPay décrit ce code comme « the customer did not authorize the
+ *     payment » : la tentative n'a pas abouti, mais elle a bien eu lieu.
+ *
+ * Un paiement Mobile Money se règle en minutes. Une heure plus tard, aucune de
+ * ces deux lignes ne décrit une attente réelle : elles décrivent un parcours
+ * que le client a interrompu. Elles quittent alors l'historique.
  *
  * Pourquoi une durée plutôt qu'un statut : `/initiate` écrit la ligne **avant**
  * d'ouvrir la page de paiement, et rien ne reviendra jamais la clore si le
@@ -133,7 +142,22 @@ export function toPaymentRecord(row: PaymentRow): PaymentRecord | null {
  * `completed` et **réapparaît** dans l'historique, à sa date d'origine. Masquer
  * n'est pas supprimer.
  */
-export const PENDING_PAYMENT_WINDOW_MS = 60 * 60 * 1000;
+export const ABANDONED_PAYMENT_WINDOW_MS = 60 * 60 * 1000;
+
+/**
+ * Code d'échec pawaPay signifiant « le client n'a pas autorisé le paiement ».
+ *
+ * C'est le seul code de refus traité comme un abandon, et il l'est pour une
+ * raison précise : il décrit une décision du client, pas un problème technique.
+ * Les autres échecs — `INSUFFICIENT_BALANCE`, `WALLET_LIMIT_REACHED`,
+ * `PAYER_NOT_FOUND`, `AMOUNT_OUT_OF_BOUNDS`… — restent visibles sans limite de
+ * durée, parce que le client a besoin de les lire pour comprendre ce qui a
+ * bloqué : lui cacher « solde insuffisant » le laisserait sans explication.
+ *
+ * `MANUALLY_CANCELLED` n'est délibérément pas ici : pawaPay ne l'émet que pour
+ * les payouts et les remboursements, jamais pour un dépôt.
+ */
+export const REFUSED_PAYMENT_CODE = 'PAYMENT_NOT_APPROVED';
 
 /**
  * Cette ligne `payments` doit-elle apparaître dans « Mes paiements » ?
@@ -142,22 +166,28 @@ export const PENDING_PAYMENT_WINDOW_MS = 60 * 60 * 1000;
  *
  *   1. **`cancelled`** — un paiement annulé n'a jamais eu lieu. Le montrer
  *      revient à afficher une dépense qui n'existe pas, et à laisser croire au
- *      client qu'une somme est en suspens chez son opérateur. C'est la règle
- *      demandée : ce qui est annulé disparaît de son historique.
- *   2. **`pending` trop ancien** — voir `PENDING_PAYMENT_WINDOW_MS`. C'est ce
- *      qui rattrape les abandons, qu'aucun webhook ne viendra jamais clore.
+ *      client qu'une somme est en suspens chez son opérateur. Cette exclusion
+ *      ne dépend d'aucune date : elle est définitive.
+ *   2. **un abandon, une fois la fenêtre écoulée** — un `pending` trop ancien,
+ *      ou un `failed` portant `PAYMENT_NOT_APPROVED`. Voir
+ *      `ABANDONED_PAYMENT_WINDOW_MS`. C'est ce qui rattrape les parcours
+ *      interrompus, qu'aucun webhook ne viendra jamais clore.
  *
  * Ce qui reste visible, délibérément :
  *   - `completed`, évidemment ;
- *   - `failed` — un refus de l'opérateur est une information utile : le client
- *     a bien tenté de payer, et l'écran lui montre le motif. Le masquer ferait
- *     croire à un paiement qui n'a jamais été tenté ;
+ *   - les autres `failed` — un refus technique de l'opérateur est une
+ *     information utile, et l'écran en montre le motif ;
  *   - tout statut **inconnu** — on ne cache pas ce qu'on ne comprend pas. Si
  *     une valeur nouvelle apparaît en base, elle doit se voir, pas disparaître
  *     en silence.
  *
  * Une date illisible ne fait pas disparaître une ligne non plus : en cas de
  * doute on affiche, on ne supprime pas.
+ *
+ * Cette règle est **aussi écrite en SQL** dans `listPayments`, pour que
+ * `limit(30)` ne soit pas consommé par des lignes destinées à être masquées.
+ * Les deux doivent dire la même chose : c'est ce que vérifie
+ * `check:payment-visibility`.
  */
 export function isVisibleInPaymentHistory(
   row: PaymentRow,
@@ -167,11 +197,17 @@ export function isVisibleInPaymentHistory(
 
   if (status === 'cancelled') return false;
 
-  if (status === 'pending') {
-    const createdAt = row.created_at ? Date.parse(row.created_at) : NaN;
-    if (Number.isFinite(createdAt) && now - createdAt > PENDING_PAYMENT_WINDOW_MS) {
-      return false;
-    }
+  /** Un abandon reste visible le temps de la fenêtre. Date illisible = on montre. */
+  const dansLaFenetre = (createdAt: string | null | undefined): boolean => {
+    const t = createdAt ? Date.parse(createdAt) : NaN;
+    if (!Number.isFinite(t)) return true;
+    return now - t <= ABANDONED_PAYMENT_WINDOW_MS;
+  };
+
+  if (status === 'pending') return dansLaFenetre(row.created_at);
+
+  if (status === 'failed' && row.failure_code === REFUSED_PAYMENT_CODE) {
+    return dansLaFenetre(row.created_at);
   }
 
   return true;
