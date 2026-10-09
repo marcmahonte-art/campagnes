@@ -35,6 +35,7 @@
     "check:render-server": "tsc -p tools/server-render-spike/tsconfig.json && node -r ./tools/alias-hook.cjs tools/server-render-spike/build/tools/server-render-spike/spike.js",
     "check:watermark-pass": "tsc -p tools/watermark-pass-check/tsconfig.json && node -r ./tools/alias-hook.cjs tools/watermark-pass-check/build/tools/watermark-pass-check/check-watermark-pass.js && node tools/watermark-pass-check/check-pass-sql.cjs",
     "check:upsell": "node tools/watermark-upsell-check/check-upsell.cjs",
+    "check:admin": "tsc -p tools/admin-check/tsconfig.json && node -r ./tools/alias-hook.cjs tools/admin-check/build/tools/admin-check/check-admin.js && node tools/admin-check/check-admin-sql.cjs",
     "check:ui-tarifs": "node tools/tarifs-check/check-ui-tarifs.cjs",
     "check:ui-tarifs:rendu": "npm run build && node tools/tarifs-check/check-rendu-tarifs.cjs",
     "check:ui-tarifs:selecteur": "node tools/tarifs-check/check-selecteur-duree.cjs",

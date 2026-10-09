@@ -229,27 +229,17 @@ export async function confirmPayment(
   // Un paiement d'abonnement active la formule du compte.
   if (described.plan) {
     /*
-     * La durée payée est lue dans les métadonnées du paiement (figées à
-     * l'initiation) et transmise à la fonction SQL, qui en dérive la date
-     * d'échéance. C'est ce qui empêche un abonnement « 1 mois » de durer
-     * indéfiniment.
+     * La fonction SQL lit elle-même `metadata.duration` et en dérive
+     * l'échéance : on ne lui transmet donc AUCUNE durée. Un paramètre
+     * `p_duration` n'existe pas dans sa signature (migrations 0017 et 0020),
+     * et PostgREST rejette un argument surnuméraire (`PGRST202`) — la
+     * confirmation repartait alors sur le repli JavaScript, qui n'est ni
+     * atomique ni verrouillé.
      */
-    const { data: forDuration } = await admin
-      .from('payments')
-      .select('user_id, status, metadata')
-      .eq('deposit_id', depositId)
-      .maybeSingle();
-
-    const duration =
-      forDuration?.metadata && typeof forDuration.metadata.duration === 'string'
-        ? forDuration.metadata.duration
-        : null;
-
     const { error } = await admin.rpc('complete_payment_and_activate_plan', {
       p_deposit_id: depositId,
       p_provider: provider,
       p_phone: phone,
-      p_duration: duration,
     });
 
     if (error) {
@@ -259,7 +249,18 @@ export async function confirmPayment(
        * fonction — mais la garde d'idempotence devient notre relecture du
        * statut, d'où la relecture avant d'écrire.
        */
-      if (forDuration && forDuration.status !== 'completed' && described.plan) {
+      const { data: row } = await admin
+        .from('payments')
+        .select('user_id, status, metadata')
+        .eq('deposit_id', depositId)
+        .maybeSingle();
+
+      const duration =
+        row?.metadata && typeof row.metadata.duration === 'string'
+          ? row.metadata.duration
+          : null;
+
+      if (row && row.status !== 'completed' && described.plan) {
         await admin
           .from('payments')
           .update({
@@ -271,7 +272,7 @@ export async function confirmPayment(
           .eq('deposit_id', depositId);
 
         await admin.rpc('set_user_plan', {
-          p_user_id: forDuration.user_id,
+          p_user_id: row.user_id,
           p_plan: described.plan,
           p_expires_at: computeExpiry(duration, new Date()),
         });

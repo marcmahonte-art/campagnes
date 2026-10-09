@@ -63,6 +63,17 @@ export async function middleware(request: NextRequest) {
     response.headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
   }
 
+  /*
+   * L'espace d'administration n'a aucune raison d'être découvrable : un outil
+   * interne indexé devient une cible, et un moteur qui l'annonce laisse croire
+   * qu'il est public. L'en-tête le sort de l'indexation même si une page
+   * oubliait ses métadonnées.
+   */
+  if (pathname.startsWith('/super-admin') || pathname.startsWith('/api/admin/')) {
+    response.headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
+    response.headers.set('Cache-Control', 'private, no-store, max-age=0');
+  }
+
   // 3. Session Supabase — uniquement si le projet est configuré.
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
