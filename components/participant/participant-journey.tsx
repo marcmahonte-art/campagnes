@@ -685,7 +685,22 @@ export function ParticipantJourney({
         </div>
       </header>
 
-      <main className={cn('container-shell py-4 md:py-8', showPassPromo && 'pb-24 md:pb-8')}>
+      <main
+        className={cn(
+          'container-shell py-4 md:py-8',
+          /*
+           * Réserve la place du badge promo flottant (`WatermarkPassButton`),
+           * qui est en `position: fixed` et ne pousse donc rien.
+           *
+           * La valeur suit la **taille du badge**, pas l'inverse : 128 px de
+           * haut + 16 px de marge basse sur mobile, 160 px + 16 px à partir de
+           * `md`. Changer `size-32`/`md:size-40` dans le composant oblige à
+           * changer ces deux valeurs, sinon le badge recouvre le bloc
+           * « Vous organisez votre propre campagne ? » en fin de page.
+           */
+          showPassPromo && 'pb-40 md:pb-48',
+        )}
+      >
         <div className="mx-auto max-w-2xl">
           {/* ---------------- Titre ---------------- */}
           <div className="text-center">
@@ -1612,8 +1627,8 @@ export function ParticipantJourney({
         La bulle d'achat du pass. Montée **à la racine**, hors du flux : elle
         reste ancrée en bas de l'écran pendant tout le défilement, au lieu de
         disparaître dès que le participant descend composer son visuel. Le
-        décalage `pb-24` du `main` ci-dessus lui laisse la place, pour qu'elle ne
-        recouvre jamais le dernier bloc de la page.
+        décalage `pb-40 md:pb-48` du `main` ci-dessus lui laisse la place, pour
+        qu'elle ne recouvre jamais le dernier bloc de la page.
       */}
       {showPassPromo && <WatermarkPassButton pass={pass} />}
     </div>

@@ -76,11 +76,27 @@ const config: Config = {
           '0%, 100%': { transform: 'translateY(0)' },
           '50%': { transform: 'translateY(-7%)' },
         },
+        /*
+         * Le badge promo flottant de la page participant.
+         *
+         * Un vrai rebond, pas une flottaison : montée vive, atterrissage, petite
+         * reprise, puis repos. Le temps mort (55 % → 100 %) est délibéré — une
+         * animation qui boucle sans répit devient agaçante sur une page qu'un
+         * participant lit plusieurs minutes en composant son visuel. Il doit
+         * attirer l'œil, pas le retenir.
+         */
+        'bounce-soft': {
+          '0%, 55%, 100%': { transform: 'translateY(0)' },
+          '18%': { transform: 'translateY(-8px)' },
+          '32%': { transform: 'translateY(0)' },
+          '41%': { transform: 'translateY(-3px)' },
+        },
       },
       animation: {
         'gradient-drift': 'gradient-drift 12s ease-in-out infinite',
         'fade-up': 'fade-up 250ms cubic-bezier(.2,.8,.2,1) both',
         float: 'float 2.6s cubic-bezier(.2,.8,.2,1) infinite',
+        'bounce-soft': 'bounce-soft 3.2s cubic-bezier(.2,.8,.2,1) infinite',
       },
     },
   },

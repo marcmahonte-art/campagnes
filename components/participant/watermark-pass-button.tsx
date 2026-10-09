@@ -19,10 +19,21 @@ import type { WatermarkPassState } from '@/components/participant/use-watermark-
  *      d'export : « votre pass est actif, il reste X h », ou « paiement en cours
  *      de vérification ». C'est une information, pas une sollicitation ; elle
  *      n'apparaît que si l'un de ces deux états est vrai.
- *   2. `WatermarkPassButton` — l'**offre**, en bulle flottante ancrée en bas à
+ *   2. `WatermarkPassButton` — l'**offre**, en badge flottant ancré en bas à
  *      droite, visible pendant toute la visite. Un clic ouvre la fenêtre du
  *      produit (prix, durée, ce qui est payé), dont le bouton « Payer » mène au
  *      choix du pays puis à la page de paiement.
+ *
+ *      Le visuel est une **image** (`public/promo-badge-24h.png`), pas du texte
+ *      composé. Conséquence à connaître : elle porte la promesse mais **pas le
+ *      prix**. C'est le seul endroit du parcours où le montant n'est pas visible
+ *      — il reste écrit noir sur blanc dans la fenêtre du produit avant tout
+ *      choix de pays, et l'`aria-label` du badge l'annonce aussi. Modifier le
+ *      prix dans `lib/pass-config.ts` ne met donc **pas** ce visuel à jour : il
+ *      faut réexporter l'image.
+ *
+ *      La source de ce visuel vit hors du dépôt (`docs/participant/promo/`, non
+ *      versionné) ; seule la version réduite est publiée dans `public/`.
  *
  * Pourquoi séparer les deux : une carte d'offre insérée dans le flux se perd
  * dès que le participant fait défiler la page pour composer son visuel, et elle
@@ -389,36 +400,53 @@ export function WatermarkPassButton({ pass }: { pass: PassState }) {
     <>
       {mounted &&
         createPortal(
-          <button
-            type="button"
-            onClick={() => {
-              setError(null);
-              setOfferOpen(true);
-            }}
-            aria-haspopup="dialog"
-            className={cn(
-              'fixed right-4 z-40 flex max-w-[calc(100vw-2rem)] items-center gap-2.5 rounded-pill',
-              // Le dégradé est réservé au CTA premium : cette bulle *est* ce CTA.
-              'bg-brand-gradient py-2 pl-2 pr-4 text-left text-white shadow-lg',
-              'transition-transform duration-200 ease-brand hover:scale-[1.02] active:scale-[.98]',
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple focus-visible:ring-offset-2',
-              'animate-fade-up motion-reduce:animate-none',
-            )}
+          /*
+           * L'entrée (`fade-up`) et le rebond (`bounce-soft`) animent tous deux
+           * `transform` : sur un même nœud, la dernière déclarée écraserait
+           * l'autre. Le conteneur porte donc l'entrée, le bouton porte le
+           * rebond — deux nœuds, deux animations, aucune interférence.
+           */
+          <div
+            className="fixed right-4 z-40 animate-fade-up motion-reduce:animate-none"
             // Au-dessus de la barre gestuelle iOS, sans coller au bord.
             style={{ bottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))' }}
           >
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-pill bg-white/20">
-              <Sparkles className="size-4" aria-hidden />
-            </span>
-            <span className="min-w-0 leading-tight">
-              <span className="block text-[10px] font-semibold uppercase tracking-[0.14em] text-white/85">
-                Promo
-              </span>
-              <span className="block truncate text-[13px] font-semibold">
-                Sans filigrane {PASS_DURATION_HOURS} h · {formatPassPrice()}
-              </span>
-            </span>
-          </button>,
+            <button
+              type="button"
+              onClick={() => {
+                setError(null);
+                setOfferOpen(true);
+              }}
+              aria-haspopup="dialog"
+              /*
+               * Le visuel est une image : le texte qu'elle contient n'existe pas
+               * pour un lecteur d'écran, et disparaît si les images ne se
+               * chargent pas. L'étiquette porte donc l'offre en toutes lettres,
+               * prix compris — le montant reste annoncé avant toute redirection.
+               */
+              aria-label={`Promo : supprimer le filigrane pendant ${PASS_DURATION_HOURS} h pour ${formatPassPrice()}`}
+              className={cn(
+                'block size-32 rounded-full md:size-40',
+                'transition-transform duration-200 ease-brand hover:scale-[1.04] active:scale-[.96]',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple focus-visible:ring-offset-2',
+                /*
+                 * Le rebond s'interrompt dès que le pointeur vise le badge :
+                 * une cible qui continue de bouger au moment du clic se rate.
+                 */
+                'animate-bounce-soft hover:[animation-play-state:paused] motion-reduce:animate-none',
+              )}
+            >
+              <img
+                src="/promo-badge-24h.png"
+                // Décoratif : l'offre est déjà portée par `aria-label`.
+                alt=""
+                width={480}
+                height={471}
+                className="size-full drop-shadow-lg"
+                decoding="async"
+              />
+            </button>
+          </div>,
           document.body,
         )}
 
