@@ -39,6 +39,8 @@ import {
   SHAPES,
   STROKE_DEFAULT_COLOR,
   STROKE_STEPS,
+  previewPath,
+  previewViewBox,
   shapeSpec,
   strokeStepLabel,
 } from '@/lib/shapes';
@@ -867,11 +869,14 @@ export function LayerPanel({
 /* ------------------------------------------------------------------ */
 
 /**
- * Les sept formes, en boutons.
+ * Toutes les formes du catalogue, en boutons.
  *
  * Chaque bouton **dessine** la forme qu'il pose : le tracé vient de
  * `lib/shapes.ts`, la même liste qui alimente le rendu. On ne montre donc jamais
  * une icône qui ne correspondrait pas exactement au résultat.
+ *
+ * Une forme tracée apporte sa propre emprise, et l'aperçu la respecte : une
+ * vague garde son rapport large, elle ne se déforme pas pour remplir la case.
  */
 function ShapePalette({
   value,
@@ -902,8 +907,8 @@ function ShapePalette({
               : 'border-gray-200 bg-white text-gray-600 hover:border-ink hover:text-ink',
           )}
         >
-          <svg viewBox="0 0 24 24" className="size-5" aria-hidden>
-            <path d={shape.preview} fill="currentColor" />
+          <svg viewBox={previewViewBox(shape)} className="size-5" aria-hidden>
+            <path d={previewPath(shape)} fill="currentColor" />
           </svg>
         </button>
       ))}

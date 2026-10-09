@@ -11,11 +11,15 @@
  *   2. Les assets publics se chargent-ils depuis le disque ?
  *   3. Le badge partagé (`lib/watermark.addBadge`) rend-il son **logo** ?
  *   4. Le pipeline complet `exportPng()` tourne-t-il, avec et sans badge ?
+ *   5. Une forme **tracée** (chemin de courbes) se dessine-t-elle vraiment, ou
+ *      disparaît-elle en silence ? C'est la seule couverture de cette famille
+ *      sur le chemin du rendu payant (`/api/passes/export`).
  *
  * Si le 4 passe, le rendu serveur réutilise **le même code** que l'aperçu — la
  * règle du projet est respectée et le pass devient défendable.
  *
- * Sorties : `out-raw.png`, `out-badge.png`, `out-free.png`, `out-creator.png`.
+ * Sorties : `out-raw.png`, `out-badge.png`, `out-free.png`, `out-creator.png`,
+ * `out-traced.png`.
  */
 
 import { writeFileSync, existsSync, statSync } from 'node:fs';
@@ -192,6 +196,53 @@ async function testPipeline() {
       'les deux rendus diffèrent (le badge change le fichier)',
       a !== b,
       `free ${a} octets vs creator ${b} octets`,
+    );
+  }
+
+  /*
+   * Une forme tracée — un chemin de courbes, pas un polygone — doit se dessiner
+   * côté serveur, et pas disparaître en silence. On rend le même cadre avec et
+   * sans elle : si les deux fichiers sortent identiques, c'est que le chemin
+   * n'a rien produit, et un participant qui a payé recevrait un visuel sans sa
+   * forme. La comparaison est le seul verdict fiable : un `Path` qui échoue à
+   * s'analyser ne lève pas, il ne dessine simplement rien.
+   */
+  const tracedLayer = {
+    id: 'shp-traced',
+    type: 'shape',
+    kind: 'hill',
+    x: 100,
+    y: 700,
+    w: 800,
+    h: 300,
+    z: 30,
+    rotation: 0,
+    opacity: 1,
+    fill: '#111111',
+    stroke: 'transparent',
+    strokeWidth: 0,
+    radius: 0,
+  };
+
+  try {
+    const withTraced = await exportPng({
+      descriptor: { ...descriptor, layers: [...descriptor.layers, tracedLayer] },
+      plan: 'creator',
+    });
+    const without = await exportPng({ descriptor, plan: 'creator' });
+    const bytes = writePng('out-traced.png', withTraced);
+    record(
+      'une forme tracée se dessine côté serveur',
+      withTraced !== without && bytes > 1000,
+      withTraced === without
+        ? `${bytes} octets — fichier IDENTIQUE à celui sans la forme : rien n'a été dessiné`
+        : `${bytes} octets — le fichier change bien quand la forme est présente`,
+    );
+  } catch (err) {
+    record(
+      'une forme tracée se dessine côté serveur',
+      false,
+      err instanceof Error ? err.message : String(err),
     );
   }
 }

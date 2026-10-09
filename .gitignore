@@ -49,6 +49,11 @@ docs/**/*.jpeg
 docs/siao/
 docs/echantillon/
 
+# Sources de design de la bulle promo (EPS, AI, PDF) : brouillons de production
+# de plusieurs dizaines de Mo, sans rapport avec le code. Le rendu retenu vit
+# dans le composant ; ces fichiers ne sont pas des livrables.
+docs/participant/promo/
+
 # Archives de polices : volumineuses, régénérables depuis leur source.
 *.zip
 

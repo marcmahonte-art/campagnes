@@ -382,6 +382,33 @@ export function FrameEditor({
     canvas.requestRenderAll();
   }, [locked, preview]);
 
+  /**
+   * Rend un calque réellement actif sur le canevas, à partir de son identifiant.
+   *
+   * `buildObjects()` reconstruit la scène de zéro, et `canvas.clear()` efface
+   * au passage l'élément actif. Sans ce rattrapage, le panneau de réglages
+   * s'ouvrirait sur un calque que Fabric ne considère plus comme sélectionné :
+   * `patchSelected` sortirait aussitôt, et la forme qu'on vient de poser
+   * semblerait insensible à tous les réglages — couleur, contour, nature —
+   * alors qu'elle est simplement inatteignable.
+   *
+   * On ne rend actif que ce que l'utilisateur peut attraper : un calque masqué
+   * resterait un piège, le panneau afficherait des réglages sans prise.
+   */
+  const selectOnCanvas = useCallback((id: string | null) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    if (!id) {
+      canvas.discardActiveObject();
+      canvas.requestRenderAll();
+      return;
+    }
+    const object = (canvas.getObjects() as TaggedObject[]).find((obj) => obj.layerId === id);
+    if (!object || object.visible === false) return;
+    canvas.setActiveObject(object);
+    canvas.requestRenderAll();
+  }, []);
+
   /* ---------------- Construction des objets ---------------- */
   const buildObjects = useCallback(
     async (source: Descriptor) => {
@@ -854,6 +881,7 @@ export function FrameEditor({
       const next = { ...descriptor, layers: [...descriptor.layers, layer] };
       await buildObjects(next);
       applyLocks();
+      selectOnCanvas(layer.id);
       fitToView();
       setSelectedId(layer.id);
       setTab('cadre');
@@ -885,6 +913,7 @@ export function FrameEditor({
     const next = { ...descriptor, layers: [...descriptor.layers, layer] };
     await buildObjects(next);
     applyLocks();
+    selectOnCanvas(layer.id);
     fitToView();
     setSelectedId(layer.id);
     setTab('cadre');
@@ -913,6 +942,7 @@ export function FrameEditor({
     const next = { ...descriptor, layers: [...descriptor.layers, layer] };
     await buildObjects(next);
     applyLocks();
+    selectOnCanvas(layer.id);
     fitToView();
     setSelectedId(layer.id);
     setTab('cadre');
@@ -1208,17 +1238,11 @@ export function FrameEditor({
 
       // Le clone devient le calque sélectionné : c'est lui qu'on vient de créer,
       // et c'est sur lui qu'on enchaîne les réglages.
-      const created = (canvasRef.current?.getObjects() as TaggedObject[] | undefined)?.find(
-        (obj) => obj.layerId === copy.id,
-      );
-      if (created) {
-        canvasRef.current?.setActiveObject(created);
-        canvasRef.current?.requestRenderAll();
-      }
+      selectOnCanvas(copy.id);
       setSelectedId(copy.id);
       onChange(next);
     },
-    [applyLocks, buildObjects, layerLimitReached, onChange, plan, selectedId],
+    [applyLocks, buildObjects, layerLimitReached, onChange, plan, selectOnCanvas, selectedId],
   );
 
   /**
@@ -1247,10 +1271,14 @@ export function FrameEditor({
 
       await buildObjects(next);
       applyLocks();
+      // Le calque masqué ne peut pas être actif — on ne sélectionne pas ce
+      // qu'on ne voit pas. Le panneau reste néanmoins sur lui, pour que le
+      // bouton « Afficher » soit à portée.
+      selectOnCanvas(id);
       setSelectedId(id);
       onChange(next);
     },
-    [applyLocks, buildObjects, onChange],
+    [applyLocks, buildObjects, onChange, selectOnCanvas],
   );
 
   /**
@@ -1466,13 +1494,7 @@ export function FrameEditor({
           if (isCompactViewport()) setSheet(true);
           // La sélection doit exister sur le canvas, sinon le panneau affiche
           // des réglages pour un calque que l'utilisateur ne voit pas.
-          const object = (canvasRef.current?.getObjects() as TaggedObject[] | undefined)?.find(
-            (obj) => obj.layerId === id,
-          );
-          if (object && object.visible !== false) {
-            canvasRef.current?.setActiveObject(object);
-            canvasRef.current?.requestRenderAll();
-          }
+          selectOnCanvas(id);
         }}
         onToggleVisible={(id) => void toggleLayerVisible(id)}
         onToggleLock={toggleLayerLocked}

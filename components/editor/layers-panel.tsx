@@ -13,7 +13,14 @@ import {
   Type,
   Unlock,
 } from 'lucide-react';
-import { SHAPES, shapeSpec } from '@/lib/shapes';
+import {
+  PREVIEW_BOX,
+  SHAPES,
+  previewPath,
+  previewStrokeWidth,
+  previewViewBox,
+  shapeSpec,
+} from '@/lib/shapes';
 import { cn } from '@/lib/cn';
 import type { Layer } from '@/lib/types';
 
@@ -63,22 +70,30 @@ function layerIcon(layer: Layer) {
   }
   if (layer.type === 'shape') {
     const spec = SHAPES.find((shape) => shape.value === layer.kind);
+    /*
+     * L'aperçu d'une forme tracée a sa propre emprise, qui peut faire plusieurs
+     * centaines d'unités. On rend donc le tracé **dans son repère**, et le
+     * contour est ramené à la même épaisseur apparente que celui des
+     * primitives : sinon un liseré de 2 unités serait invisible sur un tracé de
+     * 800, et la forme évidée disparaîtrait de la liste.
+     */
+    const path = spec ? previewPath(spec) : '';
     return (
       <svg
-        viewBox="0 0 24 24"
+        viewBox={spec ? previewViewBox(spec) : PREVIEW_BOX}
         className="size-3.5 shrink-0"
         style={{ color: layer.fill === 'transparent' ? '#9CA3AF' : layer.fill }}
         aria-hidden
       >
         {/* Le contour est tracé par-dessus : une forme évidée doit rester
             lisible, sinon elle disparaîtrait de la liste. */}
-        <path d={spec?.preview ?? ''} fill="currentColor" />
-        {layer.strokeWidth > 0 && layer.stroke !== 'transparent' && (
+        <path d={path} fill="currentColor" />
+        {spec && layer.strokeWidth > 0 && layer.stroke !== 'transparent' && (
           <path
-            d={spec?.preview ?? ''}
+            d={path}
             fill="none"
             stroke={layer.stroke}
-            strokeWidth={2}
+            strokeWidth={previewStrokeWidth(spec)}
             strokeLinejoin="round"
           />
         )}
