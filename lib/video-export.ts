@@ -14,7 +14,7 @@
 import { ratioSpec } from './ratios';
 import { createTextObject } from './fabric-text';
 import { createShapeObject } from './fabric-shape';
-import { createImageObject } from './fabric-image';
+import { createImageObject, createVideoObject } from './fabric-image';
 import { DEFAULT_MOTION_DURATION, sampleAt, type MotionPlan } from './motion';
 import { hasFeature, type PlanId } from './plans';
 import { PARTICIPANT_PHOTO_ID, PARTICIPANT_TEXT_ID, effectiveMotion, photoZone } from './descriptor';
@@ -71,7 +71,22 @@ interface RenderTarget {
   dispose: () => void;
 }
 
-async function buildRenderTarget(descriptor: Descriptor): Promise<RenderTarget> {
+interface RenderTargetOptions {
+  /**
+   * Élément vidéo à dessiner à la place de la photo du participant.
+   *
+   * Le calque garde sa géométrie — il vient du descripteur composé — mais sa
+   * source devient un média vivant. C'est la **seule** différence entre un rendu
+   * photo et un rendu vidéo, ce qui garantit que le cadre, la zone, le texte et
+   * le filigrane se comportent de la même façon dans les deux cas.
+   */
+  photoElement?: HTMLVideoElement | null;
+}
+
+async function buildRenderTarget(
+  descriptor: Descriptor,
+  options: RenderTargetOptions = {},
+): Promise<RenderTarget> {
   const { StaticCanvas } = await importFabric();
   const spec = ratioSpec(descriptor.ratio);
 
@@ -125,6 +140,18 @@ async function buildRenderTarget(descriptor: Descriptor): Promise<RenderTarget> 
         const text = await createTextObject(layer, { visible: layer.visible !== false });
         canvas.add(text);
         objects.push(text);
+      } else if (options.photoElement && layer.id === PARTICIPANT_PHOTO_ID) {
+        /*
+         * Le média du participant est une vidéo : on la dessine à la place de la
+         * photo, dans la même emprise. La découpe de zone est identique, donc le
+         * résultat se comporte comme un cadre photo à zone.
+         */
+        const video = await createVideoObject(layer, options.photoElement, {
+          clip: clipPhoto ? zone : null,
+          visible: layer.visible !== false,
+        });
+        canvas.add(video);
+        objects.push(video);
       } else {
         if (!layer.src) continue;
         /*
@@ -378,6 +405,364 @@ export async function exportVideo(options: ExportOptions): Promise<VideoResult> 
   } finally {
     resetToBase(target);
     target.dispose();
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Vidéo du participant                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Débit d'encodage du clip.
+ *
+ * Plus élevé que celui de l'animation de cadre : une vidéo filmée contient
+ * beaucoup plus de détail qu'un cadre animé, et un débit trop bas se voit
+ * immédiatement sur un visage en mouvement. Il reste un plafond : la qualité
+ * finale ne peut de toute façon pas dépasser celle de la source.
+ */
+const CLIP_VIDEO_BITRATE = 12_000_000;
+
+/** Délai maximal accordé à la lecture d'une image précise. */
+const SEEK_TIMEOUT_MS = 5_000;
+
+/** Source vidéo du participant, telle que lue par `lib/video-clip.ts`. */
+export interface VideoClipSource {
+  /** URL d'objet locale : le fichier ne quitte jamais l'appareil. */
+  src: string;
+  width: number;
+  height: number;
+  hasAudio: boolean;
+}
+
+export interface VideoClipOptions extends ExportOptions {
+  clip: VideoClipSource;
+  /** Début de l'extrait retenu, en millisecondes. */
+  clipStartMs: number;
+  /** Durée de l'extrait retenu, en millisecondes. */
+  clipDurationMs: number;
+}
+
+/**
+ * Le conteneur du clip.
+ *
+ * Le MP4 vient **en premier**, contrairement à l'export d'animation : un
+ * participant qui télécharge une vidéo l'envoie à quelqu'un, la republie ou la
+ * remonte dans une application de montage. Un WebM y serait refusé la moitié du
+ * temps. Le WebM reste le repli quand le navigateur ne sait pas écrire de MP4.
+ */
+function pickClipMimeType(): { mimeType: string; extension: 'webm' | 'mp4' } {
+  const candidates: Array<{ mimeType: string; extension: 'webm' | 'mp4' }> = [
+    { mimeType: 'video/mp4;codecs=avc1.42E01E,mp4a.40.2', extension: 'mp4' },
+    { mimeType: 'video/mp4', extension: 'mp4' },
+    { mimeType: 'video/webm;codecs=vp9,opus', extension: 'webm' },
+    { mimeType: 'video/webm;codecs=vp8,opus', extension: 'webm' },
+    { mimeType: 'video/webm', extension: 'webm' },
+  ];
+
+  const supported =
+    typeof MediaRecorder !== 'undefined' && typeof MediaRecorder.isTypeSupported === 'function'
+      ? candidates.find((c) => MediaRecorder.isTypeSupported(c.mimeType))
+      : undefined;
+
+  return supported ?? candidates[1];
+}
+
+/** Ouvre un élément média hors écran prêt à être dessiné et joué. */
+function openClipSource(src: string): Promise<HTMLVideoElement> {
+  return new Promise<HTMLVideoElement>((resolve, reject) => {
+    const video = document.createElement('video');
+    video.src = src;
+    video.preload = 'auto';
+    video.playsInline = true;
+    video.crossOrigin = 'anonymous';
+    // Volontairement non coupé : un élément muet ne fournit aucun échantillon à
+    // capter. L'audio n'est pas rendu audible pour autant — le graphe Web Audio
+    // de `captureAudio()` ne le renvoie jamais vers les haut-parleurs.
+    video.muted = false;
+    video.style.position = 'absolute';
+    video.style.width = '0';
+    video.style.height = '0';
+    video.style.opacity = '0';
+    video.style.pointerEvents = 'none';
+
+    let settled = false;
+    const ok = () => {
+      if (settled) return;
+      settled = true;
+      resolve(video);
+    };
+    const ko = () => {
+      if (settled) return;
+      settled = true;
+      video.remove();
+      reject(new Error('Cette vidéo ne peut pas être relue pour la composition. Essayez un autre fichier.'));
+    };
+
+    video.addEventListener('loadeddata', ok, { once: true });
+    video.addEventListener('error', ko, { once: true });
+
+    document.body.appendChild(video);
+    video.load();
+  });
+}
+
+/** Place la lecture sur une image précise, sans bloquer si l'événement se perd. */
+function seekTo(video: HTMLVideoElement, ms: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      video.removeEventListener('seeked', done);
+      resolve();
+    };
+
+    const timer = setTimeout(done, SEEK_TIMEOUT_MS);
+    video.addEventListener('seeked', done);
+
+    try {
+      video.currentTime = Math.max(0, ms) / 1000;
+    } catch {
+      done();
+    }
+  });
+}
+
+/**
+ * Récupère la piste audio de la source.
+ *
+ * Deux chemins, dans cet ordre :
+ *
+ * 1. **Web Audio** — la source est branchée sur un `MediaStreamDestination`, et
+ *    n'est *pas* reliée à la sortie du contexte. Le participant n'entend donc
+ *    rien pendant le rendu, tout en produisant une piste exploitable. C'est le
+ *    chemin le plus largement disponible.
+ * 2. **`captureStream()` sur l'élément** — plus direct, mais absent de certains
+ *    navigateurs.
+ *
+ * Si aucun ne répond, on rend une vidéo muette plutôt que d'échouer : mieux vaut
+ * un clip sans son qu'aucun clip. Le participant en est informé par l'appelant.
+ */
+async function captureAudio(
+  video: HTMLVideoElement,
+): Promise<{ context: AudioContext | null; tracks: MediaStreamTrack[] }> {
+  const Ctor =
+    typeof window !== 'undefined'
+      ? window.AudioContext ??
+        (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+      : undefined;
+
+  if (Ctor) {
+    try {
+      const context = new Ctor();
+      const source = context.createMediaElementSource(video);
+      const destination = context.createMediaStreamDestination();
+      source.connect(destination);
+      await context.resume().catch(() => undefined);
+
+      const tracks = destination.stream.getAudioTracks();
+      if (tracks.length > 0) return { context, tracks };
+      await context.close().catch(() => undefined);
+    } catch {
+      /* repli ci-dessous */
+    }
+  }
+
+  const capture = (
+    video as HTMLVideoElement & {
+      captureStream?: () => MediaStream;
+      mozCaptureStream?: () => MediaStream;
+    }
+  ).captureStream ??
+    (video as HTMLVideoElement & { mozCaptureStream?: () => MediaStream }).mozCaptureStream;
+
+  if (capture) {
+    try {
+      const stream = capture.call(video);
+      return { context: null, tracks: stream.getAudioTracks() };
+    } catch {
+      /* rendu muet */
+    }
+  }
+
+  return { context: null, tracks: [] };
+}
+
+/**
+ * Compose la vidéo du participant avec le cadre, puis la rend téléchargeable.
+ *
+ * Le principe est celui de tout le produit : **le média ne quitte pas
+ * l'appareil**. La vidéo est lue depuis une URL d'objet locale, dessinée image
+ * par image dans un canvas hors écran à la résolution native du format, et
+ * enregistrée sur place. Aucun téléversement, aucun traitement serveur, aucune
+ * conservation.
+ *
+ * L'animation du cadre, quand il en a une, est rejouée par le même Motion Engine
+ * que l'aperçu (`sampleAt`), à partir du **début de l'extrait** : le cadre se
+ * comporte donc de la même façon, que le participant ait gardé le clip entier ou
+ * choisi un passage plus loin dans sa vidéo.
+ */
+export async function exportVideoClip(options: VideoClipOptions): Promise<VideoResult> {
+  const { descriptor, plan, clip } = options;
+  const fps = options.fps ?? DEFAULT_FPS;
+
+  if (typeof MediaRecorder === 'undefined') {
+    throw new Error("Votre navigateur ne sait pas produire de vidéo.");
+  }
+
+  const video = await openClipSource(clip.src);
+
+  /*
+   * Si le canvas de rendu ne peut pas être construit, l'élément média n'a plus
+   * de raison d'exister : on le libère ici, sinon chaque tentative échouée
+   * laisserait un décodeur ouvert et une URL d'objet retenue.
+   */
+  let target: RenderTarget;
+  try {
+    target = await buildRenderTarget(descriptor, { photoElement: video });
+  } catch (error) {
+    video.removeAttribute('src');
+    try {
+      video.load();
+    } catch {
+      /* élément déjà détaché */
+    }
+    video.remove();
+    throw error;
+  }
+
+  let audioContext: AudioContext | null = null;
+  let stream: MediaStream | null = null;
+  let recorder: MediaRecorder | null = null;
+
+  try {
+    resetToBase(target);
+    if (!hasFeature(plan, 'no_watermark')) await addWatermark(target);
+    bringParticipantTextToFront(target);
+    target.canvas.renderAll();
+
+    if (!target.element) throw new Error("La vidéo n'est produite que dans le navigateur.");
+
+    const { mimeType, extension } = pickClipMimeType();
+    const canvasStream = target.element.captureStream(fps);
+
+    let audioTracks: MediaStreamTrack[] = [];
+    if (clip.hasAudio) {
+      const captured = await captureAudio(video);
+      audioContext = captured.context;
+      audioTracks = captured.tracks;
+    }
+
+    stream = new MediaStream([...canvasStream.getVideoTracks(), ...audioTracks]);
+    recorder = new MediaRecorder(stream, {
+      mimeType,
+      videoBitsPerSecond: CLIP_VIDEO_BITRATE,
+    });
+
+    const chunks: BlobPart[] = [];
+    recorder.ondataavailable = (event) => {
+      if (event.data && event.data.size > 0) chunks.push(event.data);
+    };
+    const active = recorder;
+    const stopped = new Promise<void>((resolve) => {
+      active.onstop = () => resolve();
+    });
+
+    await seekTo(video, options.clipStartMs);
+    const endMs = options.clipStartMs + options.clipDurationMs;
+
+    active.start();
+    /*
+     * La lecture est le moteur du rendu : sans elle, il n'y a pas d'images.
+     * Les navigateurs peuvent la refuser (politique d'autoplay, économie
+     * d'énergie) — on le dit alors clairement plutôt que de laisser remonter un
+     * message interne incompréhensible, et surtout plutôt que de livrer une
+     * vidéo vide.
+     */
+    try {
+      await video.play();
+    } catch {
+      throw new Error(
+        'La lecture de votre vidéo a été bloquée par le navigateur. Relancez le téléchargement.',
+      );
+    }
+
+    const motion = effectiveMotion(descriptor);
+
+    await new Promise<void>((resolve, reject) => {
+      const tick = () => {
+        if (options.signal?.aborted) {
+          reject(new DOMException('Export interrompu.', 'AbortError'));
+          return;
+        }
+
+        const positionMs = video.currentTime * 1000;
+        const elapsed = Math.min(positionMs, endMs) - options.clipStartMs;
+
+        if (motion) applyMotion(target, motion, Math.max(0, elapsed));
+        target.canvas.renderAll();
+        options.onProgress?.({
+          ratio: Math.min(1, Math.max(0, elapsed / Math.max(1, options.clipDurationMs))),
+        });
+
+        if (positionMs >= endMs || video.ended) {
+          resolve();
+          return;
+        }
+        requestAnimationFrame(tick);
+      };
+
+      requestAnimationFrame(tick);
+    });
+
+    video.pause();
+    // Laisse la dernière image entrer dans le flux avant de couper.
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    active.stop();
+    await stopped;
+
+    options.onProgress?.({ ratio: 1 });
+
+    return { blob: new Blob(chunks, { type: mimeType }), extension, mimeType };
+  } finally {
+    try {
+      video.pause();
+    } catch {
+      /* l'élément peut déjà être détaché */
+    }
+    if (recorder && recorder.state !== 'inactive') {
+      try {
+        recorder.stop();
+      } catch {
+        /* déjà arrêté */
+      }
+    }
+    stream?.getTracks().forEach((track) => track.stop());
+    if (audioContext) {
+      try {
+        await audioContext.close();
+      } catch {
+        /* contexte déjà fermé */
+      }
+    }
+
+    /*
+     * Le canvas est libéré **avant** l'élément média : `dispose()` détruit
+     * l'objet Fabric qui porte encore une référence à la vidéo. Détacher la
+     * source en premier laisserait cet objet pointer sur un média vidé de son
+     * `src`, ce que Fabric ne sait pas distinguer d'une image cassée.
+     */
+    resetToBase(target);
+    target.dispose();
+
+    video.removeAttribute('src');
+    try {
+      video.load();
+    } catch {
+      /* élément déjà détaché */
+    }
+    video.remove();
   }
 }
 

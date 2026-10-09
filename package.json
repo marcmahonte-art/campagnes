@@ -13,6 +13,7 @@
     "check:text": "tsc -p tools/text-check/tsconfig.json && node tools/text-check/build/tools/text-check/check-text.js",
     "check:text-geometry": "tsc -p tools/text-geometry-check/tsconfig.json && node tools/text-geometry-check/run.js",
     "check:participant": "tsc -p tools/participant-check/tsconfig.json && node tools/participant-check/build/tools/participant-check/check-participant.js",
+    "check:video-clip": "tsc -p tools/video-clip-check/tsconfig.json && node tools/video-clip-check/build/tools/video-clip-check/check-video-clip.js",
     "check:history": "tsc -p tools/history-check/tsconfig.json && node tools/history-check/build/tools/history-check/check-history.js",
     "check:watermark": "tsc -p tools/watermark-check/tsconfig.json && node -r ./tools/alias-hook.cjs tools/watermark-check/build/tools/watermark-check/check-watermark.js",
     "check:templates": "tsc -p tools/templates-check/tsconfig.json && node -r ./tools/alias-hook.cjs tools/templates-check/build/tools/templates-check/check-templates.js",

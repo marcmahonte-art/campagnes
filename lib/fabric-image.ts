@@ -41,6 +41,101 @@ export interface ImageObjectOptions {
   visible?: boolean;
 }
 
+/**
+ * L'objet Fabric qui porte la **vidéo** du participant.
+ *
+ * Il reçoit exactement la même géométrie qu'un calque image — mêmes `x`, `y`,
+ * `w`, `h`, `z`, même découpe de zone — parce que le placement du participant
+ * ne doit pas dépendre de la nature de son média. Seule la source diffère : ici
+ * c'est un élément `<video>` vivant, dont Fabric redessine l'image courante.
+ *
+ * Aucun filtre photo n'est appliqué : les filtres du parcours photo opèrent sur
+ * une image immuable, alors qu'ici les pixels changent à chaque image. Les
+ * proposer sans pouvoir les garantir à l'export serait exactement la divergence
+ * que ce module existe pour empêcher.
+ */
+export async function createVideoObject(
+  layer: ImageLayer,
+  element: HTMLVideoElement,
+  options: Pick<ImageObjectOptions, 'clip' | 'visible' | 'interactive'> = {},
+): Promise<FabricImage> {
+  const { FabricImage: FabricImageClass, Rect } = await importFabric();
+
+  const naturalWidth = element.videoWidth || layer.w;
+  const naturalHeight = element.videoHeight || layer.h;
+
+  /*
+   * Fabric mesure une source par `naturalWidth`, puis par `width`. Un `<video>`
+   * ne renseigne correctement ni l'une ni l'autre : `naturalWidth` n'existe pas
+   * sur un média, et `width` renvoie l'attribut de mise en page, absent par
+   * défaut.
+   *
+   * Sans ces deux lignes, `drawImage()` recevrait un rectangle source **vide**
+   * (`sW = min(w, 0)`), et la vidéo ne serait jamais dessinée — ni dans
+   * l'aperçu, ni dans le fichier. Ce n'est pas un détail de mise en page : c'est
+   * la condition pour que l'image existe.
+   */
+  element.width = naturalWidth;
+  element.height = naturalHeight;
+
+  const video = new FabricImageClass(element, {
+    left: layer.x,
+    top: layer.y,
+    angle: layer.rotation,
+    opacity: layer.opacity,
+    originX: 'left',
+    originY: 'top',
+    width: naturalWidth,
+    height: naturalHeight,
+    // Voir le commentaire sur `shouldCache` ci-dessous.
+    objectCaching: false,
+    ...(options.interactive
+      ? {
+          selectable: true,
+          evented: true,
+          hasControls: false,
+          hasBorders: false,
+          lockRotation: true,
+          hoverCursor: 'grab',
+          moveCursor: 'grabbing',
+        }
+      : { selectable: false, evented: false }),
+  });
+
+  /*
+   * Un objet qui porte un `clipPath` est mis en cache par Fabric, et ce cache
+   * n'est redessiné que lorsqu'il est marqué « sale ». Pour une vidéo, rien ne le
+   * marque jamais : l'objet ne bouge pas, seuls ses pixels changent. La première
+   * image resterait donc figée pour toujours — l'aperçu comme l'export.
+   *
+   * `objectCaching: false` ne suffit pas ici : `FabricImage.shouldCache()` ne le
+   * consulte pas, il ne regarde que la présence d'un `clipPath`. On désactive
+   * donc explicitement le cache sur cette instance. Le `clipPath` reste appliqué
+   * par le chemin direct (`drawObject` → `_drawClipPath`), la découpe de zone est
+   * donc préservée.
+   */
+  video.shouldCache = () => false;
+
+  video.set({ visible: options.visible !== false } as never);
+
+  video.scaleX = layer.w / naturalWidth;
+  video.scaleY = layer.h / naturalHeight;
+
+  if (options.clip) {
+    video.clipPath = new Rect({
+      left: options.clip.x,
+      top: options.clip.y,
+      width: options.clip.w,
+      height: options.clip.h,
+      originX: 'left',
+      originY: 'top',
+      absolutePositioned: true,
+    });
+  }
+
+  return video;
+}
+
 export async function createImageObject(
   layer: ImageLayer,
   options: ImageObjectOptions = {},

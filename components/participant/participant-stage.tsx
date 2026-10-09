@@ -5,7 +5,7 @@ import type { Canvas as FabricCanvas, FabricImage, FabricObject, IText } from 'f
 import { cn } from '@/lib/cn';
 import { ratioSpec } from '@/lib/ratios';
 import { photoZone } from '@/lib/descriptor';
-import { createImageObject } from '@/lib/fabric-image';
+import { createImageObject, createVideoObject } from '@/lib/fabric-image';
 import { createShapeObject } from '@/lib/fabric-shape';
 import {
   createBrandGradient,
@@ -55,6 +55,7 @@ export function ParticipantStage({
   style = DEFAULT_PARTICIPANT_STYLE,
   watermark = false,
   textFocusKey = 0,
+  video = null,
   onPlacementChange,
   onTextChange,
   onReady,
@@ -62,6 +63,15 @@ export function ParticipantStage({
   descriptor: Descriptor;
   photo: ParticipantPhoto;
   placement: PhotoPlacement;
+  /**
+   * Vidéo du participant, quand le parcours en accepte une.
+   *
+   * Elle remplace la photo **au même endroit et dans la même emprise** : le
+   * calque, la zone, les bornes de déplacement et le zoom ne changent pas. La
+   * scène redessine simplement l'image courante de la vidéo à chaque rafraîchissement
+   * au lieu d'une image immuable.
+   */
+  video?: HTMLVideoElement | null;
   /** Filtre et texte du participant. */
   style?: ParticipantStyle;
   /** Affiche le filigrane à l'écran, exactement là où l'export le posera. */
@@ -284,22 +294,20 @@ export function ParticipantStage({
       });
       canvasRef.current = canvas;
 
-      /* 1. La photo du participant — tout en bas, et mobile. */
+      /* 1. Le média du participant — tout en bas, et mobile. */
       try {
         const start = placementRef.current;
-        const image = await createImageObject(
-          photoLayer(photo, zone, start, 0, styleRef.current.filter),
-          {
-            interactive: true,
-            /*
-             * En mode Fond, la photo est découpée à la zone. Le rectangle de
-             * découpe est `absolutePositioned` : il vit dans le repère du canvas,
-             * donc il ne suit ni le déplacement de la photo ni le zoom de la vue.
-             * C'est exactement ce que fait l'export.
-             */
-            clip: descriptor.photo_anchor ? zone : null,
-          },
-        );
+        const layer = photoLayer(photo, zone, start, 0, styleRef.current.filter);
+        /*
+         * En mode Fond, le média est découpé à la zone. Le rectangle de découpe
+         * est `absolutePositioned` : il vit dans le repère du canvas, donc il ne
+         * suit ni le déplacement du média ni le zoom de la vue. C'est exactement
+         * ce que fait l'export.
+         */
+        const clip = descriptor.photo_anchor ? zone : null;
+        const image = video
+          ? await createVideoObject(layer, video, { interactive: true, clip })
+          : await createImageObject(layer, { interactive: true, clip });
         if (disposed) return;
 
         canvas.add(image);
@@ -436,6 +444,7 @@ export function ParticipantStage({
      */
   }, [
     photo,
+    video,
     layers,
     zone,
     watermark,
@@ -477,6 +486,52 @@ export function ParticipantStage({
     // `ready` : après une reconstruction, le filtre doit être reposé sur le
     // nouvel objet photo.
   }, [style.filter, ready]);
+
+  /* ---------------- La vidéo avance ---------------- */
+  /**
+   * Le canvas doit redessiner l'image courante de la vidéo.
+   *
+   * On ne redessine **que** lorsque c'est nécessaire : pendant la lecture, ou
+   * après un déplacement dans la vidéo. Une boucle qui repeindrait en
+   * permanence un canvas immobile viderait la batterie du téléphone pour rien,
+   * ce qui est exactement le genre de détail qui fait abandonner un parcours.
+   */
+  useEffect(() => {
+    if (!video) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    let alive = true;
+    let frame = 0;
+    let dirty = true;
+
+    const markDirty = () => {
+      dirty = true;
+    };
+    const loop = () => {
+      if (!alive) return;
+      if (!video.paused || dirty) {
+        dirty = false;
+        canvas.requestRenderAll();
+      }
+      frame = requestAnimationFrame(loop);
+    };
+
+    video.addEventListener('seeked', markDirty);
+    video.addEventListener('loadeddata', markDirty);
+    video.addEventListener('play', markDirty);
+    frame = requestAnimationFrame(loop);
+
+    return () => {
+      alive = false;
+      cancelAnimationFrame(frame);
+      video.removeEventListener('seeked', markDirty);
+      video.removeEventListener('loadeddata', markDirty);
+      video.removeEventListener('play', markDirty);
+    };
+    // `ready` : après une reconstruction de la scène, la boucle doit reprendre
+    // sur le nouveau canvas.
+  }, [video, ready]);
 
   /* ---------------- Le texte apparaît ou disparaît ---------------- */
   useEffect(() => {
@@ -667,7 +722,11 @@ export function ParticipantStage({
           }}
         />
 
-        <canvas ref={canvasElRef} role="img" aria-label="Cadre de campagne avec votre photo" />
+        <canvas
+          ref={canvasElRef}
+          role="img"
+          aria-label={`Cadre de campagne avec votre ${video ? 'vidéo' : 'photo'}`}
+        />
 
         {/* Contour subtil du cadre */}
         <span

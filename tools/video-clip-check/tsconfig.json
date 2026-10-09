@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    /*
+     * `DOM` est nécessaire : `lib/video-clip.ts` déclare `readVideoFile()` et
+     * `probeVideo()`, qui manipulent `File`, `URL.createObjectURL` et un
+     * `<video>`. Le harnais ne les appelle pas — un média n'existe pas dans
+     * Node — mais le module doit se typer.
+     */
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": false,
+    "noEmitOnError": false,
+    "rootDir": "../..",
+    "outDir": "build"
+  },
+  "files": ["check-video-clip.ts"]
+}

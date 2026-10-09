@@ -8,6 +8,8 @@ import {
   ImagePlus,
   Loader2,
   Minus,
+  Pause,
+  Play,
   Plus,
   Redo2,
   RotateCcw,
@@ -56,7 +58,18 @@ import {
   exportFilename,
   exportPng,
   exportVideo,
+  exportVideoClip,
 } from '@/lib/video-export';
+import {
+  CLIP_STEP_MS,
+  clipWindow,
+  fitsWithinLimit,
+  formatClipDuration,
+  maxClipStart,
+  pseudoPhoto,
+  readVideoFile,
+  type ParticipantVideo,
+} from '@/lib/video-clip';
 import {
   DEFAULT_PARTICIPANT_STATE,
   MAX_ZOOM,
@@ -276,7 +289,34 @@ export function ParticipantJourney({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  /*
+   * Le clip vidéo du participant — présent uniquement sur une campagne vidéo.
+   *
+   * Il ne remplace pas la photo dans l'état : le parcours n'a qu'une seule
+   * notion de « média du participant », et le clip fournit à la géométrie une
+   * photo de mêmes dimensions (`pseudoPhoto`). Le placement, le zoom, les bornes
+   * et la découpe de zone restent donc écrits une seule fois, et une campagne
+   * vidéo se place exactement comme une campagne photo.
+   */
+  const [clip, setClip] = useState<ParticipantVideo | null>(null);
+  const [clipStartMs, setClipStartMs] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
+  /** Conteneur hors écran de l'élément média : il doit rester dans le document. */
+  const videoHolderRef = useRef<HTMLDivElement>(null);
+
   const notify = useToast();
+
+  /**
+   * La campagne attend-elle une vidéo ?
+   *
+   * C'est le `kind` de la campagne — décidé par le créateur à la création, et
+   * lisible avant le cadre — qui tranche, jamais l'extension d'un fichier ni la
+   * présence d'une animation. Un cadre animé reste un cadre **photo** : il
+   * s'anime autour d'une image. Ici, c'est le média du participant qui est une
+   * vidéo.
+   */
+  const isVideoCampaign = campaign?.kind === 'video_frame';
 
   /*
    * Le pass « Sans filigrane » est propre à ce navigateur (cookie `cn_bid`). On
@@ -387,9 +427,13 @@ export function ParticipantJourney({
    *     épuisé. La promettre sur une campagne fermée serait un mensonge ;
    *   - `!accessUnknown` : on ne sollicite pas avant de savoir si la campagne
    *     accepte encore des téléchargements. Afficher puis retirer la bulle une
-   *     seconde plus tard est pire que de ne rien montrer.
+   *     seconde plus tard est pire que de ne rien montrer ;
+   *   - `!isVideoCampaign` : le pass porte sur le **PNG**. Une vidéo garde le
+   *     badge dans tous les cas (voir `renderFile`) — le proposer ici ferait
+   *     payer un retrait qui n'aurait pas lieu.
    */
-  const showPassPromo = sharing && showWatermark && !blocked && !accessUnknown;
+  const showPassPromo =
+    sharing && showWatermark && !blocked && !accessUnknown && !isVideoCampaign;
 
   /* ---------------- Choix de la photo ---------------- */
   const choosePhoto = useCallback(
@@ -415,6 +459,182 @@ export function ParticipantJourney({
     },
     [zone, photo, setPhoto],
   );
+
+  /* ---------------- Choix de la vidéo ---------------- */
+  const chooseVideo = useCallback(
+    async (file: File | undefined) => {
+      if (!file) return;
+      setError(null);
+      setReading(true);
+      try {
+        const next = await readVideoFile(file);
+
+        /*
+         * L'élément média est créé ici, une fois pour toutes : c'est lui que la
+         * scène dessine, et lui que le participant pilote. Il vit hors écran —
+         * 0 × 0, invisible — mais reste **dans le document** : certains
+         * navigateurs cessent de décoder un média détaché, et l'aperçu se
+         * figerait sans que rien ne le signale.
+         */
+        const element = document.createElement('video');
+        element.src = next.src;
+        element.preload = 'auto';
+        element.playsInline = true;
+        element.setAttribute('playsinline', '');
+        element.crossOrigin = 'anonymous';
+        /*
+         * `createVideoObject` renseigne `width`/`height` sur l'élément pour que
+         * Fabric sache le mesurer : on neutralise donc la mise en page ici, sinon
+         * un média de 1920 px élargirait la page.
+         */
+        element.style.position = 'absolute';
+        element.style.width = '0';
+        element.style.height = '0';
+        element.style.opacity = '0';
+        element.style.pointerEvents = 'none';
+
+        await new Promise<void>((resolve, reject) => {
+          const ok = () => resolve();
+          const ko = () =>
+            reject(new Error('Cette vidéo ne peut pas être relue. Essayez un autre fichier.'));
+          element.addEventListener('loadeddata', ok, { once: true });
+          element.addEventListener('error', ko, { once: true });
+          element.load();
+        });
+
+        /*
+         * Même règle que pour la photo : remplacer laisse « Annuler » ramener la
+         * précédente, la toute première n'a rien à annuler.
+         */
+        const replacing = clip !== null;
+        setClip(next);
+        setClipStartMs(0);
+        setVideoEl(element);
+
+        const pseudo = pseudoPhoto(next);
+        setPhoto(pseudo, initialPlacement(pseudo, zone), !replacing);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Cette vidéo n'a pas pu être ouverte.");
+      } finally {
+        setReading(false);
+      }
+    },
+    [zone, clip, setPhoto],
+  );
+
+  /* ---------------- Cycle de vie de l'élément vidéo ---------------- */
+
+  /**
+   * L'élément est monté dans un conteneur hors écran, puis **démonté** avec son
+   * flux : sans cela, chaque essai de fichier laisserait un décodeur ouvert et
+   * une URL d'objet retenue en mémoire jusqu'au rechargement de la page.
+   */
+  useEffect(() => {
+    if (!videoEl) return;
+    const holder = videoHolderRef.current;
+    if (holder && videoEl.parentNode !== holder) holder.appendChild(videoEl);
+
+    return () => {
+      try {
+        videoEl.pause();
+      } catch {
+        /* déjà arrêté */
+      }
+      videoEl.removeAttribute('src');
+      try {
+        videoEl.load();
+      } catch {
+        /* élément déjà détaché */
+      }
+      videoEl.remove();
+    };
+  }, [videoEl]);
+
+  /** L'URL d'objet n'a de sens que tant que le clip est celui du participant. */
+  useEffect(() => {
+    if (!clip) return;
+    return () => URL.revokeObjectURL(clip.src);
+  }, [clip]);
+
+  /**
+   * La fenêtre réellement retenue — 30 s au plus, à partir du début choisi.
+   *
+   * Elle est calculée par la fonction partagée avec l'export : l'aperçu et le
+   * fichier ne peuvent donc pas décrire deux extraits différents.
+   */
+  const activeWindow = useMemo(
+    () => (clip ? clipWindow(clip.durationMs, clipStartMs) : null),
+    [clip, clipStartMs],
+  );
+
+  /**
+   * La lecture s'arrête au bout de l'extrait.
+   *
+   * Une source de deux minutes ne doit pas se dérouler entièrement à l'aperçu :
+   * le participant croirait que son clip final durera aussi longtemps. On
+   * reboucle sur le début de la fenêtre, comme un lecteur de statut vidéo.
+   */
+  useEffect(() => {
+    const element = videoEl;
+    const win = activeWindow;
+    if (!element || !win) return;
+
+    let frame = 0;
+    const loop = () => {
+      if (!element.paused && element.currentTime * 1000 >= win.endMs) {
+        element.pause();
+        element.currentTime = win.startMs / 1000;
+      }
+      frame = requestAnimationFrame(loop);
+    };
+    frame = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(frame);
+  }, [videoEl, activeWindow]);
+
+  /** Déplacer le curseur d'extrait repositionne l'aperçu sur la nouvelle entrée. */
+  useEffect(() => {
+    const element = videoEl;
+    if (!element) return;
+    element.pause();
+    try {
+      element.currentTime = clipStartMs / 1000;
+    } catch {
+      /* la source n'est pas encore prête */
+    }
+  }, [clipStartMs, videoEl]);
+
+  /** Le bouton suit l'état réel du média, y compris une pause du navigateur. */
+  useEffect(() => {
+    const element = videoEl;
+    if (!element) return;
+    const onPlay = () => setPlaying(true);
+    const onPause = () => setPlaying(false);
+    element.addEventListener('play', onPlay);
+    element.addEventListener('pause', onPause);
+    return () => {
+      element.removeEventListener('play', onPlay);
+      element.removeEventListener('pause', onPause);
+    };
+  }, [videoEl]);
+
+  const togglePlayback = useCallback(() => {
+    const element = videoEl;
+    const win = activeWindow;
+    if (!element || !win) return;
+
+    if (!element.paused) {
+      element.pause();
+      return;
+    }
+
+    const position = element.currentTime * 1000;
+    if (position < win.startMs || position >= win.endMs - 50) {
+      element.currentTime = win.startMs / 1000;
+    }
+    void element
+      .play()
+      .catch(() => setError("La lecture n'a pas pu démarrer sur cet appareil."));
+  }, [videoEl, activeWindow]);
 
   /**
    * Export PNG **sans filigrane**, rendu par le serveur.
@@ -471,16 +691,75 @@ export function ParticipantJourney({
   }, [campaign, photo, placement, style]);
 
   /* ---------------- Export ---------------- */
+
+  /**
+   * Produit le fichier que le participant va recevoir.
+   *
+   * Une **seule** fabrique pour les deux médias et pour les trois chemins
+   * d'export — lien privé, pass serveur, parcours public. C'est ce qui garantit
+   * qu'un PNG et une vidéo décrivent le même cadre, portent le même badge et
+   * suivent le même quota, quel que soit le chemin emprunté : trois copies de
+   * cette logique finiraient par diverger sur un détail, et le détail se verrait
+   * dans le fichier téléchargé.
+   *
+   * La vidéo n'est jamais téléversée : `exportVideoClip` relit l'URL d'objet
+   * locale, compose dans un canvas hors écran à la résolution native du format,
+   * et rend le fichier sur l'appareil.
+   */
+  const renderFile = useCallback(
+    async (
+      kind: 'png' | 'video',
+      plan: PlanId | string,
+    ): Promise<{ blob: Blob; filename: string }> => {
+      if (!composed || !campaign) throw new Error('Visuel incomplet.');
+
+      if (isVideoCampaign) {
+        if (!clip) throw new Error('Choisissez une vidéo avant de télécharger.');
+        const win = clipWindow(clip.durationMs, clipStartMs);
+        const result = await exportVideoClip({
+          descriptor: composed,
+          plan,
+          clip: { src: clip.src, width: clip.width, height: clip.height, hasAudio: clip.hasAudio },
+          clipStartMs: win.startMs,
+          clipDurationMs: win.durationMs,
+          onProgress: (p) => setProgress(p.ratio),
+        });
+        return { blob: result.blob, filename: exportFilename(campaign.name, result.extension) };
+      }
+
+      if (kind === 'png') {
+        const url = await exportPng({ descriptor: composed, plan });
+        return { blob: dataUrlToBlob(url), filename: exportFilename(campaign.name, 'png') };
+      }
+
+      const video = await exportVideo({
+        descriptor: composed,
+        plan,
+        onProgress: (p) => setProgress(p.ratio),
+      });
+      return { blob: video.blob, filename: exportFilename(campaign.name, video.extension) };
+    },
+    [composed, campaign, isVideoCampaign, clip, clipStartMs],
+  );
+
+  /** Ce que le participant vient réellement d'obtenir : une vidéo, ou une image. */
+  const savedMessage = isVideoCampaign ? 'Vidéo enregistrée ✓' : 'Image enregistrée ✓';
+
   const runExport = useCallback(
     async (kind: 'png' | 'video') => {
       if (!composed || !campaign || !photo || exportBusy.current || blocked || accessUnknown || (!sharing && !distributionToken)) return;
+      if (isVideoCampaign && !clip) return;
       exportBusy.current = true;
       setError(null);
       setExporting(kind);
       setProgress(0);
       try {
         if (kind === 'video' && (typeof MediaRecorder === 'undefined' || typeof HTMLCanvasElement.prototype.captureStream !== 'function')) {
-          throw new Error('Votre navigateur ne sait pas produire de vidéo. Essayez le PNG.');
+          throw new Error(
+            isVideoCampaign
+              ? "Votre navigateur ne sait pas composer de vidéo. Essayez depuis un ordinateur ou un autre navigateur."
+              : 'Votre navigateur ne sait pas produire de vidéo. Essayez le PNG.',
+          );
         }
         if (distributionToken) {
           if (!exportCoordinator.current) {
@@ -489,17 +768,12 @@ export function ParticipantJourney({
               (action, operation) => distributionService.exportOperation(action, distributionToken, operation));
           }
           const fingerprint = await technicalHash(JSON.stringify(composed));
-          const file = await exportCoordinator.current.run(kind, fingerprint, async () => {
-            if (kind === 'png') {
-              const url = await exportPng({ descriptor: composed, plan: exportPlan });
-              return { blob: dataUrlToBlob(url), filename: exportFilename(campaign.name, 'png') };
-            }
-            const video = await exportVideo({ descriptor: composed, plan: exportPlan, onProgress: (p) => setProgress(p.ratio) });
-            return { blob: video.blob, filename: exportFilename(campaign.name, video.extension) };
-          });
+          const file = await exportCoordinator.current.run(kind, fingerprint, () =>
+            renderFile(kind, exportPlan),
+          );
           setConfirmedFile(file);
           downloadBlob(file.blob, file.filename);
-                    notify('Image enregistrée ✓');
+          notify(savedMessage);
           return;
         }
         /*
@@ -551,19 +825,10 @@ export function ParticipantJourney({
           );
         }
 
-        if (kind === 'png') {
-          const dataUrl = await exportPng({ descriptor: composed, plan: exportPlan });
-          downloadBlob(dataUrlToBlob(dataUrl), exportFilename(campaign.name, 'png'));
-        } else {
-          const result = await exportVideo({
-            descriptor: composed,
-            plan: exportPlan,
-            onProgress: (p) => setProgress(p.ratio),
-          });
-          downloadBlob(result.blob, exportFilename(campaign.name, result.extension));
-        }
+        const file = await renderFile(kind, exportPlan);
+        downloadBlob(file.blob, file.filename);
 
-                notify('Image enregistrée ✓');
+        notify(savedMessage);
 
         /*
          * Le téléchargement est le seul instant du parcours que la plateforme
@@ -584,28 +849,20 @@ export function ParticipantJourney({
         setProgress(0);
       }
     },
-    [campaign, composed, photo, distributionToken, exportPlan, blocked, accessUnknown, sharing, notify, pass.active, requestServerExport],
+    [campaign, composed, photo, clip, distributionToken, exportPlan, blocked, accessUnknown, sharing, notify, pass.active, requestServerExport, renderFile, isVideoCampaign, savedMessage],
   );
 
   const runWatermarkedExport = useCallback(
     async (kind: 'png' | 'video') => {
       if (!composed || !campaign || distributionToken || !sharing || exportBusy.current) return;
+      if (isVideoCampaign && !clip) return;
       setError(null);
       setExporting(kind);
       setProgress(0);
       try {
-        if (kind === 'png') {
-          const dataUrl = await exportPng({ descriptor: composed, plan: 'free' });
-          downloadBlob(dataUrlToBlob(dataUrl), exportFilename(campaign.name, 'png'));
-        } else {
-          const result = await exportVideo({
-            descriptor: composed,
-            plan: 'free',
-            onProgress: (p) => setProgress(p.ratio),
-          });
-          downloadBlob(result.blob, exportFilename(campaign.name, result.extension));
-        }
-                notify('Image enregistrée ✓');
+        const file = await renderFile(kind, 'free');
+        downloadBlob(file.blob, file.filename);
+        notify(savedMessage);
       } catch (e) {
         setError(e instanceof Error ? e.message : "L'enregistrement a échoué.");
       } finally {
@@ -613,7 +870,7 @@ export function ParticipantJourney({
         setProgress(0);
       }
     },
-    [campaign, composed, distributionToken, sharing, notify],
+    [campaign, composed, distributionToken, sharing, notify, renderFile, isVideoCampaign, clip, savedMessage],
   );
 
   /* ---------------- États transitoires ---------------- */
@@ -706,7 +963,9 @@ export function ParticipantJourney({
           <div className="text-center">
             <span className="inline-flex items-center gap-1.5 rounded-pill border border-gray-200 px-3 py-1 text-[11px] font-medium text-gray-500">
               <ShieldCheck className="size-3.5" aria-hidden />
-              Votre photo reste sur votre appareil
+              {isVideoCampaign
+                ? 'Votre vidéo reste sur votre appareil'
+                : 'Votre photo reste sur votre appareil'}
             </span>
             {clientLogoUrl && (
               <img
@@ -739,13 +998,20 @@ export function ParticipantJourney({
                   photo={photo}
                   placement={placement}
                   style={style}
+                  /*
+                   * Sur une campagne vidéo, la scène dessine l'image courante de
+                   * l'élément média à la place de la photo. Le calque, la zone et
+                   * la découpe restent ceux d'une photo de mêmes dimensions : le
+                   * cadre ne sait pas ce qu'il encadre.
+                   */
+                  video={isVideoCampaign ? videoEl : null}
                   watermark={(showWatermark && !pass.active) || blocked}
                   textFocusKey={textFocusKey}
                   onPlacementChange={setPlacementFromCanvas}
                   onTextChange={setTextFromCanvas}
                 />
               ) : (
-                /* ---------------- Dépôt de la photo ---------------- */
+                /* ---------------- Dépôt du média ---------------- */
                 <div
                   onDragOver={(e) => {
                     e.preventDefault();
@@ -755,7 +1021,8 @@ export function ParticipantJourney({
                   onDrop={(e) => {
                     e.preventDefault();
                     setDragging(false);
-                    void choosePhoto(e.dataTransfer.files?.[0]);
+                    const file = e.dataTransfer.files?.[0];
+                    void (isVideoCampaign ? chooseVideo(file) : choosePhoto(file));
                   }}
                   className={
                     'relative flex min-h-[320px] flex-col items-center justify-center gap-5 overflow-hidden rounded-2xl border-2 border-dashed p-6 text-center shadow-[0_18px_55px_rgba(15,23,42,0.08)] transition-colors md:p-8 ' +
@@ -781,7 +1048,9 @@ export function ParticipantJourney({
                   )}
 
                   <div>
-                    <p className="text-sm font-medium">Déposez votre photo ici</p>
+                    <p className="text-sm font-medium">
+                      {isVideoCampaign ? 'Déposez votre vidéo ici' : 'Déposez votre photo ici'}
+                    </p>
                     <p className="mt-1 text-[13px] text-gray-500">
                       ou choisissez-la depuis votre appareil
                     </p>
@@ -798,6 +1067,11 @@ export function ParticipantJourney({
                         <Loader2 className="size-4 animate-spin" aria-hidden />
                         Ouverture…
                       </>
+                    ) : isVideoCampaign ? (
+                      <>
+                        <Video className="size-4" aria-hidden />
+                        Choisir ma vidéo
+                      </>
                     ) : (
                       <>
                         <ImagePlus className="size-4" aria-hidden />
@@ -807,18 +1081,40 @@ export function ParticipantJourney({
                   </Button>
 
                   <p className="text-xs text-gray-400">
-                    Format {spec.label.toLowerCase()} · JPG, PNG ou WebP
+                    {isVideoCampaign
+                      ? `Format ${spec.label.toLowerCase()} · MP4, MOV ou WebM · 30 secondes maximum`
+                      : `Format ${spec.label.toLowerCase()} · JPG, PNG ou WebP`}
                   </p>
                 </div>
               )}
 
+              {/*
+                Conteneur hors écran de l'élément média.
+                Il n'est pas en `display: none` : un média caché de la sorte cesse
+                d'être décodé par certains navigateurs, et l'aperçu se figerait
+                sans que rien ne l'explique. Il reste donc rendu, mais en 0 × 0.
+              */}
+              <div
+                ref={videoHolderRef}
+                aria-hidden
+                style={{
+                  position: 'absolute',
+                  width: 0,
+                  height: 0,
+                  overflow: 'hidden',
+                  opacity: 0,
+                  pointerEvents: 'none',
+                }}
+              />
+
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*"
+                accept={isVideoCampaign ? 'video/*' : 'image/*'}
                 className="hidden"
                 onChange={(e) => {
-                  void choosePhoto(e.target.files?.[0]);
+                  const file = e.target.files?.[0];
+                  void (isVideoCampaign ? chooseVideo(file) : choosePhoto(file));
                   // Sans cette remise à zéro, rechoisir le MÊME fichier ne
                   // déclencherait aucun `change` — le bouton semblerait cassé.
                   e.target.value = '';
@@ -848,8 +1144,12 @@ export function ParticipantJourney({
                     disabled={reading}
                     className="min-h-[44px]"
                   >
-                    <ImagePlus className="size-4" aria-hidden />
-                    Changer de photo
+                    {isVideoCampaign ? (
+                      <Video className="size-4" aria-hidden />
+                    ) : (
+                      <ImagePlus className="size-4" aria-hidden />
+                    )}
+                    {isVideoCampaign ? 'Changer de vidéo' : 'Changer de photo'}
                   </Button>
 
                   <Button
@@ -877,14 +1177,21 @@ export function ParticipantJourney({
                   <Button
                     variant="primary"
                     size="md"
-                    onClick={() => void runExport('png')}
+                    onClick={() => void runExport(isVideoCampaign ? 'video' : 'png')}
                     disabled={exporting !== null || blocked || accessUnknown}
                     className="col-span-2 min-h-[48px] sm:col-span-1 sm:min-h-[44px]"
                   >
-                    {exporting === 'png' ? (
+                    {exporting !== null ? (
                       <>
                         <Loader2 className="size-4 animate-spin" aria-hidden />
-                        Préparation…
+                        {isVideoCampaign && progress > 0
+                          ? `Composition… ${Math.round(progress * 100)} %`
+                          : 'Préparation…'}
+                      </>
+                    ) : isVideoCampaign ? (
+                      <>
+                        <Video className="size-4" aria-hidden />
+                        Télécharger la vidéo
                       </>
                     ) : (
                       <>
@@ -895,9 +1202,93 @@ export function ParticipantJourney({
                   </Button>
                 </div>
 
-                {/* ---------------- Panneau « Ajuster » : position et filtres ----------------
-                    Le zoom et le filtre sont des ajustements de la photo, pas des
-                    actions : ils n'ont rien à faire sur la barre principale. */}
+                {/*
+                  ---------------- Clip vidéo : aperçu et extrait ----------------
+
+                  Le participant doit pouvoir **voir** ce qu'il va télécharger, et
+                  choisir le passage quand sa vidéo dépasse la limite. Les deux
+                  contrôles vivent sous l'aperçu, au même endroit que les autres
+                  réglages : le regard ne quitte jamais le visuel.
+
+                  Le curseur n'apparaît que si la source dépasse 30 s. Une vidéo
+                  déjà courte n'a rien à découper — afficher un curseur inerte
+                  ferait croire à une étape obligatoire.
+                */}
+                {isVideoCampaign && clip && (
+                  <div className="mt-4 rounded-2xl border border-gray-200 bg-white p-3 shadow-sm md:p-4">
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={togglePlayback}
+                        aria-label={playing ? 'Mettre en pause' : 'Lire la vidéo'}
+                        className="flex size-10 shrink-0 items-center justify-center rounded-full bg-ink text-white transition-transform active:scale-95"
+                      >
+                        {playing ? (
+                          <Pause className="size-4" aria-hidden />
+                        ) : (
+                          <Play className="size-4" aria-hidden />
+                        )}
+                      </button>
+
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[13px] font-medium text-gray-800">
+                          {formatClipDuration(activeWindow?.durationMs ?? 0)} · {clip.width} ×{' '}
+                          {clip.height}
+                        </p>
+                        <p className="mt-0.5 text-[12px] text-gray-500">
+                          {fitsWithinLimit(clip.durationMs)
+                            ? 'Votre vidéo entière sera utilisée.'
+                            : `Extrait de 30 s choisi dans une vidéo de ${formatClipDuration(clip.durationMs)}.`}
+                        </p>
+                      </div>
+                    </div>
+
+                    {!fitsWithinLimit(clip.durationMs) && (
+                      <div className="mt-3">
+                        <input
+                          type="range"
+                          min={0}
+                          max={maxClipStart(clip.durationMs)}
+                          step={CLIP_STEP_MS}
+                          value={clipStartMs}
+                          onChange={(e) => setClipStartMs(Number(e.target.value))}
+                          className="w-full accent-purple"
+                          aria-label="Début de l’extrait de 30 secondes"
+                        />
+                        <div className="mt-1 flex items-center justify-between text-[11px] tabular-nums text-gray-500">
+                          <span>{formatClipDuration(activeWindow?.startMs ?? 0)}</span>
+                          <span>Début de l’extrait</span>
+                          <span>{formatClipDuration(activeWindow?.endMs ?? 0)}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {exporting === 'video' && (
+                      <div className="mt-3 h-1 w-full overflow-hidden rounded-pill bg-gray-100">
+                        <div
+                          className="h-full bg-brand-gradient transition-[width] duration-150"
+                          style={{ width: `${Math.round(progress * 100)}%` }}
+                        />
+                      </div>
+                    )}
+
+                    {/*
+                      Le pass « Sans filigrane » porte sur le PNG : il n'est donc
+                      pas proposé ici (voir `showPassPromo`). Le dire évite qu'un
+                      participant le cherche, ou croie à un oubli.
+                    */}
+                    {showWatermark && (
+                      <p className="mt-3 border-t border-gray-100 pt-3 text-[12px] leading-relaxed text-gray-500">
+                        Le badge « Créé avec Campagnes » est toujours présent sur la vidéo.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* ---------------- Panneau « Ajuster » : position (et filtres) ----------------
+                    Le zoom est un ajustement du média, pas une action : il n'a rien
+                    à faire sur la barre principale. Le filtre n'y figure que sur une
+                    campagne photo — voir plus bas. */}
                 {activePanel === 'adjust' && (
                   <div id="panneau-ajuster" className="mt-4 rounded-2xl border border-gray-200 bg-white p-3 shadow-sm md:p-4">
                     <div className="flex items-center gap-3">
@@ -931,7 +1322,7 @@ export function ParticipantJourney({
                         )
                       }
                       className="min-w-0 flex-1 accent-purple"
-                      aria-label="Zoom de la photo"
+                      aria-label={isVideoCampaign ? 'Zoom de la vidéo' : 'Zoom de la photo'}
                     />
 
                     <button
@@ -999,14 +1390,21 @@ export function ParticipantJourney({
 
                   <p className="mt-3 text-center text-[12px] text-gray-500">
                     {axes && axes.x && axes.y
-                      ? 'Faites glisser la photo pour la positionner.'
-                      : 'Zoomez pour pouvoir déplacer la photo.'}
+                      ? `Faites glisser ${isVideoCampaign ? 'la vidéo' : 'la photo'} pour la positionner.`
+                      : `Zoomez pour pouvoir déplacer ${isVideoCampaign ? 'la vidéo' : 'la photo'}.`}
                   </p>
 
                 {/* ---------------- Filtre ----------------
                     Six choix, une ligne, aucun réglage à comprendre. Le filtre
                     est porté par le descripteur, donc l'aperçu et le fichier
-                    téléchargé montrent forcément la même image. */}
+                    téléchargé montrent forcément la même image.
+
+                    Absent sur une campagne vidéo : les filtres opèrent sur une
+                    image immuable, alors qu'ici les pixels changent à chaque
+                    image. Les proposer sans pouvoir les garantir à l'export
+                    ferait exactement ce que tout le projet s'interdit — un
+                    aperçu qui montre autre chose que le fichier livré. */}
+                {!isVideoCampaign && (
                 <div className="mt-3 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
                   <span className="text-[13px] font-semibold text-gray-700">Filtre</span>
                   <div className="mt-3 flex flex-wrap gap-2">
@@ -1033,6 +1431,7 @@ export function ParticipantJourney({
                     })}
                   </div>
                 </div>
+                )}
                   </div>
                 )}
 
@@ -1403,8 +1802,13 @@ export function ParticipantJourney({
                     Le téléchargement de l'image est passé dans la barre
                     principale : c'est l'action principale, elle ne doit pas
                     attendre qu'on arrive en bas d'une page. Seule la vidéo reste
-                    ici, parce qu'elle n'existe que sur un cadre animé. */}
-                {(animated || exporting === 'video') && (
+                    ici, parce qu'elle n'existe que sur un cadre animé.
+
+                    Réservée aux campagnes **photo** : sur une campagne vidéo,
+                    c'est le bouton principal qui produit le clip, et proposer
+                    deux téléchargements de vidéo au même participant n'aurait
+                    aucun sens. */}
+                {!isVideoCampaign && (animated || exporting === 'video') && (
                 <div id="export-section" className="mt-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm md:p-5">
                   <div className="mt-2 flex flex-col gap-2 sm:flex-row">
                     {animated && (
@@ -1458,7 +1862,7 @@ export function ParticipantJourney({
                     dès que le participant faisait défiler la page pour composer
                     son visuel, et elle prenait la place des boutons qu'il cherche.
                   */}
-                  {sharing && showWatermark && !blocked && <WatermarkPassStatus pass={pass} />}
+                  {sharing && showWatermark && !blocked && !isVideoCampaign && <WatermarkPassStatus pass={pass} />}
 
                   {/*
                     Incitation au compte Créateur, à la place du simple constat.
@@ -1474,7 +1878,7 @@ export function ParticipantJourney({
                     est alors déjà retiré pour lui, l'invitation n'a plus d'objet
                     et contredirait le pass affiché juste au-dessus.
                   */}
-                  {showWatermark && !pass.active && <WatermarkUpsell fromPublicOnly={fromPublicOnly} />}
+                  {showWatermark && !pass.active && !isVideoCampaign && <WatermarkUpsell fromPublicOnly={fromPublicOnly} />}
 
                 {/*
                   Étape de partage. Elle vient après l'enregistrement, jamais
@@ -1493,7 +1897,9 @@ export function ParticipantJourney({
                 <ol className="mt-3 flex flex-col gap-3 text-[13px] leading-relaxed text-gray-500">
                   <li className="flex gap-2">
                     <span className="font-semibold text-ink">1.</span>
-                    Vous choisissez une photo.
+                    {isVideoCampaign
+                      ? 'Vous choisissez une vidéo de 30 secondes maximum.'
+                      : 'Vous choisissez une photo.'}
                   </li>
                   <li className="flex gap-2">
                     <span className="font-semibold text-ink">2.</span>
@@ -1503,13 +1909,15 @@ export function ParticipantJourney({
                   </li>
                   <li className="flex gap-2">
                     <span className="font-semibold text-ink">3.</span>
-                    Vous ajoutez un filtre ou un texte si vous voulez, puis vous enregistrez.
+                    {isVideoCampaign
+                      ? 'Vous ajoutez un texte si vous voulez, puis vous téléchargez la vidéo avec le cadre.'
+                      : 'Vous ajoutez un filtre ou un texte si vous voulez, puis vous enregistrez.'}
                   </li>
                 </ol>
                 <p className="mt-4 border-t border-gray-200 pt-4 text-xs leading-relaxed text-gray-400">
-                  Votre photo est traitée dans votre navigateur. Elle n’est jamais envoyée à nos
-                  serveurs, et rien n’est conservé. Seul votre téléchargement est compté, afin que
-                  le créateur sache quand sa campagne est épuisée.
+                  {isVideoCampaign
+                    ? 'Votre vidéo est composée dans votre navigateur. Elle n’est jamais envoyée à nos serveurs, et rien n’est conservé. Seul votre téléchargement est compté, afin que le créateur sache quand sa campagne est épuisée.'
+                    : 'Votre photo est traitée dans votre navigateur. Elle n’est jamais envoyée à nos serveurs, et rien n’est conservé. Seul votre téléchargement est compté, afin que le créateur sache quand sa campagne est épuisée.'}
                 </p>
               </Card>
             )}
@@ -1566,16 +1974,17 @@ export function ParticipantJourney({
                   campagne.
                 </p>
                 <p className="text-xs leading-relaxed text-gray-400">
-                  La limite porte sur le nombre de téléchargements de la campagne. Le pass « Sans
-                  filigrane » retire le filigrane ; il ne rouvre pas une campagne épuisée.
+                  {isVideoCampaign
+                    ? 'La limite porte sur le nombre de téléchargements de la campagne. Le filigrane est toujours présent sur la vidéo.'
+                    : 'La limite porte sur le nombre de téléchargements de la campagne. Le pass « Sans filigrane » retire le filigrane ; il ne rouvre pas une campagne épuisée.'}
                 </p>
                 <Button
                   variant="secondary"
                   size="sm"
-                  onClick={() => void runWatermarkedExport('png')}
+                  onClick={() => void runWatermarkedExport(isVideoCampaign ? 'video' : 'png')}
                   disabled={!composed || exporting !== null}
                 >
-                  {exporting === 'png' ? (
+                  {exporting !== null ? (
                     <>
                       <Loader2 className="size-4 animate-spin" aria-hidden />
                       Préparation…
@@ -1583,7 +1992,9 @@ export function ParticipantJourney({
                   ) : (
                     <>
                       <Download className="size-4" aria-hidden />
-                      Continuer avec le filigrane
+                      {isVideoCampaign
+                        ? 'Continuer et télécharger la vidéo'
+                        : 'Continuer avec le filigrane'}
                     </>
                   )}
                 </Button>
