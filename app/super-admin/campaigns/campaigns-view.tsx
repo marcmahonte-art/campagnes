@@ -7,7 +7,7 @@ import { EmptyState, ErrorState, SkeletonBlock, StatusBadge } from '@/components
 import { AdminPager, AdminTable } from '@/components/admin/admin-table';
 import { PeriodFilter, RefreshButton, SearchFilter, SelectFilter } from '@/components/admin/period-filter';
 import { formatDate, useAdminData } from '@/components/admin/use-admin-data';
-import { normalizePeriod } from '@/lib/admin/repository';
+import { normalizePeriod } from '@/lib/admin/filters';
 import type { AdminCampaignRow, ListResult } from '@/lib/admin/types';
 
 interface CampaignsResponse extends ListResult<AdminCampaignRow> {

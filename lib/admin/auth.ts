@@ -1,7 +1,13 @@
 import { supabaseServer } from '@/lib/supabase/server';
+import {
+  can,
+  isAdminRole,
+  type AdminIdentity,
+  type AdminPermission,
+} from '@/lib/admin/roles';
 
 /**
- * Garde d'accès du Super Admin — **source unique de vérité**.
+ * Garde d'accès du Super Admin — **code serveur uniquement**.
  *
  * Trois règles, dans cet ordre :
  *
@@ -18,41 +24,18 @@ import { supabaseServer } from '@/lib/supabase/server';
  * Le `service_role` n'intervient **jamais** ici : la vérification se fait avec
  * la session de l'utilisateur, sous RLS. C'est la base qui dit qui est
  * administrateur, pas le code.
+ *
+ * Ce module importe `next/headers` : il ne doit jamais être atteint depuis un
+ * composant client. Les types et libellés partagés vivent dans
+ * `lib/admin/roles.ts`, précisément pour cela.
  */
 
-export type AdminRole = 'super_admin' | 'support_readonly' | 'finance_readonly';
-export type AdminStatus = 'active' | 'suspended';
-
-export type AdminPermission =
-  | 'admin:access'
-  | 'admin:read'
-  | 'admin:export'
-  | 'admin:audit:read'
-  | 'admin:write';
-
-export interface AdminContext {
-  userId: string;
-  email: string | null;
-  role: AdminRole;
-  status: AdminStatus;
-}
-
-/** Droits accordés à chaque rôle — matrice explicite, jamais implicite. */
-const ROLE_PERMISSIONS: Record<AdminRole, AdminPermission[]> = {
-  super_admin: [
-    'admin:access',
-    'admin:read',
-    'admin:export',
-    'admin:audit:read',
-    'admin:write',
-  ],
-  finance_readonly: ['admin:access', 'admin:read', 'admin:export'],
-  support_readonly: ['admin:access', 'admin:read'],
-};
+export type { AdminRole, AdminStatus, AdminPermission } from '@/lib/admin/roles';
+export type AdminContext = AdminIdentity;
 
 interface AdminMemberRow {
-  role: AdminRole;
-  status: AdminStatus;
+  role: unknown;
+  status: unknown;
 }
 
 /**
@@ -62,7 +45,7 @@ interface AdminMemberRow {
  * rôle inconnu ou administrateur suspendu. Aucune exception n'est propagée —
  * une API qui lèverait donnerait un 500 là où il faut un 403.
  */
-export async function getAdminContext(): Promise<AdminContext | null> {
+export async function getAdminContext(): Promise<AdminIdentity | null> {
   try {
     const supabase = await supabaseServer();
     const { data: userData, error: userError } = await supabase.auth.getUser();
@@ -90,7 +73,7 @@ export async function getAdminContext(): Promise<AdminContext | null> {
       userId: userData.user.id,
       email: userData.user.email ?? null,
       role: row.role,
-      status: row.status,
+      status: 'active',
     };
   } catch {
     // Session illisible ou Supabase non configuré : aucun droit.
@@ -98,25 +81,10 @@ export async function getAdminContext(): Promise<AdminContext | null> {
   }
 }
 
-export function isAdminRole(value: unknown): value is AdminRole {
-  return value === 'super_admin' || value === 'support_readonly' || value === 'finance_readonly';
-}
-
-export function can(role: AdminRole, permission: AdminPermission): boolean {
-  return ROLE_PERMISSIONS[role]?.includes(permission) ?? false;
-}
-
 export function assertPermission(
-  context: AdminContext | null,
+  context: AdminIdentity | null,
   permission: AdminPermission,
 ): boolean {
   if (!context) return false;
   return can(context.role, permission);
 }
-
-/** Libellés d'affichage, pour que l'interface ne réinvente pas ses textes. */
-export const ADMIN_ROLE_LABELS: Record<AdminRole, string> = {
-  super_admin: 'Super administrateur',
-  finance_readonly: 'Lecture financière',
-  support_readonly: 'Lecture seule',
-};

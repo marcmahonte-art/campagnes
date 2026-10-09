@@ -14,7 +14,7 @@ import {
 } from '@/components/admin/admin-kpi';
 import { PeriodFilter, RefreshButton } from '@/components/admin/period-filter';
 import { useAdminData } from '@/components/admin/use-admin-data';
-import { normalizePeriod } from '@/lib/admin/repository';
+import { normalizePeriod } from '@/lib/admin/filters';
 import type { AdminMetrics, AdminSeries } from '@/lib/admin/types';
 
 interface OverviewResponse {

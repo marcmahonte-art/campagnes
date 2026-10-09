@@ -13,14 +13,14 @@
  */
 import assert from 'node:assert/strict';
 import { csvCell, exportFilename, toCsv } from '@/lib/admin/csv';
-import { can, isAdminRole } from '@/lib/admin/auth';
+import { can, isAdminRole } from '@/lib/admin/roles';
 import {
   ADMIN_PERIODS,
   dailyBuckets,
   normalizePage,
   normalizePeriod,
   normalizeText,
-} from '@/lib/admin/repository';
+} from '@/lib/admin/filters';
 
 let passed = 0;
 let failed = 0;

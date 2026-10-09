@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Activity, CreditCard, LayoutGrid, Megaphone, Users } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { ADMIN_ROLE_LABELS, type AdminRole } from '@/lib/admin/auth';
+import { ADMIN_ROLE_LABELS, type AdminRole } from '@/lib/admin/roles';
 
 /**
  * Navigation du Super Admin — composant client.
