@@ -13,7 +13,12 @@ import { parseDescriptor } from '@/lib/descriptor';
 import { isCampaignKind } from '@/lib/campaign-kinds';
 import { FREE_DOWNLOADS, toClaim, toQuota } from '@/lib/quota';
 import { FREE_MAX_CAMPAIGNS, maxCampaigns } from '@/lib/plans';
-import { toPaymentRecord } from '@/lib/payments/history';
+import {
+  PENDING_PAYMENT_WINDOW_MS,
+  isVisibleInPaymentHistory,
+  toPaymentRecord,
+  type PaymentRow,
+} from '@/lib/payments/history';
 import { supabaseBrowser } from '@/lib/supabase/client';
 import type { ShareEventType, ShareStats } from '@/lib/share';
 import { MEDIA_BUCKET, REPORTS_BUCKET, SITE_URL } from './config';
@@ -952,23 +957,48 @@ export const supabaseBackend: Backend = {
    * confort qui laisserait croire que c'est lui qui protège, alors que c'est la
    * RLS. Ne pas passer `userId` à la requête est un choix : il n'aurait aucun
    * effet sur ce que la base renvoie.
+   *
+   * Ce que l'on filtre en revanche, c'est **ce qui mérite d'être montré** :
+   * les paiements annulés et les attentes abandonnées. Voir
+   * `isVisibleInPaymentHistory` — c'est là qu'est la règle, elle n'est pas
+   * réécrite ici.
+   *
+   * Le filtre est posé **deux fois**, et ce n'est pas une redondance :
+   *   - en SQL, parce que `limit(30)` s'applique AVANT tout filtrage en
+   *     mémoire. Sans lui, trente lignes annulées consommeraient tout le
+   *     quota et masqueraient un vrai paiement plus ancien ;
+   *   - en mémoire, parce que la règle doit rester vraie même si la requête
+   *     change. Le SQL est une optimisation, le prédicat est la garantie.
    */
   async listPayments(_userId): Promise<PaymentRecord[]> {
     const sb = supabaseBrowser();
     const { data } = await sb.auth.getUser();
     if (!data.user) return [];
 
+    /*
+     * `status.neq.pending` OU `created_at` postérieur à la fenêtre : la
+     * seconde branche est ce qui laisse passer une attente encore crédible.
+     * Un `or` PostgREST se sépare par des virgules — la valeur ISO n'en
+     * contient aucune, elle est donc sûre telle quelle.
+     */
+    const pendingCutoff = new Date(Date.now() - PENDING_PAYMENT_WINDOW_MS).toISOString();
+
     const { data: rows, error } = await sb
       .from('payments')
       .select(
         'deposit_id, amount, currency, status, plan, campaign_id, purchase_type, metadata, created_at, failure_message',
       )
+      .neq('status', 'cancelled')
+      .or(`status.neq.pending,created_at.gte.${pendingCutoff}`)
       .order('created_at', { ascending: false })
       .limit(30);
 
     if (error || !rows) return [];
 
+    const now = Date.now();
+
     return (rows as unknown[])
+      .filter((row) => isVisibleInPaymentHistory(row as PaymentRow, now))
       .map((row) => toPaymentRecord(row as Parameters<typeof toPaymentRecord>[0]))
       .filter((record): record is PaymentRecord => record !== null);
   },

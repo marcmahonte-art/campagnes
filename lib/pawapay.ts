@@ -64,6 +64,13 @@ export type PawaPayDepositStatus =
   | 'ACCEPTED'
   | 'SUBMITTED'
   | 'PROCESSING'
+  /*
+   * pawaPay peut renvoyer `IN_RECONCILIATION` quand le statut final n'a pas pu
+   * être déterminé. Sa documentation précise qu'aucune action n'est attendue :
+   * son moteur de rapprochement tranchera. Ce n'est donc pas une erreur, et le
+   * déclarer ici évite de le lire comme un statut inconnu.
+   */
+  | 'IN_RECONCILIATION'
   | 'COMPLETED'
   | 'FAILED'
   | 'NOT_FOUND';

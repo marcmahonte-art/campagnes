@@ -18,7 +18,7 @@ import { DISTRIBUTION_PACKS, PRICING_PLANS, PRICING_PERIODS, type BillingDuratio
 /** Statuts acceptés en base — alignés sur la contrainte `payments_status_check`. */
 const KNOWN_STATUSES = new Set(['pending', 'completed', 'failed', 'cancelled']);
 
-interface PaymentRow {
+export interface PaymentRow {
   deposit_id?: string;
   amount?: number | string | null;
   currency?: string | null;
@@ -109,4 +109,70 @@ export function toPaymentRecord(row: PaymentRow): PaymentRecord | null {
     createdAt: row.created_at ?? new Date().toISOString(),
     failureMessage: row.failure_message ?? null,
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* Ce qui mérite de figurer dans l'historique du client                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Durée au-delà de laquelle un paiement resté `pending` n'est plus une attente.
+ *
+ * Un paiement Mobile Money se règle en minutes : le client valide sur son
+ * téléphone, l'opérateur répond, pawaPay notifie. Une ligne encore `pending`
+ * une heure plus tard ne décrit donc aucune attente réelle — elle décrit un
+ * parcours abandonné (le client a fermé la page de paiement avant d'appuyer sur
+ * « Pay », et pawaPay n'a jamais enregistré de dépôt).
+ *
+ * Pourquoi une durée plutôt qu'un statut : `/initiate` écrit la ligne **avant**
+ * d'ouvrir la page de paiement, et rien ne reviendra jamais la clore si le
+ * client abandonne. Le temps est le seul signal dont on dispose, et il est
+ * fiable — il ne dépend d'aucun appel réseau.
+ *
+ * Ce que cela ne casse pas : un paiement qui se confirme plus tard repasse en
+ * `completed` et **réapparaît** dans l'historique, à sa date d'origine. Masquer
+ * n'est pas supprimer.
+ */
+export const PENDING_PAYMENT_WINDOW_MS = 60 * 60 * 1000;
+
+/**
+ * Cette ligne `payments` doit-elle apparaître dans « Mes paiements » ?
+ *
+ * Deux exclusions, et seulement deux :
+ *
+ *   1. **`cancelled`** — un paiement annulé n'a jamais eu lieu. Le montrer
+ *      revient à afficher une dépense qui n'existe pas, et à laisser croire au
+ *      client qu'une somme est en suspens chez son opérateur. C'est la règle
+ *      demandée : ce qui est annulé disparaît de son historique.
+ *   2. **`pending` trop ancien** — voir `PENDING_PAYMENT_WINDOW_MS`. C'est ce
+ *      qui rattrape les abandons, qu'aucun webhook ne viendra jamais clore.
+ *
+ * Ce qui reste visible, délibérément :
+ *   - `completed`, évidemment ;
+ *   - `failed` — un refus de l'opérateur est une information utile : le client
+ *     a bien tenté de payer, et l'écran lui montre le motif. Le masquer ferait
+ *     croire à un paiement qui n'a jamais été tenté ;
+ *   - tout statut **inconnu** — on ne cache pas ce qu'on ne comprend pas. Si
+ *     une valeur nouvelle apparaît en base, elle doit se voir, pas disparaître
+ *     en silence.
+ *
+ * Une date illisible ne fait pas disparaître une ligne non plus : en cas de
+ * doute on affiche, on ne supprime pas.
+ */
+export function isVisibleInPaymentHistory(
+  row: PaymentRow,
+  now: number = Date.now(),
+): boolean {
+  const status = row.status ?? '';
+
+  if (status === 'cancelled') return false;
+
+  if (status === 'pending') {
+    const createdAt = row.created_at ? Date.parse(row.created_at) : NaN;
+    if (Number.isFinite(createdAt) && now - createdAt > PENDING_PAYMENT_WINDOW_MS) {
+      return false;
+    }
+  }
+
+  return true;
 }

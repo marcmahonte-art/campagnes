@@ -6,6 +6,21 @@ import { checkDepositStatus, isPawaPayConfigured } from '@/lib/pawapay';
 import { confirmPayment } from '@/lib/pawapay-confirm';
 
 /**
+ * Délai minimal avant qu'un `NOT_FOUND` soit tenu pour définitif.
+ *
+ * pawaPay enregistre le dépôt **au moment où le client appuie sur « Pay »** sur
+ * la page de paiement (« the deposit will only be initiated when the customer
+ * presses the pay button »). Un dépôt introuvable signifie donc, en principe,
+ * que ce bouton n'a jamais été pressé.
+ *
+ * Ce délai ne sert qu'à couvrir le cas résiduel d'un appel qui partirait avant
+ * la propagation de l'enregistrement chez pawaPay. Il est volontairement court :
+ * au-delà, attendre ne changerait rien, puisque la page de paiement est déjà
+ * refermée.
+ */
+const NOT_FOUND_GRACE_MS = 2 * 60 * 1000;
+
+/**
  * Réconciliation d'un paiement au retour de navigation.
  *
  * Cette route est **privée** : elle exige une session et vérifie que le paiement
@@ -55,7 +70,7 @@ export async function GET(request: NextRequest) {
     // 1. Consultation en base de données locale
     const { data: payment, error: dbError } = await admin
       .from('payments')
-      .select('user_id, plan, campaign_id, purchase_type, amount, currency, status, failure_code, failure_message')
+      .select('user_id, plan, campaign_id, purchase_type, amount, currency, status, failure_code, failure_message, created_at')
       .eq('deposit_id', depositId)
       .maybeSingle();
 
@@ -169,12 +184,95 @@ export async function GET(request: NextRequest) {
             failureCode,
             failureMessage,
           });
+        } else if (remoteStatus && remoteStatus.status === 'NOT_FOUND') {
+          /*
+           * `NOT_FOUND` : pawaPay ne connaît pas ce dépôt.
+           *
+           * Sa documentation est sans ambiguïté — « Only if the deposit is
+           * NOT_FOUND should it be considered FAILED » — et c'est le cas de
+           * **tout parcours abandonné** : `/initiate` écrit la ligne `payments`
+           * avant d'ouvrir la page de paiement, donc elle existe même quand le
+           * client n'a jamais appuyé sur « Pay ».
+           *
+           * Sans cette branche, la ligne restait `pending` à vie : aucun
+           * webhook ne viendra jamais clore un dépôt qui n'existe pas. C'est le
+           * défaut constaté en production, où 13 paiements annulés étaient
+           * affichés « En cours de vérification » indéfiniment.
+           *
+           * On écrit `cancelled`, et non `failed` malgré le mot de pawaPay :
+           * il ne s'agit pas d'un refus de l'opérateur mais d'une intention
+           * jamais engagée. C'est cette distinction qui permet à l'historique
+           * du client de masquer la ligne sans masquer un vrai échec, lequel
+           * doit rester visible avec son motif.
+           *
+           * Le `failure_code` garde la trace technique : `DEPOSIT_NOT_FOUND`
+           * dit ce que la base a constaté, et l'exploitant peut le distinguer
+           * d'une annulation arrivée par callback.
+           */
+          const createdAt = payment.created_at ? Date.parse(payment.created_at) : NaN;
+          const stale =
+            !Number.isFinite(createdAt) || Date.now() - createdAt > NOT_FOUND_GRACE_MS;
+
+          if (!stale) {
+            /*
+             * Trop tôt pour conclure : on ne touche à rien et on rend l'état
+             * local. Le webhook a encore le temps d'arriver, et une ligne
+             * annulée par erreur serait un mensonge coûteux à corriger.
+             */
+            return NextResponse.json({
+              depositId,
+              status: payment.status,
+              plan: payment.plan,
+              purchaseType: payment.purchase_type,
+              campaignId: payment.campaign_id,
+            });
+          }
+
+          const { error: cancelError } = await admin
+            .from('payments')
+            .update({
+              status: 'cancelled',
+              failure_code: 'DEPOSIT_NOT_FOUND',
+              failure_message:
+                'Aucun dépôt n’a été enregistré : le paiement n’a pas été engagé.',
+              updated_at: new Date().toISOString(),
+            })
+            .eq('deposit_id', depositId)
+            // Même garde que partout ailleurs : on ne dégrade jamais une ligne
+            // déjà finalisée. Zéro ligne modifiée n'est pas une erreur.
+            .eq('status', 'pending');
+
+          if (cancelError) {
+            console.warn(
+              `[pawaPay Check] Abandon non enregistré (depositId=${depositId}) : ${cancelError.message}`,
+            );
+          }
+
+          return NextResponse.json({
+            depositId,
+            status: cancelError ? payment.status : 'cancelled',
+            plan: payment.plan,
+            purchaseType: payment.purchase_type,
+            campaignId: payment.campaign_id,
+          });
         }
       } catch (checkErr) {
         console.warn('[pawaPay Check] Impossible d’interroger l’API pawaPay en direct :', checkErr);
       }
     }
 
+    /*
+     * Dépôt encore en cours chez pawaPay — `ACCEPTED`, `SUBMITTED`,
+     * `PROCESSING`, ou `IN_RECONCILIATION`.
+     *
+     * `IN_RECONCILIATION` est un état **normal** que pawaPay documente comme ne
+     * demandant aucune action : son moteur de rapprochement tranchera. On le
+     * laisse donc volontairement en attente, comme les autres — le webhook
+     * écrira le statut final.
+     *
+     * Ces lignes restent visibles dans l'historique du client pendant la
+     * fenêtre d'attente, puis disparaissent si rien ne les confirme.
+     */
     return NextResponse.json({
       depositId,
       status: payment.status,

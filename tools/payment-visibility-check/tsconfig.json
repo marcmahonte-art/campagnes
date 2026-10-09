@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": false,
+    "noEmitOnError": false,
+    "rootDir": "../..",
+    "outDir": "build",
+    /*
+     * Alias `@/` : `lib/payments/history.ts` importe la grille tarifaire par ce
+     * chemin. Sans ces deux lignes, `tsc` échouerait sur « Cannot find module
+     * '@/lib/pricing/config' » — et comme `noEmitOnError` est à `false`, il
+     * émettrait quand même, si bien que le contrôle tournerait sur du code
+     * incomplet au lieu d'échouer franchement. Le harnais échouerait en
+     * silence, ce qui est le pire mode de défaillance pour un contrôle.
+     */
+    "baseUrl": "../..",
+    "paths": {
+      "@/*": ["./*"]
+    }
+  },
+  "files": ["check-payment-visibility.ts"]
+}
