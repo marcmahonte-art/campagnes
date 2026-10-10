@@ -116,7 +116,12 @@ export default function AidePage() {
         </p>
         <p>
           Ce que le participant fait de son visuel ne vous est pas transmis. Sa photo est lue dans
-          son navigateur et n’est jamais envoyée : seul son téléchargement est compté.
+          son navigateur et n’est pas envoyée : seul son téléchargement est compté.
+        </p>
+        <p>
+          Une exception, à connaître : si le participant achète le retrait du filigrane, ce rendu
+          passe par nos serveurs et transmet alors son visuel. Le détourage, lui, ne quitte jamais
+          l’appareil.
         </p>
       </LegalBlock>
 

@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    /*
+     * `@/` doit être résolu à la compilation **et** au runtime (voir
+     * `tools/alias-hook.cjs`) : `lib/plans.ts` importe `@/lib/pricing/config`,
+     * et `tsc` ne réécrit pas l'alias dans le JavaScript émis.
+     */
+    "baseUrl": "../..",
+    "paths": {
+      "@/*": ["*"]
+    },
+    "skipLibCheck": true,
+    "strict": false,
+    "noEmitOnError": false,
+    "rootDir": "../..",
+    "outDir": "build"
+  },
+  "files": ["check-stack-render.ts"]
+}

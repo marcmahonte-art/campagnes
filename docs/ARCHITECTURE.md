@@ -493,10 +493,22 @@ négatifs ou nuls** — la photo déborde de la zone, jamais l'inverse.
 | Fonction | Rôle |
 |---|---|
 | `coverSize()` | taille minimale pour couvrir la zone (zoom = 1) |
+| `containSize()` | taille maximale pour tenir **entier** dans la zone (zoom = 1) |
+| `baseSize()` | choisit l'une ou l'autre selon `PhotoFit` |
 | `placementBounds()` | domaine autorisé du coin supérieur gauche |
 | `clampPlacement()` | ramène un placement dans ce domaine |
 | `zoomAroundCenter()` | zoome en gardant fixe le point sous le centre de la zone |
 | `movableAxes()` | dit si la photo peut encore bouger sur chaque axe |
+
+**Une seule exception à la règle du titre : le détourage.** Quand `Descriptor.subject` vaut
+`'cutout'`, le sujet n'a plus d'arrière-plan, donc plus rien à couvrir — et le couvrir
+l'amputerait. Il passe alors en `containSize()` (`Math.min`) et **perd sa découpe
+rectangulaire** : c'est le canal alpha qui masque. Les deux vont ensemble ; les séparer
+donnerait soit un sujet tronqué, soit un sujet amputé. `PhotoFit` (`'cover' | 'contain'`) porte
+les deux cas, et il est un paramètre **optionnel** de toutes les fonctions ci-dessus, avec
+`'cover'` pour défaut : tout appel écrit avant le détourage garde exactement son résultat.
+`isCutout()` et `clipsParticipantPhoto()` (`lib/descriptor.ts`) sont les deux seuls prédicats à
+lire, et ils sont partagés par la scène participant et par l'export.
 
 Au zoom minimal, l'axe qui contraint la couverture a un domaine réduit à un point : il est
 donc verrouillé, ce qui est le comportement attendu et non un bug. `zoomAroundCenter()`
@@ -554,12 +566,20 @@ position de la photo. Les calques du créateur gardent très exactement le leur,
 `motion.layers.length === layers.length` reste vrai — donc l'avertissement de validation
 sur un décalage de longueur ne se déclenche pas à tort.
 
-### 9.6 Rien ne quitte l'appareil
+### 9.6 Rien ne quitte l'appareil — sauf le rendu du pass
 
 La photo est lue en data URL dans le navigateur (`readPhotoFile()`) et n'est **jamais**
-téléversée. Il n'y a ni compte, ni stockage, ni trace, ni modération à prévoir. C'est une
-promesse produit, écrite dans l'interface (« Votre photo reste sur votre appareil »), pas
-un détail d'implémentation.
+téléversée au moment de la composition ni du détourage. Il n'y a ni compte, ni stockage, ni
+trace, ni modération à prévoir. C'est une promesse produit, écrite dans l'interface (« Votre
+photo est traitée sur votre appareil »), pas un détail d'implémentation.
+
+**Une exception assumée depuis le 2026-10-10 :** le retrait du filigrane par le pass « Sans
+filigrane » est un rendu **serveur** — c'est ce qui empêche un détenteur de pass de retirer le
+badge lui-même. `requestServerExport()` poste donc la photo entière à `/api/passes/export`. Le
+participant en est informé par la note de bas de parcours, qui nomme l'exception au lieu
+d'affirmer un absolu. Les deux autres issues (ne pas proposer le pass sur les campagnes
+détourées, ou rendre le retrait client-side) restent ouvertes — voir
+`docs/bacground/background-frame.md` §7.4.
 
 Le fichier n'est pas filtré sur son type MIME déclaré — peu fiable sur mobile — mais sur la
 capacité réelle du navigateur à le décoder.

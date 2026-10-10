@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    /*
+     * `DOM` est nécessaire : `lib/participant.ts` déclare `readPhotoFile()`, qui
+     * manipule `File`, `FileReader` et `window.Image`. Le harnais ne l'appelle
+     * pas — il n'y a pas de navigateur ici — mais le module doit se typer.
+     */
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": false,
+    "noEmitOnError": false,
+    "rootDir": "../..",
+    "outDir": "build"
+  },
+  "files": ["check-stack.ts"]
+}

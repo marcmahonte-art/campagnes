@@ -17,7 +17,13 @@ import { createShapeObject } from './fabric-shape';
 import { createImageObject, createVideoObject } from './fabric-image';
 import { DEFAULT_MOTION_DURATION, sampleAt, type MotionPlan } from './motion';
 import { hasFeature, type PlanId } from './plans';
-import { PARTICIPANT_PHOTO_ID, PARTICIPANT_TEXT_ID, effectiveMotion, photoZone } from './descriptor';
+import {
+  PARTICIPANT_PHOTO_ID,
+  PARTICIPANT_TEXT_ID,
+  clipsParticipantPhoto,
+  effectiveMotion,
+  photoZone,
+} from './descriptor';
 import { addBadge } from './watermark';
 import { importFabric } from './fabric-runtime';
 import type { Descriptor, Layer } from './types';
@@ -95,9 +101,14 @@ async function buildRenderTarget(
    * cela elle déborderait sur le décor du cadre. Le rectangle de découpe est
    * `absolutePositioned`, donc exprimé dans le repère du canvas — insensible au
    * déplacement de la photo comme au zoom de l'aperçu.
+   *
+   * En **détourage**, la découpe disparaît : c'est le canal alpha du sujet qui
+   * masque. La garder tronquerait net une tête, des bras ou des épaules qui
+   * dépassent de la zone — or c'est exactement la silhouette que la référence
+   * montre. Le `clipPath` reste la règle du mode Fond classique, et lui seul.
    */
   const zone = photoZone(descriptor);
-  const clipPhoto = Boolean(descriptor.photo_anchor);
+  const clipPhoto = clipsParticipantPhoto(descriptor);
 
   /*
    * Côté serveur il n'y a pas de document : on laisse Fabric créer son propre

@@ -79,6 +79,13 @@ tools/header-check/.tmp/
 # migration. Sortie intermédiaire de diagnostic, jamais servie.
 .tmp-mig/
 
+# Répertoires de diagnostic à la racine (mesures réseau, pages capturées,
+# profils de navigateur). Intermédiaires, volumineux (jusqu'à 80 Mo), et
+# reproductibles — aucun ne doit entrer dans l'historique.
+.tmp-measure/
+.tmp-net/
+.tmp-p4/
+
 # Jeton témoin de `tools/distribution-check/` : c'est un secret d'accès réel à
 # une campagne. Il ne doit JAMAIS entrer dans l'historique — le fichier
 # n'existe que le temps d'un contrôle d'étanchéité de la RLS.
@@ -105,6 +112,7 @@ tools/tarifs-check/.tmp/
 # exécution, sans valeur, et jamais des livrables.
 tools/participant-ui-check/.tmp/
 tools/watermark-upsell-check/.tmp/
+tools/cutout-journey-check/.tmp/
 tools/.u1-crops/
 
 # Profils Chrome laissés par les sondes headless (.u1-chrome-profile*) :

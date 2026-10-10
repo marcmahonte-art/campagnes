@@ -216,6 +216,25 @@ export type Layer = ImageLayer | TextLayer | ShapeLayer;
 
 export const DESCRIPTOR_VERSION = 1;
 
+/**
+ * Ce que le participant dépose dans la zone photo.
+ *
+ * Absent → **mode Fond classique** : sa photo remplit la zone, découpée à son
+ * rectangle. C'est le comportement d'origine, et c'est aussi ce que portent
+ * toutes les campagnes déjà publiées.
+ *
+ * `'cutout'` → **détourage** : le sujet est détaché de son arrière-plan
+ * d'origine et posé sur le décor. Deux conséquences dans le rendu, qui n'en
+ * font qu'une : plus de découpe rectangulaire — le canal alpha sert de masque —
+ * et un dimensionnement « contenir », le sujet devant tenir entier plutôt que
+ * remplir la zone.
+ *
+ * Le drapeau vit dans le descripteur, pas dans le type de campagne : un même
+ * `background_frame` doit continuer de décrire les deux sans migration, et
+ * l'absence de drapeau doit rester exactement le rendu d'avant.
+ */
+export type SubjectMode = 'cutout';
+
 export interface Descriptor {
   version: number;
   ratio: Ratio;
@@ -236,6 +255,17 @@ export interface Descriptor {
    * déplacé, rien n'est modifié dans les calques du créateur.
    */
   photo_anchor?: string;
+  /**
+   * Ce que le participant dépose dans la zone photo (voir `SubjectMode`).
+   *
+   * Absent → photo découpée au rectangle de la zone, comme avant.
+   * `'cutout'` → sujet détouré, sans découpe rectangulaire, dimensionné pour
+   * tenir entier dans la zone.
+   *
+   * Omis à la sérialisation tant qu'il vaut le défaut : un cadre publié avant
+   * l'arrivée du détourage se relit et se réenregistre **à l'octet près**.
+   */
+  subject?: SubjectMode;
   /**
    * Animation du cadre (Motion Engine). Absent = cadre statique.
    * Stocké ici pour que le cadre reste rejouable à l'identique, aperçu comme rendu.

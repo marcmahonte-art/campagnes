@@ -1,148 +1,232 @@
-# Vidéo participant — Campagnes
+# Plan global d’implémentation vidéo — Campagnes
 
-**Version : 10 octobre 2026**
-**Statut :** **livré** — le parcours vidéo participant est en place, composé entièrement dans le navigateur.
-
----
-
-## 1. Objectif produit
-
-Le participant arrive depuis le lien d'une campagne ou depuis la galerie publique, ouvre un **cadre vidéo**, choisit sa vidéo, et télécharge sa vidéo **avec le cadre dessus et le filigrane**.
-
-Trois gestes, comme pour la photo : **je choisis ma vidéo → je la place → je télécharge.** Aucun compte, aucune application, aucun formulaire.
-
-### Périmètre livré
-
-- La campagne garde **son cadre unique** (`campaigns.frame_id`). Le participant ne choisit pas entre plusieurs cadres.
-- Le parcours est celui de la campagne : `/c/[slug]` (public) ou `/d/[token]` (lien privé). La galerie route déjà les cadres vidéo vers `/c/[slug]`.
-- Une campagne `video_frame` accepte une vidéo de **30 secondes maximum** ; une campagne `photo_frame` continue d'accepter une photo, inchangée.
-- La sortie est un fichier vidéo composé **sur l'appareil du participant**, avec le cadre et le filigrane.
-- **Aucun téléversement.** La vidéo source ne quitte jamais l'appareil, exactement comme la photo.
-
-### Décision d'architecture — et l'écart assumé avec la version précédente de ce document
-
-La version précédente décrivait un rendu **côté serveur** : téléversement vers un stockage privé temporaire, file de tâches, worker FFmpeg produisant un MP4, table d'opérations idempotentes.
-
-**Ce chemin n'a pas été retenu**, pour une raison qui n'est pas technique :
-
-> Le parcours affiche « Votre vidéo reste sur votre appareil ». Un téléversement — même temporaire, même privé, même supprimé ensuite — rendrait cette phrase fausse.
-
-S'y ajoutaient des raisons de fond : le dépôt ne contient **aucun** worker vidéo ni file de tâches ; le bucket `media` est public et conçu pour les images de créateur ; et surtout, un rendu serveur aurait dupliqué la géométrie du cadre, le Motion Engine et le filigrane — trois logiques qui n'existent aujourd'hui qu'une seule fois, et dont la duplication est précisément ce que le projet s'interdit.
-
-Le parcours vidéo réutilise donc **tout** l'existant : `photoZone`, `photoSize`, `clampPlacement`, `initialPlacement`, `composeDescriptor`, `effectiveMotion`/`sampleAt`, `shouldWatermark`/`exportPlanFor`, `addBadge`. Le clip est traité comme une photo de mêmes dimensions, avec un média vivant à la place d'une image immuable.
-
-**Conséquence assumée :** la production d'un MP4 dépend du navigateur. Chrome, Edge et Safari 14.1+ écrivent du `video/mp4` ; Firefox écrit du WebM. L'extension annoncée suit toujours le conteneur réellement produit — le fichier ne ment jamais sur son format. Aucun upscaling : la qualité finale est bornée par la source.
-
-**Conséquence favorable :** la durée n'a pas besoin d'être « vérifiée par le serveur ». Le plafond est **structurel** — on n'enregistre jamais plus de 30 secondes — et non une validation après coup.
+**Statut :** plan de réalisation, aucun code vidéo n’est encore implémenté.  
+**Objectif :** préparer le développement du parcours participant vidéo sans casser les campagnes ou le parcours photo existants.
 
 ---
 
-## 2. Ce qui a été construit
+## 1. Décisions produit retenues
 
-### `lib/video-clip.ts` — logique pure, testable sans navigateur
+- Le créateur pourra autoriser **plusieurs cadres** pour une campagne vidéo.
+- Le participant choisira parmi les cadres autorisés pour cette campagne; si un seul cadre est disponible, l’étape de sélection sera ignorée.
+- La vidéo téléversée ne dépassera pas **30 secondes**.
+- Si la vidéo source est plus longue, le participant sélectionnera un extrait sur son appareil; **seul cet extrait** pourra être téléversé.
+- Le résultat sera rendu côté serveur en **MP4**, téléchargeable par le participant.
+- La vidéo source et le résultat seront temporaires et stockés en espace privé.
+- Le parcours photo et sa promesse actuelle de traitement local doivent rester inchangés.
 
-- `MAX_CLIP_MS = 30_000` — le plafond, comme un statut vidéo.
-- `knownDuration`, `maxClipStart`, `fitsWithinLimit`, `clampClipStart`, `clipWindow` — le calcul de la fenêtre retenue. Une seule fonction (`clipWindow`) décrit ce que voient l'aperçu, la progression et le rendu : ils ne peuvent pas diverger.
-- `formatClipDuration` — `1:05`, jamais un nombre de millisecondes.
-- `pseudoPhoto(video)` — fabrique la photo de substitution qui porte les **dimensions de la vidéo**. C'est la pièce qui permet à tout le placement existant de fonctionner sans une ligne de plus.
-- `readVideoFile` / `probeVideo` — lecture locale, métadonnées lues par le décodeur du navigateur, délai de garde de 15 s, URL d'objet libérée en cas d'échec.
-- `looksLikeVideo` — premier filtre seulement. Un type MIME est déclaratif, donc souvent faux sur mobile ; la vraie validation est la lecture des métadonnées.
+### Règle de qualité et de confidentialité
 
-### `lib/fabric-image.ts` — `createVideoObject()`
+Une source déjà inférieure ou égale à 30 secondes devrait éviter, si possible, un réencodage local avant l’envoi. Un extrait découpé localement à partir d’une source plus longue peut nécessiter un nouvel encodage et entraîner une attente, une consommation de batterie/mémoire et une perte de qualité. Si le navigateur ne sait pas préparer l’extrait correctement, le participant devra pouvoir découper une copie dans son application Photos/Galerie et sélectionner cette copie courte. **Ne jamais téléverser la source longue en affirmant que seul l’extrait est envoyé.**
 
-Le seul endroit qui traduit un `ImageLayer` en objet Fabric portant une vidéo. Deux pièges rencontrés et traités, tous deux vérifiés dans le code de Fabric 7.4.0 installé :
-
-1. **Fabric mesure une source par `element.naturalWidth || element.width`.** Un `<video>` n'a pas de `naturalWidth`, et son `width` est l'attribut de mise en page — `0` par défaut. Sans correction, `_renderFill` calculait un rectangle source **vide** et la vidéo n'était jamais dessinée. Les dimensions intrinsèques sont donc posées explicitement sur l'élément **et** dans les options Fabric.
-2. **`FabricImage.shouldCache()` renvoie `true` dès qu'un `clipPath` existe**, et ignore `objectCaching`. Le cache n'étant jamais invalidé pour une vidéo (l'objet ne bouge pas, seuls ses pixels changent), la première image restait figée pour toujours. Le cache est donc désactivé sur cette instance ; la découpe de zone reste appliquée par le chemin direct.
-
-### `lib/video-export.ts` — `exportVideoClip()`
-
-Compose le clip dans un canvas hors écran à la résolution native du format, et l'enregistre via `MediaRecorder` :
-
-- **audio** récupéré par Web Audio (`createMediaElementSource` → `MediaStreamDestination`), le graphe n'étant **pas** relié à la sortie du contexte : le participant n'entend rien pendant le rendu, tout en obtenant une piste exploitable. Repli sur `video.captureStream()`. En dernier recours, un clip muet — jamais un échec ;
-- **animation du cadre** rejouée par le même Motion Engine que l'aperçu, à partir du début de l'extrait ;
-- **conteneur MP4 en premier**, WebM en repli, avec l'extension correspondante ;
-- débit d'encodage 12 Mbit/s — plus élevé que pour un cadre animé, parce qu'une vidéo filmée contient beaucoup plus de détail ;
-- nettoyage complet : lecture arrêtée, pistes coupées, contexte audio fermé, canvas libéré **avant** l'élément média, source détachée.
-
-### `components/participant/participant-stage.tsx`
-
-- prop `video` : la scène dessine l'image courante du média à la place de la photo, dans la même emprise ;
-- boucle de rafraîchissement qui ne repeint **que** lorsque c'est nécessaire — pendant la lecture, ou après un déplacement dans la vidéo. Une boucle permanente viderait la batterie pour rien.
-
-### `components/participant/participant-journey.tsx`
-
-- `chooseVideo` : lecture locale, création de l'élément média, géométrie du clip, historique cohérent avec la photo (remplacer laisse « Annuler » ramener la précédente) ;
-- cycle de vie de l'élément média : monté dans un conteneur **0 × 0 mais rendu** (un média en `display: none` cesse d'être décodé par certains navigateurs), démonté avec son flux ;
-- fenêtre de lecture : la lecture s'arrête au bout de l'extrait et reboucle, comme un lecteur de statut ;
-- panneau « clip » : bouton lecture/pause, durée retenue, dimensions, et **curseur d'extrait uniquement si la source dépasse 30 s** ;
-- `renderFile(kind, plan)` : **une seule** fabrique pour les deux médias et les trois chemins d'export (lien privé, pass serveur, parcours public). C'est ce qui interdit à un PNG et une vidéo de décrire des choses différentes ;
-- `runExport('video')` branché sur le bouton principal pour une campagne vidéo ;
-- **filtres masqués** sur une campagne vidéo : ils opèrent sur une image immuable et ne pourraient pas être garantis à l'export ;
-- **pass « Sans filigrane » retiré** de l'écran d'une campagne vidéo (`showPassPromo`, `WatermarkPassStatus`, `WatermarkUpsell`) : le pass porte sur le PNG, une vidéo garde le badge dans tous les cas. Le proposer ferait payer un retrait qui n'aurait pas lieu. Une phrase le dit explicitement.
+Le serveur devra revalider la durée effective du média reçu; la valeur annoncée par le navigateur n’est pas une preuve suffisante.
 
 ---
 
-## 3. Filigrane
+## 2. État actuel du projet
 
-Règle inchangée, réutilisée telle quelle (`lib/watermark-policy.ts`) :
-
-- **`/c/[slug]` public :** le badge est toujours posé, y compris pour un cadre Pro.
-- **`/d/[token]` privé :** la règle de formule du créateur s'applique.
-- **Le pass « Sans filigrane » ne concerne pas la vidéo.** Un clip conserve le badge.
-
-Le badge est dessiné par la **même** fonction que l'aperçu et que l'export PNG (`lib/watermark.ts`), dans les pixels du fichier — pas seulement à l'écran.
-
----
-
-## 4. Quotas
-
-Aucune migration, aucun changement de schéma. Les deux compteurs existants sont réutilisés sans modification :
-
-- `/c` : `claim_participation`, réservé **avant** le rendu ;
-- `/d` : `PrivateExportCoordinator` + `distribution_export_v1`, avec son identifiant d'opération idempotent. Le format transmis est `'video'`, déjà accepté par le contrat existant.
-
-Les quotas `/c` et `/d` restent indépendants. Un échec de rendu n'a pas consommé de place au mauvais moment : la réservation précède le rendu, comme pour le PNG.
+- Les routes publiques `/c/[slug]` et privées `/d/[token]` partagent le composant `components/participant/participant-journey.tsx`.
+- Le parcours participant accepte actuellement une image. La photo reste sur l’appareil et est composée avec le cadre dans le navigateur.
+- Le type `video_frame` est défini, mais ne signifie pas que le participant peut déjà téléverser sa vidéo.
+- `lib/video-export.ts` enregistre avec `MediaRecorder` un canvas animé qui contient le cadre et la photo du participant. Il ne compose pas une vidéo source et ne conserve donc pas son audio.
+- Une campagne référence actuellement un seul cadre via `campaigns.frame_id`.
+- Le bucket `media` est public, prévu pour des images de créateur et n’est pas adapté aux vidéos personnelles de participants.
+- Le parcours privé possède des opérations d’export idempotentes `distribution_export_v1` et un cycle de réservation/confirmation/annulation. Le parcours public utilise `claim_participation`, qui incrémente immédiatement le compteur.
+- Le dépôt ne contient pas de worker FFmpeg ni de file de rendu vidéo. La route existante de rendu PNG a `maxDuration = 30`; elle ne prouve pas que le rendu vidéo peut tourner de façon fiable dans une route Next.js/Vercel.
+- La dernière migration présente dans le dépôt lors de la planification est `0026_admin_audit_log.sql`. Les prochains numéros devront être revérifiés au moment de l’implémentation.
 
 ---
 
-## 5. Vérification
+## 3. Architecture cible
 
-`npm run check:video-clip` — harnais `tools/video-clip-check/` :
+Séparer clairement quatre responsabilités :
 
-- bornes de durée, cas dégénérés (durée inconnue, négative, `NaN`) ;
-- **invariant du curseur** : toute position atteignable rend un clip plein de 30 s ;
-- aucune fenêtre négative, aucune fenêtre au-delà de la limite ;
-- **la propriété qui porte tout le reste** : `pseudoPhoto()` produit exactement la même géométrie qu'une photo de mêmes dimensions, à 0,2× / 0,5× / 1× / 1,7× / 5×, et le cadrage de départ est identique ;
-- premier filtre de type de fichier.
+1. **Cadres de campagne** — le créateur choisit les cadres disponibles; le serveur n’expose au participant que ces cadres autorisés.
+2. **Préparation locale** — le navigateur valide la vidéo, montre l’aperçu, prépare un extrait de 30 secondes au maximum et ne l’envoie qu’après confirmation.
+3. **Upload et quotas** — le serveur autorise une opération courte et idempotente, réserve la capacité nécessaire, fournit un accès temporaire à un objet privé et valide le média reçu.
+4. **Rendu asynchrone** — un worker vidéo isolé compose le cadre, encode le MP4, vérifie le résultat et le rend téléchargeable temporairement.
 
-Également passés après modification : `check:participant`, `check:watermark`, `check:distribution:export`, `check:frame-render`, `typecheck`, `build`.
+Le descripteur de cadre doit être rechargé côté serveur à partir du cadre autorisé. Le client ne doit pas pouvoir soumettre un descripteur arbitraire, un chemin objet libre ou une URL source arbitraire.
 
-**Ce que le harnais ne couvre pas :** le rendu lui-même — il n'y a pas de navigateur en Node. La composition réelle (lecture, capture, audio, conteneur produit) doit être vérifiée sur appareil, sur un cadre vidéo publié, en public et en lien privé.
+### État métier indicatif d’une tâche
 
----
+`RESERVED → UPLOADED → QUEUED → RENDERING → READY`
 
-## 6. Reste à faire
+États terminaux possibles : `FAILED`, `CANCELLED`, `EXPIRED`.
 
-- **Éditeur de création de cadre vidéo** (côté créateur) — chantier suivant, explicitement reporté.
-- **Vérification sur appareil** du rendu réel : MP4 produit, audio conservé et synchronisé, badge présent dans le fichier, comportement sur un téléphone d'entrée de gamme.
-- **Rendu de la source vidéo dans l'éditeur créateur**, si l'on veut prévisualiser un cadre vidéo avec une vraie vidéo plutôt qu'une photo de substitution.
-- **Drapeau de fonctionnalité** avant élargissement, si le taux d'échec ou la latence le justifient.
+Les transitions doivent être contrôlées et rejouables sans créer une seconde tâche facturée. Une nouvelle lecture ou un nouveau téléchargement d’un résultat déjà confirmé ne doit pas consommer une nouvelle unité de quota.
 
 ---
 
-## 7. Ce qui n'est plus une décision ouverte
+## 4. Plan de réalisation par phases
 
-Les questions de la version précédente qui tombaient avec le rendu serveur :
+### Phase 0 — Spike de découpage local et contrat média
 
-- ~~taille maximale source et extrait~~ → seule la fenêtre de 30 s est rendue ; la taille du fichier source n'est pas transmise ;
-- ~~conteneurs/codecs d'entrée acceptés~~ → ce que le navigateur sait décoder ; MOV, MP4, WebM en pratique ;
-- ~~hébergement du worker, de la file et du stockage privé~~ → sans objet ;
-- ~~durée de conservation et délai de téléchargement du résultat~~ → sans objet, rien n'est conservé ;
-- ~~traitement comptable d'un échec définitif du worker~~ → sans objet.
+**But :** prouver que l’extrait de 30 secondes peut être préparé de manière acceptable avant de construire l’interface complète.
 
-Restent ouvertes, et le resteront jusqu'au premier test sur appareil :
+À tester sur téléphones et navigateurs cibles :
 
-- codec et dimensions réellement produits selon le navigateur, et qualité perçue ;
-- comportement d'une animation de cadre plus courte que la vidéo : jouée une fois, répétée ou figée ;
-- pertinence d'un plafond de taille de fichier source (mémoire du téléphone pendant l'encodage).
+- lecture des métadonnées et précision du début/fin;
+- codecs/conteneurs, y compris les fichiers mobiles courants;
+- rotation, fréquence d’images variable et synchronisation audio/vidéo;
+- qualité du segment produit et compatibilité avec l’upload puis le worker;
+- temps de préparation, mémoire, batterie et comportement si l’onglet passe à l’arrière-plan;
+- fallback si l’API de décodage/encodage n’est pas disponible.
+
+Pour une vidéo d’origine de plus de 30 secondes, l’envoi réseau ne commence qu’après création locale de l’extrait court. En cas d’échec, proposer une instruction claire pour découper une copie avec Photos/Galerie puis recommencer.
+
+**Décisions nécessaires avant de clôturer cette phase :** limite de taille du fichier source avant découpage, taille maximale de l’extrait envoyé, formats d’entrée, profil MP4 de sortie, résolution/fréquence/qualité, politique audio et durée de conservation.
+
+**Critère de sortie :** parcours de trim réel testé sur appareils cibles, règles d’encodage documentées et fallback validé.
+
+### Phase 1 — Modèle multi-cadres et interface créateur
+
+Créer une association ordonnée campagne-cadres (par exemple `campaign_frames`). Reprendre les campagnes existantes à partir de `campaigns.frame_id`; conserver ce champ comme cadre par défaut pendant la migration des lecteurs historiques.
+
+Garde-fous :
+
+- le propriétaire de la campagne ne peut y attacher que ses propres cadres;
+- un participant ne lit que les cadres attachés à une campagne publiée;
+- toutes les options vidéo d’une campagne doivent être compatibles avec son type de média et son ratio, sauf décision explicite d’élargir le modèle;
+- le créateur doit conserver un cadre par défaut valide avant publication.
+
+Fichiers probables :
+
+- `supabase/migrations/0027_campaign_frames.sql` (numéro indicatif, à revalider);
+- `lib/types.ts`;
+- `lib/backend/types.ts`;
+- `lib/backend/supabase.ts`;
+- `lib/backend/local.ts`;
+- interfaces de création/édition de campagne et sélection de cadres.
+
+**Critère de sortie :** campagne existante inchangée à l’écran et à l’export; nouvelles campagnes vidéo pouvant enregistrer et restituer une liste ordonnée de cadres autorisés.
+
+### Phase 2 — Contrat de tâche, idempotence et quotas
+
+Ajouter les métadonnées de tâches d’export et des fonctions SQL/RPC étroites pour réserver, confirmer, annuler, renouveler, consulter l’état et expirer une tâche. N’enregistrer que les clés d’objets et métadonnées nécessaires, pas le contenu des vidéos ni des secrets bruts.
+
+#### Parcours public `/c`
+
+`claim_participation` incrémente actuellement le quota au moment de l’appel. Pour un rendu vidéo asynchrone, créer une réservation temporaire et atomique, confirmée lors de la réussite, libérée en cas d’échec ou d’expiration. La réservation vidéo doit être prise en compte par les téléchargements photo afin que deux participants ne consomment pas simultanément la dernière unité.
+
+#### Parcours privé `/d`
+
+Réutiliser `distribution_export_v1` et les opérations idempotentes existantes, en adaptant leur durée/renouvellement si le worker prend plus longtemps. Ne pas compter deux fois un export; préserver le quota propre au lien privé, distinct du quota global de campagne.
+
+Fichiers probables :
+
+- `supabase/migrations/0028_participant_video_jobs.sql` (numéro indicatif);
+- fonctions de quota existantes, notamment `0007_participation_quota.sql`;
+- fonctions de transaction dans `0022_distribution_transactions.sql`;
+- contrats de types et couche `lib/distribution-export.ts` si nécessaire.
+
+**Critère de sortie :** tests SQL prouvant qu’une opération unique ne consomme qu’une unité malgré retry, échec, expiration ou appels concurrents.
+
+### Phase 3 — Upload privé et API de tâche
+
+Créer un stockage vidéo temporaire **distinct** du bucket `media` public. Prévoir un accès d’upload à durée courte et limité à un objet dont le chemin est généré côté serveur. Les droits d’administration restent côté serveur/worker.
+
+Routes indicatives, à adapter aux conventions existantes :
+
+- `app/api/participant-video/jobs/route.ts` — autoriser et créer une opération;
+- `app/api/participant-video/jobs/[id]/route.ts` — état, annulation ou reprise autorisée;
+- `app/api/participant-video/jobs/[id]/result/route.ts` — récupérer le résultat de façon contrôlée.
+
+Validations côté serveur :
+
+- campagne publiée et accessible sur `/c`, ou jeton privé valide sur `/d`;
+- cadre membre de la liste autorisée;
+- taille, conteneur, codec et durée réelle de l’objet;
+- durée ≤ 30 secondes;
+- quota réservé avant le travail coûteux;
+- clé d’objet et accès au résultat limités à la tâche;
+- quotas de débit et de concurrence pour les appels anonymes.
+
+Les URL signées, jetons `/d` et secrets d’opération ne doivent pas apparaître dans les logs. Les messages `/d` doivent préserver l’indistinguabilité actuelle d’un jeton absent, expiré, révoqué ou épuisé.
+
+**Critère de sortie :** un participant anonyme peut envoyer uniquement un segment court dans l’espace privé, et toute demande invalide est rejetée sans accès aux données d’un autre participant.
+
+### Phase 4 — Worker vidéo et rendu MP4
+
+Mettre le worker dans un runtime durable sélectionné et déployé séparément de l’application web, derrière une file de tâches. Ne pas supposer qu’une route Next.js de durée limitée peut encoder de manière fiable tous les clips.
+
+Le worker doit :
+
+1. lire la tâche, la campagne et le descripteur du cadre autorisé depuis le serveur;
+2. récupérer les objets depuis le stockage privé selon des chemins contrôlés;
+3. composer le clip selon le ratio/cadrage de la campagne et le cadre choisi;
+4. préserver l’audio quand il existe, avec synchronisation au segment choisi;
+5. éviter l’agrandissement artificiel de la source;
+6. produire et valider un MP4 conforme au profil produit retenu;
+7. publier l’état/progression et rendre disponible le résultat privé;
+8. traiter les retries/crash de façon idempotente et supprimer les fichiers temporaires à échéance.
+
+
+Exécuter FFmpeg de façon isolée, sans interpolation de commande shell avec des valeurs utilisateur; limiter durée, mémoire, CPU et taille du résultat.
+
+**Critère de sortie :** fixtures vidéo vérifiées pour durée, orientation, recadrage, qualité, lecture MP4, audio et nettoyage; le worker redémarre sans doubler le quota ni créer de rendus concurrents non contrôlés.
+
+### Phase 5 — Parcours participant commun `/c` et `/d`
+
+Étendre `components/participant/participant-journey.tsx` sans dupliquer les routes :
+
+1. sélectionner un cadre autorisé (sauter si unique);
+2. choisir une vidéo et la prévisualiser localement;
+3. découper/choisir un extrait ≤ 30 secondes et régler le cadrage;
+4. afficher le consentement précisant que seul l’extrait choisi est envoyé et qu’il sera supprimé selon la politique annoncée;
+5. afficher préparation, upload, mise en file, rendu, réussite; offrir annuler/réessayer/reprendre;
+6. prévisualiser le résultat et télécharger le MP4.
+
+Composants/modules potentiels :
+
+- `components/participant/video-input.tsx`;
+- `components/participant/video-trim.tsx`;
+- `lib/video-trim.ts`;
+- `lib/participant-video-jobs.ts` pour le client du contrat de tâche;
+- mise à jour de `components/participant/participant-journey.tsx`.
+
+Adapter les chargements de campagnes de `app/c/[slug]/participant-campaign.tsx` et `app/d/[token]/page.tsx`. Garder le choix des cadres autorisés côté serveur; ne pas accepter un `frame_id` client sans le revalider.
+
+États à couvrir : fichier annulé/corrompu/incompatible, métadonnées illisibles, trim indisponible, quota refusé, réseau interrompu, URL d’upload expirée, job en attente/échoué, lien de résultat expiré, téléchargement mobile bloqué. Chaque état doit proposer une action réalisable.
+
+**Critère de sortie :** un parcours complet fonctionne sur `/c` et `/d`; la photo continue de fonctionner et ne reçoit pas de nouveau transfert réseau.
+
+### Phase 6 — Validation, pilote et déploiement progressif
+
+- Ajouter des contrôles TypeScript, tests de logique, tests SQL et harnais serveur, selon les conventions `tools/*-check` du dépôt.
+- Tester 29,9 s, 30 s, >30 s, durées malformées, faux MIME, fichiers tronqués, dépassement de taille, codec non supporté et rotation mobile.
+- Tester RLS, droits d’accès aux objets, liens signés expirés, jetons privés, suppression/revocation, jobs dupliqués et accès croisé aux campagnes.
+- Tester concurrence quota avec exports photo et vidéo simultanés; confirmer libération sur échec et absence de double débit lors des retries.
+- Tester synchronisation audio, cadrage, ratio, durée finale et lecture MP4 sur appareils/navigateurs visés.
+- Déployer derrière un drapeau de fonctionnalité, piloter avec un petit périmètre, observer latence de file, taux d’échec, coûts, nettoyage et compatibilité avant ouverture générale.
+
+**Critère final :** cadres uniquement autorisés, clip téléversé ≤30 secondes, résultat MP4 privé téléchargeable, quotas exacts, fichiers temporaires supprimés conformément à l’information affichée, parcours photo intact.
+
+---
+
+## 5. Ordre de développement recommandé
+
+1. **Spike trim local** — prouver le point le plus risqué sur appareils cibles.
+2. **Choix du stockage privé et du worker/queue** — benchmarker le rendu vidéo représentatif; déterminer limites et rétention.
+3. **Multi-cadres** — migration rétrocompatible, RLS, backends Supabase/local et interface créateur.
+4. **Tâches et quotas** — contrat idempotent public/privé, réservé/confirmé/annulé.
+5. **Upload privé et worker MP4** — sécurité, validation serveur, erreurs, nettoyage.
+6. **Interface participant** — connecter le parcours réel aux services désormais vérifiables.
+7. **Tests sur appareils, pilote et déploiement progressif.**
+
+Ne pas commencer par une interface de chargement qui n’est reliée ni au quota, ni au stockage privé, ni au worker réel.
+
+---
+
+## 6. Décisions encore à prendre avant le rendu de production
+
+Ces limites ne sont pas définies par le code actuel et ne doivent pas être inventées pendant l’implémentation :
+
+- taille maximale du fichier source avant trim et de l’extrait téléversé;
+- conteneurs et codecs acceptés, notamment formats mobiles;
+- résolution, fréquence d’images et niveau de qualité du MP4;
+- comportement du cadre animé sur le clip : boucle, animation jouée une fois ou animation figée;
+- politique audio : conserver par défaut (recommandé), permettre de couper le son ou les deux;
+- durée de conservation de la source, du résultat et fenêtre de retéléchargement;
+- fournisseur/région du stockage privé et du worker/queue;
+- limites de concurrence, débit anonyme, réessais et règles de quota si le worker échoue.

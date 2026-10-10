@@ -5,6 +5,7 @@ import {
   type Layer,
   type Ratio,
   type ShapeLayer,
+  type SubjectMode,
   type TextLayer,
 } from './types';
 import { isRatio, ratioSpec } from './ratios';
@@ -169,6 +170,39 @@ export function photoZone(descriptor: Descriptor): PhotoZone {
   const bounds = layerBounds(anchor);
   if (bounds.w <= 0 || bounds.h <= 0) return frameZone(descriptor.ratio);
   return bounds;
+}
+
+/**
+ * Le sujet est-il détouré ?
+ *
+ * Prédicat **unique**, lu par la scène participant comme par l'export. Recopier
+ * la comparaison `descriptor.subject === 'cutout'` à deux endroits suffirait à
+ * ce qu'un des deux finisse par diverger — et la divergence serait invisible :
+ * un aperçu détouré produirait un fichier découpé au rectangle, ou l'inverse.
+ *
+ * Il implique **deux** choses, et elles vont ensemble : pas de découpe
+ * rectangulaire (le canal alpha masque) et un dimensionnement « contenir » (le
+ * sujet doit tenir entier). Les séparer donnerait soit un sujet tronqué, soit
+ * un sujet amputé.
+ */
+export function isCutout(descriptor: Descriptor): boolean {
+  return descriptor.subject === 'cutout';
+}
+
+/**
+ * Le média du participant doit-il être découpé au rectangle de la zone ?
+ *
+ * Vrai en mode Fond classique, et **seulement** là. En détourage, c'est le canal
+ * alpha du sujet qui masque : une découpe rectangulaire tronquerait net une
+ * tête, des bras ou des épaules qui dépassent de la zone.
+ *
+ * Fonction partagée par la scène participant et par l'export. Écrite à part
+ * précisément pour cela : recopiée dans les deux, elle finirait par n'être
+ * corrigée que dans un seul — et l'aperçu montrerait un sujet entier là où le
+ * fichier téléchargé en aurait livré un morceau.
+ */
+export function clipsParticipantPhoto(descriptor: Descriptor): boolean {
+  return Boolean(descriptor.photo_anchor) && !isCutout(descriptor);
 }
 
 /* ------------------------------------------------------------------ */
@@ -441,6 +475,14 @@ export function parseDescriptor(input: unknown): Descriptor {
     .filter((l): l is Layer => l !== null)
     .sort((a, b) => a.z - b.z);
 
+  /*
+   * Un mode inconnu est **abandonné**, pas ramené au défaut : même raisonnement
+   * que pour le filtre photo. Écrire le défaut ferait croire que la question a
+   * été traitée, alors qu'un rendu futur ne saurait plus qu'il a perdu quelque
+   * chose. Omis, le cadre repart simplement en mode Fond classique.
+   */
+  const subject: SubjectMode | undefined = raw.subject === 'cutout' ? 'cutout' : undefined;
+
   return {
     version: num(raw.version, DESCRIPTOR_VERSION),
     ratio,
@@ -453,6 +495,7 @@ export function parseDescriptor(input: unknown): Descriptor {
       typeof raw.photo_anchor === 'string' && raw.photo_anchor.length > 0
         ? raw.photo_anchor
         : undefined,
+    subject,
     motion: parseMotion(raw.motion),
   };
 }
@@ -467,6 +510,9 @@ export function serializeDescriptor(descriptor: Descriptor): string {
       // Omis quand absent : un cadre en mode Cadre se sérialise exactement comme
       // avant l'introduction de la zone photo.
       ...(descriptor.photo_anchor ? { photo_anchor: descriptor.photo_anchor } : {}),
+      // Omis tant qu'il vaut le défaut : un cadre en mode Fond classique se
+      // sérialise exactement comme avant l'arrivée du détourage.
+      ...(descriptor.subject === 'cutout' ? { subject: descriptor.subject } : {}),
       ...(descriptor.motion ? { motion: descriptor.motion } : {}),
       layers: [...descriptor.layers]
         .sort((a, b) => a.z - b.z)

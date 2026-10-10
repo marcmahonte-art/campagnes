@@ -248,7 +248,9 @@ export function probeVideo(src: string): Promise<VideoProbe> {
       finish(() =>
         reject(
           new Error(
-            'Ce format vidéo n’est pas lisible par votre navigateur. Essayez un MP4, ou exportez une copie depuis votre galerie.',
+            'Cette vidéo utilise un codec que votre navigateur ne prend pas en charge. ' +
+              'Si c’est une vidéo iPhone (HEVC/H.265), réglez « Paramètres → Caméra → Formats → Plus compatible » pour produire un MP4 H.264, ' +
+              'ou convertissez-la via VLC (Fichier → Convertir).',
           ),
         ),
       );

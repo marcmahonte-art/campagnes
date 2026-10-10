@@ -44,9 +44,16 @@ export const KIND_SPECS: KindSpec[] = [
     id: 'background_frame',
     label: 'Photo sur fond',
     usage: 'Les participants ajoutent une photo',
-    detail: 'La photo est posée dans une zone du décor : le fond reste visible tout autour.',
+    detail:
+      'La photo est posée dans une zone du décor : le fond reste visible tout autour. ' +
+      'Un sujet détouré vient s’y poser sans son arrière-plan.',
     icon: Images,
-    formats: ['Photo', 'Vidéo'],
+    /*
+     * Photo seulement. Le parcours ne traite une vidéo que pour `video_frame` :
+     * annoncer « Vidéo » ici promettait un dépôt que rien n'acceptait, et le
+     * participant ne le découvrait qu'après avoir choisi son fichier.
+     */
+    formats: ['PNG', 'JPG'],
   },
 ];
 

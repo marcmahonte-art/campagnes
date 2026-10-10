@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Canvas as FabricCanvas, FabricImage, FabricObject, IText } from 'fabric';
 import { cn } from '@/lib/cn';
 import { ratioSpec } from '@/lib/ratios';
-import { photoZone } from '@/lib/descriptor';
+import { clipsParticipantPhoto, photoZone } from '@/lib/descriptor';
 import { createImageObject, createVideoObject } from '@/lib/fabric-image';
 import { createShapeObject } from '@/lib/fabric-shape';
 import {
@@ -18,8 +18,10 @@ import {
   DEFAULT_PARTICIPANT_STYLE,
   clampPlacement,
   clampTextPosition,
+  participantInsertIndex,
   participantTextLayer,
   participantTextWidth,
+  photoFit,
   photoLayer,
   photoSize,
   type ParticipantPhoto,
@@ -29,16 +31,21 @@ import {
 } from '@/lib/participant';
 import { applyPhotoFilter, type PhotoFilter } from '@/lib/photo-filters';
 import { addBadge } from '@/lib/watermark';
-import type { Descriptor } from '@/lib/types';
+import type { Descriptor, Layer } from '@/lib/types';
 
 /**
  * Scène du parcours participant.
  *
- * Elle affiche le cadre du créateur **par-dessus** les calques du participant :
- * sa photo, puis son texte. Le cadre est inerte (ni sélectionnable, ni
- * déplaçable) : le participant ne bouge que ce qui lui appartient. C'est la
- * traduction directe de la règle produit — le cadre est un contrat figé, la
- * photo et le texte sont les seules variables.
+ * Elle affiche le cadre du créateur **autour** des calques du participant : ce
+ * qui est sous la zone photo reste derrière son média, ce qui est au-dessus
+ * passe devant, et son texte est au sommet. L'ordre vient du descripteur —
+ * jamais d'une règle décidée ici. C'est ce qui interdit à l'aperçu de montrer
+ * autre chose que le fichier téléchargé.
+ *
+ * Le cadre est inerte (ni sélectionnable, ni déplaçable) : le participant ne
+ * bouge que ce qui lui appartient. C'est la traduction directe de la règle
+ * produit — le cadre est un contrat figé, la photo et le texte sont les seules
+ * variables.
  *
  * Le canvas travaille dans le repère natif du ratio et n'est réduit à l'écran
  * que par `setZoom` : les coordonnées échangées avec le parent sont donc
@@ -116,12 +123,34 @@ export function ParticipantStage({
   const [ready, setReady] = useState(0);
 
   const spec = useMemo(() => ratioSpec(descriptor.ratio), [descriptor.ratio]);
-  const layers = useMemo(
-    () => [...descriptor.layers].sort((a, b) => a.z - b.z),
-    [descriptor.layers],
-  );
   /** Tout le calcul de placement se fait dans la zone, pas dans le cadre entier. */
   const zone = useMemo(() => photoZone(descriptor), [descriptor]);
+
+  /**
+   * Le détourage change deux choses d'un coup, et elles vont ensemble : plus de
+   * découpe rectangulaire — c'est le canal alpha du sujet qui masque — et un
+   * ajustement « contenir », pour que le sujet tienne entier. Voir `isCutout()`.
+   */
+  const fit = photoFit(descriptor);
+  const clipPhoto = clipsParticipantPhoto(descriptor);
+
+  /**
+   * La pile du créateur, coupée au point où le participant s'insère.
+   *
+   * `below` reste derrière son média, `above` passe devant. Le point de coupe
+   * vient de `participantInsertIndex()` — la **même** fonction qui sert à
+   * `composeDescriptor()` pour l'export. Deux calculs séparés finiraient par
+   * diverger, et l'aperçu montrerait alors un ordre que le fichier n'aurait pas.
+   *
+   * On le calcule ici, à partir du descripteur **du créateur**, et non du
+   * descripteur composé : celui-ci change à chaque déplacement — sa géométrie en
+   * dépend — et la scène se reconstruirait alors à chaque geste du doigt.
+   */
+  const stack = useMemo(() => {
+    const sorted = [...descriptor.layers].sort((a, b) => a.z - b.z);
+    const at = participantInsertIndex(descriptor, sorted);
+    return { below: sorted.slice(0, at), above: sorted.slice(at) };
+  }, [descriptor.layers, descriptor.photo_anchor]);
 
   const placementKey = (p: PhotoPlacement) =>
     `${p.zoom.toFixed(4)}|${Math.round(p.x)}|${Math.round(p.y)}`;
@@ -156,18 +185,23 @@ export function ParticipantStage({
   /* ---------------- Émission vers le parent ---------------- */
   const emit = useCallback(
     (object: FabricObject) => {
-      const next = clampPlacement(photo, zone, {
-        zoom: placementRef.current.zoom,
-        x: object.left ?? 0,
-        y: object.top ?? 0,
-      });
+      const next = clampPlacement(
+        photo,
+        zone,
+        {
+          zoom: placementRef.current.zoom,
+          x: object.left ?? 0,
+          y: object.top ?? 0,
+        },
+        fit,
+      );
       lastEmitted.current = placementKey(next);
       onPlacementChange(next);
     },
     // `placementKey` est une fonction pure sans dépendance : l'inclure ferait
     // recréer `emit` à chaque rendu sans rien apporter.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [zone, onPlacementChange, photo],
+    [zone, onPlacementChange, photo, fit],
   );
 
   /**
@@ -294,31 +328,61 @@ export function ParticipantStage({
       });
       canvasRef.current = canvas;
 
-      /* 1. Le média du participant — tout en bas, et mobile. */
-      try {
-        const start = placementRef.current;
-        const layer = photoLayer(photo, zone, start, 0, styleRef.current.filter);
-        /*
-         * En mode Fond, le média est découpé à la zone. Le rectangle de découpe
-         * est `absolutePositioned` : il vit dans le repère du canvas, donc il ne
-         * suit ni le déplacement du média ni le zoom de la vue. C'est exactement
-         * ce que fait l'export.
-         */
-        const clip = descriptor.photo_anchor ? zone : null;
-        const image = video
-          ? await createVideoObject(layer, video, { interactive: true, clip })
-          : await createImageObject(layer, { interactive: true, clip });
-        if (disposed) return;
+      /*
+       * 1. La pile, dans l'ordre du descripteur.
+       *
+       * Ce qui est sous la zone photo d'abord, le média du participant ensuite,
+       * ce qui est au-dessus enfin. C'est la répartition même que calcule
+       * `composeDescriptor()` pour l'export.
+       *
+       * Auparavant le média était posé **tout en bas**, puis tous les calques du
+       * créateur par-dessus. En mode Fond sur un fond opaque, le participant ne
+       * voyait donc pas sa propre photo dans l'aperçu, alors que le fichier
+       * téléchargé la plaçait correctement au-dessus du décor : l'aperçu mentait
+       * sur le seul point qui compte dans ce mode, l'ordre des plans.
+       *
+       * `null` marque la place du média — un jeton d'ordre, pas un calque.
+       */
+      const ordered: (Layer | null)[] = [...stack.below, null, ...stack.above];
 
-        canvas.add(image);
-        photoObjectRef.current = image;
-        appliedFilter.current = styleRef.current.filter;
-      } catch {
-        /* l'absence de photo est gérée par le parent, qui ne monte pas cette scène */
-      }
+      for (const layer of ordered) {
+        if (layer === null) {
+          /* 2. Le média du participant — à sa place exacte, et mobile. */
+          try {
+            const start = placementRef.current;
+            const media = photoLayer(
+              photo,
+              zone,
+              start,
+              0,
+              styleRef.current.filter,
+              fit,
+            );
+            /*
+             * En mode Fond, le média est découpé à la zone. Le rectangle de
+             * découpe est `absolutePositioned` : il vit dans le repère du
+             * canvas, donc il ne suit ni le déplacement du média ni le zoom de
+             * la vue. C'est exactement ce que fait l'export.
+             *
+             * En détourage, `clipPhoto` est faux : c'est le canal alpha du sujet
+             * qui masque, et une découpe rectangulaire le tronquerait net.
+             */
+            const clip = clipPhoto ? zone : null;
+            const image = video
+              ? await createVideoObject(media, video, { interactive: true, clip })
+              : await createImageObject(media, { interactive: true, clip });
+            if (disposed) return;
 
-      /* 2. Les calques du cadre — inertes. */
-      for (const layer of layers) {
+            canvas.add(image);
+            photoObjectRef.current = image;
+            appliedFilter.current = styleRef.current.filter;
+          } catch {
+            /* l'absence de photo est gérée par le parent, qui ne monte pas cette scène */
+          }
+          continue;
+        }
+
+        /* 3. Un calque du cadre — inerte. */
         try {
           if (layer.type === 'shape') {
             // Inerte, comme le texte du créateur : seul le cadre compte, et les
@@ -347,12 +411,12 @@ export function ParticipantStage({
       }
 
       /*
-       * 3. Le texte du participant, AU-DESSUS de sa photo ET du cadre.
+       * 4. Le texte du participant, AU-DESSUS de sa photo ET du cadre.
        *
-       * Il est ajouté après les calques du créateur, puis remonté explicitement :
-       * l'ordre Fabric affiché doit porter la même règle que le descripteur et
-       * l'export. Un calque de cadre publié après coup ne peut donc plus passer
-       * devant ce que le participant écrit.
+       * Sa **place** vient du descripteur : il est au sommet, donc un calque de
+       * cadre publié après coup ne peut plus passer devant ce qu'il écrit. Son
+       * **contenu**, lui, vient du style vivant — c'est ce qu'il est en train de
+       * taper, et le reconstruire depuis le descripteur ferait perdre le curseur.
        */
       const text = await buildTextObject();
       if (disposed) return;
@@ -360,12 +424,11 @@ export function ParticipantStage({
         decorateTextObject(text);
         canvas.add(text);
         textObjectRef.current = text;
-        bringTextToFront();
         if (textFocusKey) focusTextObject();
       }
 
       /*
-       * 4. Le badge « Créé avec Campagnes ».
+       * 5. Le badge « Créé avec Campagnes ».
        *
        * Il est dessiné par la MÊME fonction que l'export (`lib/watermark.ts`).
        * Un simple aperçu en HTML finirait par diverger de quelques pixels — et
@@ -381,17 +444,22 @@ export function ParticipantStage({
       canvas.requestRenderAll();
       setReady((n) => n + 1);
 
-      /* 4. Le déplacement ne peut jamais découvrir le cadre. */
+      /* 6. Le déplacement ne peut jamais découvrir le cadre. */
       canvas.on('object:moving', (event) => {
         const object = event.target;
         if (!object) return;
 
         if (object === photoObjectRef.current) {
-          const safe = clampPlacement(photo, zone, {
-            zoom: placementRef.current.zoom,
-            x: object.left ?? 0,
-            y: object.top ?? 0,
-          });
+          const safe = clampPlacement(
+            photo,
+            zone,
+            {
+              zoom: placementRef.current.zoom,
+              x: object.left ?? 0,
+              y: object.top ?? 0,
+            },
+            fit,
+          );
           object.set({ left: safe.x, top: safe.y });
           object.setCoords();
           emit(object);
@@ -445,7 +513,9 @@ export function ParticipantStage({
   }, [
     photo,
     video,
-    layers,
+    stack,
+    clipPhoto,
+    fit,
     zone,
     watermark,
     spec.width,
@@ -670,7 +740,7 @@ export function ParticipantStage({
 
     if (placementKey(placement) === lastEmitted.current) return;
 
-    const size = photoSize(photo, zone, placement.zoom);
+    const size = photoSize(photo, zone, placement.zoom, fit);
     const naturalWidth = object.width || size.w;
     const naturalHeight = object.height || size.h;
 
@@ -679,7 +749,7 @@ export function ParticipantStage({
     object.scaleY = size.h / naturalHeight;
     object.setCoords();
     canvas.requestRenderAll();
-  }, [placement, photo, zone]);
+  }, [placement, photo, zone, fit]);
 
   /* ---------------- Redimensionnement de la fenêtre ---------------- */
   useEffect(() => {

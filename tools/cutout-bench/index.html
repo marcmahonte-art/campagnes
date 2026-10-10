@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Banc de détourage — Campagnes</title>
+    <style>
+      /*
+       * Identité du produit : neutre, noir, et le dégradé de marque en accent.
+       * Le banc est un outil interne, pas un écran du parcours — mais il vit dans
+       * le même dépôt, et un outil qu'on ouvre tous les jours autant qu'il soit
+       * lisible. Thème clair par défaut, sombre si l'appareil le demande : le banc
+       * s'ouvre sur un téléphone, souvent le soir.
+       */
+      :root {
+        --ink: #0a0a0a;
+        --ink-2: #4a4a52;
+        --ink-3: #8a8a94;
+        --line: #e4e4e8;
+        --surface: #ffffff;
+        --surface-2: #f6f6f8;
+        --brand-1: #7b61ff;
+        --brand-2: #ff6b6b;
+        --brand-3: #ffd93d;
+        --ok: #147a4a;
+        --warn: #9a5b00;
+        --bad: #b3261e;
+        --radius: 14px;
+        --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --ink: #f4f4f6;
+          --ink-2: #b6b6c0;
+          --ink-3: #7e7e8a;
+          --line: #2a2a32;
+          --surface: #131317;
+          --surface-2: #1c1c22;
+          --ok: #4ade80;
+          --warn: #fbbf24;
+          --bad: #f87171;
+        }
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        padding: 0 0 4rem;
+        background: var(--surface-2);
+        color: var(--ink);
+        font: 15px/1.55 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        -webkit-text-size-adjust: 100%;
+      }
+
+      .wrap { max-width: 880px; margin: 0 auto; padding: 0 1rem; }
+
+      header.bench {
+        background: var(--surface);
+        border-bottom: 1px solid var(--line);
+        padding: 1.75rem 0 1.5rem;
+        margin-bottom: 1.5rem;
+      }
+      header.bench h1 { margin: 0 0 .35rem; font-size: 1.4rem; letter-spacing: -.01em; }
+      header.bench .bar {
+        height: 3px; width: 76px; border-radius: 2px; margin: 0 0 .9rem;
+        background: linear-gradient(90deg, var(--brand-1), var(--brand-2), var(--brand-3));
+      }
+      header.bench p { margin: 0; color: var(--ink-2); max-width: 62ch; }
+
+      section {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        padding: 1.15rem 1.25rem;
+        margin-bottom: 1rem;
+      }
+      section > h2 {
+        margin: 0 0 .15rem;
+        font-size: .78rem;
+        font-weight: 600;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+        color: var(--ink-3);
+      }
+      section > .hint { margin: 0 0 .9rem; color: var(--ink-2); font-size: .875rem; }
+
+      .grid { display: grid; gap: .65rem; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+      .fact { background: var(--surface-2); border-radius: 10px; padding: .6rem .7rem; }
+      .fact dt { font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); }
+      .fact dd { margin: .15rem 0 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+      label.field { display: block; margin-bottom: .85rem; }
+      label.field > span { display: block; font-size: .8rem; font-weight: 600; margin-bottom: .3rem; }
+      label.field > .sub { display: block; font-weight: 400; color: var(--ink-3); font-size: .78rem; margin-top: .15rem; }
+
+      input[type="text"], select, input[type="number"] {
+        width: 100%; padding: .55rem .65rem; font: inherit;
+        color: var(--ink); background: var(--surface);
+        border: 1px solid var(--line); border-radius: 9px;
+      }
+      input[type="range"] { width: 100%; accent-color: var(--brand-1); }
+
+      .row { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
+
+      button {
+        font: inherit; font-weight: 600; cursor: pointer;
+        padding: .6rem 1rem; border-radius: 10px;
+        border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+      }
+      button.primary {
+        border: 0; color: #fff;
+        background: linear-gradient(90deg, var(--brand-1), var(--brand-2));
+      }
+      button:disabled { opacity: .45; cursor: not-allowed; }
+
+      .warning {
+        margin: .5rem 0 0; padding: .55rem .7rem; border-radius: 9px;
+        background: color-mix(in srgb, var(--warn) 14%, transparent);
+        color: var(--warn); font-size: .85rem; font-weight: 500;
+      }
+      .warning:empty { display: none; }
+
+      #drop {
+        border: 2px dashed var(--line); border-radius: var(--radius);
+        padding: 1.6rem 1rem; text-align: center; color: var(--ink-2);
+        cursor: pointer; transition: border-color .15s, background .15s;
+      }
+      #drop.over { border-color: var(--brand-1); background: color-mix(in srgb, var(--brand-1) 7%, transparent); }
+      #drop strong { color: var(--ink); }
+      #drop small { display: block; margin-top: .35rem; color: var(--ink-3); }
+
+      .side { display: grid; gap: 1rem; grid-template-columns: 1fr; }
+      @media (min-width: 700px) { .side { grid-template-columns: 1fr 1fr; } }
+
+      /* Damier : sans lui, un détourage vide et un détourage parfait se ressemblent. */
+      .checker {
+        border-radius: 10px; overflow: hidden; border: 1px solid var(--line);
+        background-color: #fff;
+        background-image:
+          linear-gradient(45deg, #d8d8dd 25%, transparent 25%, transparent 75%, #d8d8dd 75%),
+          linear-gradient(45deg, #d8d8dd 25%, transparent 25%, transparent 75%, #d8d8dd 75%);
+        background-size: 18px 18px;
+        background-position: 0 0, 9px 9px;
+        min-height: 190px; display: flex; align-items: center; justify-content: center;
+      }
+      .checker img { display: block; max-width: 100%; max-height: 340px; }
+      .checker .empty { color: #8a8a94; font-size: .85rem; padding: 2rem 1rem; text-align: center; }
+
+      #status { margin: .8rem 0 0; font-size: .875rem; color: var(--ink-2); min-height: 1.3em; }
+      #status.error { color: var(--bad); font-weight: 500; }
+      #status.ok { color: var(--ok); font-weight: 500; }
+
+      .verdict { display: inline-block; padding: .18rem .55rem; border-radius: 999px; font-size: .78rem; font-weight: 700; }
+      .verdict.ok { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+      .verdict.faible { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+      .verdict.vide, .verdict.plein { background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--bad); }
+
+      .tablewrap { overflow-x: auto; margin: 0 -.25rem; }
+      table { border-collapse: collapse; width: 100%; font-size: .8rem; font-variant-numeric: tabular-nums; }
+      th, td { text-align: left; padding: .45rem .5rem; border-bottom: 1px solid var(--line); white-space: nowrap; }
+      th { font-size: .7rem; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-3); font-weight: 600; }
+      tbody tr:last-child td { border-bottom: 0; }
+      .num { font-family: var(--mono); }
+
+      pre.raw {
+        margin: .6rem 0 0; padding: .6rem .7rem; border-radius: 9px;
+        background: var(--surface-2); font-family: var(--mono); font-size: .78rem;
+        white-space: pre-wrap; word-break: break-word; color: var(--ink-2);
+      }
+      pre.raw:empty { display: none; }
+
+      ol, ul { margin: .4rem 0 0; padding-left: 1.2rem; color: var(--ink-2); }
+      ol li, ul li { margin-bottom: .35rem; }
+      code { font-family: var(--mono); font-size: .85em; background: var(--surface-2); padding: .1rem .3rem; border-radius: 4px; }
+      .note { font-size: .85rem; color: var(--ink-2); }
+      .note strong { color: var(--ink); }
+    </style>
+  </head>
+  <body>
+    <header class="bench">
+      <div class="wrap">
+        <h1>Banc de détourage</h1>
+        <div class="bar"></div>
+        <p>
+          Mesure le coût réel du détourage sur l'appareil qui ouvre cette page : poids
+          téléchargé, temps de chargement, temps d'inférence, mémoire. C'est ce tableau qui
+          décide si le détourage tient sur un téléphone d'entrée de gamme.
+        </p>
+        <p style="margin-top:.6rem">
+          <strong>Votre photo ne quitte jamais cet appareil.</strong> Elle est lue en local,
+          détourée en local, et rien n'est envoyé nulle part. Le seul trafic réseau est le
+          téléchargement du moteur et des poids — et c'est justement ce qu'on mesure.
+        </p>
+      </div>
+    </header>
+
+    <div class="wrap">
+      <section>
+        <h2>Environnement</h2>
+        <p class="hint">Ce que cet appareil expose, et le modèle que la stratégie à deux étages retient pour lui.</p>
+        <div class="grid" id="env"></div>
+      </section>
+
+      <section>
+        <h2>Modèle</h2>
+        <p class="hint">
+          Laisser la stratégie décider donne le comportement réel de la production. Forcer un
+          modèle sert à comparer deux moteurs sur la même photo.
+        </p>
+        <label class="field">
+          <span>Modèle employé</span>
+          <select id="model"></select>
+          <span class="sub" id="modelcost"></span>
+        </label>
+        <p class="warning" id="modelwarn"></p>
+        <label class="field">
+          <span>Adoucissement du bord — <output id="featherout">0</output> pixel de masque</span>
+          <input type="range" id="feather" min="0" max="3" step="0.25" value="0" />
+          <span class="sub">
+            Converti en pixels de photo au moment du rendu : à 256×256 remonté sur une photo de
+            4000 px, 0,5 vaut environ 8 px. Zéro laisse le masque brut.
+          </span>
+        </label>
+        <label class="field" style="margin-bottom:0">
+          <span>Libellé de l'appareil</span>
+          <input type="text" id="device" placeholder="Pixel 6a / Android 15 / Chrome 126" />
+          <span class="sub">Il finit dans le CSV. Sans lui, les mesures ne sont pas comparables.</span>
+        </label>
+      </section>
+
+      <section>
+        <h2>Photo</h2>
+        <p class="hint">
+          Un portrait, idéalement avec des cheveux détachés du fond : c'est le cas qui sépare
+          les moteurs. La même photo pour tous les modèles rend les mesures comparables.
+        </p>
+        <div id="drop">
+          <strong>Déposez une photo</strong> ou touchez pour en choisir une
+          <small>Elle reste sur l'appareil — rien n'est envoyé.</small>
+        </div>
+        <input type="file" id="file" accept="image/*" hidden />
+        <div class="side" style="margin-top:1rem">
+          <div>
+            <div class="checker" id="originbox"><div class="empty">Photo d'origine</div></div>
+          </div>
+          <div>
+            <div class="checker" id="resultbox"><div class="empty">Détourage</div></div>
+          </div>
+        </div>
+        <div class="row" style="margin-top:1rem">
+          <button class="primary" id="run" disabled>Détourer</button>
+          <button id="clear" disabled>Effacer les mesures</button>
+        </div>
+        <p id="status"></p>
+        <pre class="raw" id="raw"></pre>
+      </section>
+
+      <section>
+        <h2>Mesures</h2>
+        <p class="hint">
+          Chaque détourage ajoute une ligne. Mesurez <strong>deux fois le même modèle</strong> :
+          la première ligne paie le téléchargement, la seconde est servie du cache — et c'est
+          le second chiffre qui décrit l'usage courant.
+        </p>
+        <div class="tablewrap"><table id="table"><tbody><tr><td class="note">Aucune mesure.</td></tr></tbody></table></div>
+        <div class="row" style="margin-top:.9rem">
+          <button id="csv">Copier le CSV</button>
+          <button id="download" disabled>Télécharger</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Protocole de mesure</h2>
+        <ol>
+          <li>Sur l'ordinateur : <code>npm run bench:cutout:serve</code></li>
+          <li>
+            Pour mesurer depuis un téléphone du même réseau :
+            <code>HOST=0.0.0.0 PORT=8788 npm run bench:cutout:serve</code>, puis ouvrir
+            <code>http://&lt;IP-locale&gt;:8788</code> sur le téléphone.
+          </li>
+          <li>Renseigner le libellé de l'appareil avant la première mesure.</li>
+          <li>Charger la photo de test, puis détourer <strong>deux fois</strong> par modèle.</li>
+          <li>Changer de modèle dans la liste, et recommencer avec la même photo.</li>
+          <li>Copier le CSV. Minimum : un Android milieu de gamme et un iPhone.</li>
+        </ol>
+      </section>
+
+      <section>
+        <h2>Ce que ce banc ne peut pas vérifier</h2>
+        <ul>
+          <li>
+            <strong>La qualité du contour.</strong> Il donne le verdict (sujet détecté, vide,
+            plein, trop petit) et le taux d'opacité, mais juger un bord de cheveux reste un
+            jugement humain. Regardez l'image, c'est tout l'objet de la comparaison.
+          </li>
+          <li>
+            <strong>Le rendu dans la composition.</strong> Le détourage est mesuré seul, hors du
+            cadre Fabric. L'empilement et l'export sont couverts par <code>check:stack</code> et
+            <code>check:stack-render</code>.
+          </li>
+          <li>
+            <strong>Le comportement réel d'un parcours participant</strong> : progression,
+            reprise après échec, mémoire sur la durée. C'est la phase 2.
+          </li>
+        </ul>
+      </section>
+    </div>
+
+    <script type="module" src="./bench.js"></script>
+  </body>
+</html>

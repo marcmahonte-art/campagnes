@@ -12,6 +12,33 @@ export interface FrameTemplate {
   descriptor: Descriptor;
 }
 
+/**
+ * Un décor vectoriel encodé en dur.
+ *
+ * Les décors des modèles détourés sont des SVG : quelques centaines d'octets,
+ * redimensionnés sans perte, aucune requête réseau. Le préfixe `data:image/svg`
+ * n'est pas cosmétique — `isUserImage()` s'en sert pour distinguer le décor d'un
+ * modèle d'une photo réellement importée par le créateur.
+ */
+function svg(markup: string): string {
+  return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(markup);
+}
+
+/**
+ * Le calque d'ancrage d'un modèle détouré : un carré transparent de 1×1 étiré à
+ * la taille de la zone.
+ *
+ * Il n'imprime rien. Il porte **deux** informations que rien d'autre ne porte :
+ * où le sujet du participant vient se poser (`photoZone()` lit son emprise) et
+ * à quel niveau de la pile il s'insère (`participantInsertIndex()` le place
+ * juste au-dessus). Les calques du modèle situés **sous** lui passent donc
+ * derrière le sujet, ceux situés **au-dessus** passent devant — c'est toute la
+ * composition de la référence, et elle tient à ce seul calque.
+ */
+function cutoutZone(): string {
+  return svg('<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>');
+}
+
 export const TEMPLATES: FrameTemplate[] = [
   {
     id: 'rentree-scolaire',
@@ -681,6 +708,511 @@ export const TEMPLATES: FrameTemplate[] = [
 ];
 
 /**
+ * Les trois décors détourés.
+ *
+ * Chacun est un `background_frame` porteur de `subject: 'cutout'` : le
+ * participant y dépose une photo, le sujet est détaché de son arrière-plan et
+ * vient se poser **dans** la scène, sans rectangle de découpe. C'est le « look »
+ * de la référence, et ces trois modèles en sont le seul chemin d'accès — aucune
+ * interface ne pose `subject` autrement.
+ *
+ * Tous sont écrits en 1:1 et **plein cadre** : `rescaleTo()` les ramène dans le
+ * format réel de la campagne, et un décor qui couvre exactement le cadre d'un
+ * format le couvre dans tous les autres. Les textes et les formes, eux, sont
+ * placés avec une marge telle qu'aucun ne déborde après mise à l'échelle —
+ * `check:templates:cutout` le vérifie sur les trois formats, pas sur un seul.
+ *
+ * **La composition tient à un seul calque.** Le sujet s'insère juste au-dessus
+ * de la zone (`cutoutZone()`) : tout ce qui est sous elle passe derrière lui,
+ * tout ce qui est au-dessus passe devant. Un décor, donc, se lit en trois
+ * plans — le fond, les éléments qui doivent passer derrière le sujet, et ceux
+ * qui doivent passer devant (le titre, les badges, les vagues de premier plan).
+ */
+TEMPLATES.push(
+  {
+    id: 'cutout-nuit-lunaire',
+    title: 'Nuit Lunaire — sujet détouré',
+    description:
+      'Ciel étoilé et halo de lune : le sujet détouré se découpe devant l’astre. ' +
+      'Titre en capitales espacées, sous-titre doré.',
+    kind: 'background_frame',
+    category: 'background_frame',
+    ratio: '1:1',
+    tags: ['détourage', 'nuit', 'lune', 'festival', 'carré'],
+    descriptor: {
+      version: 1,
+      ratio: '1:1',
+      background: 'transparent',
+      subject: 'cutout',
+      photo_anchor: 'tpl-lune-zone',
+      layers: [
+        {
+          id: 'tpl-lune-ciel',
+          type: 'image',
+          src: svg(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1080">' +
+              '<defs><linearGradient id="n" x1="0" y1="0" x2="0" y2="1">' +
+              '<stop offset="0" stop-color="#1E1B4B"/>' +
+              '<stop offset=".55" stop-color="#312E81"/>' +
+              '<stop offset="1" stop-color="#4C1D95"/>' +
+              '</linearGradient></defs>' +
+              '<rect width="1080" height="1080" fill="url(#n)"/>' +
+              '<circle cx="540" cy="360" r="240" fill="#FFD93D" opacity=".10"/>' +
+              '<circle cx="540" cy="360" r="150" fill="#FDE68A" opacity=".30"/>' +
+              '<circle cx="190" cy="170" r="4" fill="#FFFFFF" opacity=".9"/>' +
+              '<circle cx="880" cy="250" r="5" fill="#FFFFFF" opacity=".8"/>' +
+              '<circle cx="300" cy="640" r="3" fill="#FFFFFF" opacity=".7"/>' +
+              '<circle cx="820" cy="720" r="4" fill="#FFFFFF" opacity=".7"/>' +
+              '<circle cx="120" cy="880" r="3" fill="#FFFFFF" opacity=".6"/>' +
+              '<circle cx="960" cy="880" r="4" fill="#FFFFFF" opacity=".6"/>' +
+              '</svg>',
+          ),
+          label: 'Ciel de nuit',
+          x: 0,
+          y: 0,
+          w: 1080,
+          h: 1080,
+          rotation: 0,
+          z: 10,
+          opacity: 1,
+        },
+        /*
+         * Derrière le sujet : un anneau ouvert autour de l'astre. Il est posé
+         * sous la zone, donc le sujet le recouvre par endroits — c'est ce qui
+         * fait qu'il « passe derrière » au lieu de flotter devant.
+         */
+        {
+          id: 'tpl-lune-anneau',
+          type: 'shape',
+          kind: 'circle',
+          fill: 'transparent',
+          stroke: '#FDE68A',
+          strokeWidth: 0.004,
+          radius: 0,
+          x: 290,
+          y: 110,
+          w: 500,
+          h: 500,
+          rotation: 0,
+          z: 20,
+          opacity: 0.55,
+        },
+        {
+          id: 'tpl-lune-zone',
+          type: 'image',
+          src: cutoutZone(),
+          label: 'Zone du sujet détouré',
+          x: 140,
+          y: 200,
+          w: 800,
+          h: 760,
+          rotation: 0,
+          z: 30,
+          opacity: 1,
+        },
+        /* Devant le sujet : deux étoiles, petites, qui ancrent la profondeur. */
+        {
+          id: 'tpl-lune-etoile-1',
+          type: 'shape',
+          kind: 'star',
+          fill: '#FFFFFF',
+          stroke: 'transparent',
+          strokeWidth: 0,
+          radius: 0,
+          x: 150,
+          y: 150,
+          w: 72,
+          h: 72,
+          rotation: 0,
+          z: 40,
+          opacity: 0.95,
+        },
+        {
+          id: 'tpl-lune-etoile-2',
+          type: 'shape',
+          kind: 'star',
+          fill: '#FFD93D',
+          stroke: 'transparent',
+          strokeWidth: 0,
+          radius: 0,
+          x: 856,
+          y: 300,
+          w: 60,
+          h: 60,
+          rotation: 0,
+          z: 41,
+          opacity: 0.9,
+        },
+        {
+          id: 'tpl-lune-titre',
+          type: 'text',
+          text: 'MOON RABBIT',
+          font: 'Bebas Neue',
+          size: 84,
+          color: '#FFFFFF',
+          align: 'center',
+          weight: 'normal',
+          style: 'normal',
+          letterSpacing: 60,
+          lineHeight: 1.1,
+          curve: 0,
+          x: 90,
+          y: 64,
+          w: 900,
+          h: 110,
+          rotation: 0,
+          z: 50,
+          opacity: 1,
+        },
+        {
+          id: 'tpl-lune-sous',
+          type: 'text',
+          text: 'FESTIVAL DE LA LUNE · 2026',
+          font: 'Inter',
+          size: 28,
+          color: '#FDE68A',
+          align: 'center',
+          weight: 'normal',
+          style: 'normal',
+          letterSpacing: 24,
+          lineHeight: 1.16,
+          curve: 0,
+          x: 90,
+          y: 976,
+          w: 900,
+          h: 46,
+          rotation: 0,
+          z: 51,
+          opacity: 1,
+        },
+      ],
+    },
+  },
+  {
+    id: 'cutout-hackathon-tech',
+    title: 'Hackathon Tech — sujet détouré',
+    description:
+      'Fond sombre quadrillé et pastille indigo : le sujet détouré se détache ' +
+      'devant le disque, titre techno en bas de cadre.',
+    kind: 'background_frame',
+    category: 'background_frame',
+    ratio: '1:1',
+    tags: ['détourage', 'tech', 'hackathon', 'conférence', 'carré'],
+    descriptor: {
+      version: 1,
+      ratio: '1:1',
+      background: 'transparent',
+      subject: 'cutout',
+      photo_anchor: 'tpl-hack-zone',
+      layers: [
+        {
+          id: 'tpl-hack-fond',
+          type: 'image',
+          src: svg(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1080">' +
+              '<defs><linearGradient id="t" x1="0" y1="0" x2="1" y2="1">' +
+              '<stop offset="0" stop-color="#0B1220"/>' +
+              '<stop offset=".6" stop-color="#111C33"/>' +
+              '<stop offset="1" stop-color="#1E1B4B"/>' +
+              '</linearGradient>' +
+              '<pattern id="g" width="60" height="60" patternUnits="userSpaceOnUse">' +
+              '<path d="M60 0H0V60" fill="none" stroke="#7B61FF" stroke-width="1" opacity=".16"/>' +
+              '</pattern></defs>' +
+              '<rect width="1080" height="1080" fill="url(#t)"/>' +
+              '<rect width="1080" height="1080" fill="url(#g)"/>' +
+              '</svg>',
+          ),
+          label: 'Fond technique',
+          x: 0,
+          y: 0,
+          w: 1080,
+          h: 1080,
+          rotation: 0,
+          z: 10,
+          opacity: 1,
+        },
+        /* Derrière le sujet : le disque de marque. */
+        {
+          id: 'tpl-hack-disque',
+          type: 'shape',
+          kind: 'circle',
+          fill: '#7B61FF',
+          stroke: 'transparent',
+          strokeWidth: 0,
+          radius: 0,
+          x: 300,
+          y: 150,
+          w: 480,
+          h: 480,
+          rotation: 0,
+          z: 20,
+          opacity: 0.35,
+        },
+        {
+          id: 'tpl-hack-zone',
+          type: 'image',
+          src: cutoutZone(),
+          label: 'Zone du sujet détouré',
+          x: 150,
+          y: 180,
+          w: 780,
+          h: 720,
+          rotation: 0,
+          z: 30,
+          opacity: 1,
+        },
+        /* Devant le sujet : la pastille d'édition, puis le titre et le sous-titre. */
+        {
+          id: 'tpl-hack-pastille',
+          type: 'shape',
+          kind: 'rounded',
+          fill: '#7B61FF',
+          stroke: 'transparent',
+          strokeWidth: 0,
+          radius: 0.5,
+          x: 90,
+          y: 60,
+          w: 480,
+          h: 80,
+          rotation: 0,
+          z: 40,
+          opacity: 1,
+        },
+        {
+          id: 'tpl-hack-pastille-txt',
+          type: 'text',
+          text: 'ÉDITION 2026',
+          font: 'Bebas Neue',
+          size: 40,
+          color: '#FFFFFF',
+          align: 'center',
+          weight: 'normal',
+          style: 'normal',
+          letterSpacing: 40,
+          lineHeight: 1.1,
+          curve: 0,
+          x: 90,
+          y: 78,
+          w: 480,
+          h: 46,
+          rotation: 0,
+          z: 41,
+          opacity: 1,
+        },
+        {
+          id: 'tpl-hack-titre',
+          type: 'text',
+          text: 'TECH FOR GOOD',
+          font: 'Montserrat',
+          size: 60,
+          color: '#FFFFFF',
+          align: 'center',
+          weight: 'bold',
+          style: 'normal',
+          letterSpacing: 30,
+          lineHeight: 1.16,
+          curve: 0,
+          x: 90,
+          y: 920,
+          w: 900,
+          h: 76,
+          rotation: 0,
+          z: 50,
+          opacity: 1,
+        },
+        {
+          id: 'tpl-hack-sous',
+          type: 'text',
+          text: 'HACKATHON · 48H POUR LA BONNE CAUSE',
+          font: 'Inter',
+          size: 26,
+          color: '#A5B4FC',
+          align: 'center',
+          weight: 'normal',
+          style: 'normal',
+          letterSpacing: 20,
+          lineHeight: 1.16,
+          curve: 0,
+          x: 90,
+          y: 1006,
+          w: 900,
+          h: 42,
+          rotation: 0,
+          z: 51,
+          opacity: 1,
+        },
+      ],
+    },
+  },
+  {
+    id: 'cutout-ocean',
+    title: 'Océan — sujet détouré',
+    description:
+      'Dégradé turquoise, bulles en suspension et vague de premier plan : le sujet ' +
+      'détouré émerge au milieu du récif.',
+    kind: 'background_frame',
+    category: 'background_frame',
+    ratio: '1:1',
+    tags: ['détourage', 'océan', 'environnement', 'cause', 'carré'],
+    descriptor: {
+      version: 1,
+      ratio: '1:1',
+      background: 'transparent',
+      subject: 'cutout',
+      photo_anchor: 'tpl-ocean-zone',
+      layers: [
+        {
+          id: 'tpl-ocean-fond',
+          type: 'image',
+          src: svg(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1080">' +
+              '<defs><linearGradient id="o" x1="0" y1="0" x2="0" y2="1">' +
+              '<stop offset="0" stop-color="#0E7490"/>' +
+              '<stop offset=".45" stop-color="#0369A1"/>' +
+              '<stop offset="1" stop-color="#0C4A6E"/>' +
+              '</linearGradient></defs>' +
+              '<rect width="1080" height="1080" fill="url(#o)"/>' +
+              '<path d="M0 260 Q270 200 540 260 T1080 260" fill="none" stroke="#A5F3FC" stroke-width="6" opacity=".18"/>' +
+              '<path d="M0 420 Q270 360 540 420 T1080 420" fill="none" stroke="#A5F3FC" stroke-width="5" opacity=".14"/>' +
+              '<path d="M0 580 Q270 520 540 580 T1080 580" fill="none" stroke="#A5F3FC" stroke-width="4" opacity=".10"/>' +
+              '</svg>',
+          ),
+          label: 'Eau profonde',
+          x: 0,
+          y: 0,
+          w: 1080,
+          h: 1080,
+          rotation: 0,
+          z: 10,
+          opacity: 1,
+        },
+        /* Derrière le sujet : des bulles qui remontent. */
+        {
+          id: 'tpl-ocean-bulle-1',
+          type: 'shape',
+          kind: 'circle',
+          fill: '#FFFFFF',
+          stroke: 'transparent',
+          strokeWidth: 0,
+          radius: 0,
+          x: 180,
+          y: 200,
+          w: 120,
+          h: 120,
+          rotation: 0,
+          z: 20,
+          opacity: 0.18,
+        },
+        {
+          id: 'tpl-ocean-bulle-2',
+          type: 'shape',
+          kind: 'circle',
+          fill: '#FFFFFF',
+          stroke: 'transparent',
+          strokeWidth: 0,
+          radius: 0,
+          x: 820,
+          y: 340,
+          w: 90,
+          h: 90,
+          rotation: 0,
+          z: 21,
+          opacity: 0.14,
+        },
+        {
+          id: 'tpl-ocean-bulle-3',
+          type: 'shape',
+          kind: 'circle',
+          fill: '#FFFFFF',
+          stroke: 'transparent',
+          strokeWidth: 0,
+          radius: 0,
+          x: 250,
+          y: 520,
+          w: 70,
+          h: 70,
+          rotation: 0,
+          z: 22,
+          opacity: 0.12,
+        },
+        {
+          id: 'tpl-ocean-zone',
+          type: 'image',
+          src: cutoutZone(),
+          label: 'Zone du sujet détouré',
+          x: 170,
+          y: 170,
+          w: 740,
+          h: 740,
+          rotation: 0,
+          z: 30,
+          opacity: 1,
+        },
+        /* Devant le sujet : la vague de premier plan, qui le coupe aux pieds. */
+        {
+          id: 'tpl-ocean-vague',
+          type: 'shape',
+          kind: 'wave',
+          fill: '#0369A1',
+          stroke: 'transparent',
+          strokeWidth: 0,
+          radius: 0,
+          x: 0,
+          y: 890,
+          w: 1080,
+          h: 180,
+          rotation: 0,
+          z: 40,
+          opacity: 0.9,
+        },
+        {
+          id: 'tpl-ocean-titre',
+          type: 'text',
+          text: 'SAVE THE OCEAN',
+          font: 'Bebas Neue',
+          size: 78,
+          color: '#FFFFFF',
+          align: 'center',
+          weight: 'normal',
+          style: 'normal',
+          letterSpacing: 40,
+          lineHeight: 1.1,
+          curve: 0,
+          x: 90,
+          y: 60,
+          w: 900,
+          h: 100,
+          rotation: 0,
+          z: 50,
+          opacity: 1,
+        },
+        {
+          id: 'tpl-ocean-sous',
+          type: 'text',
+          text: '#Ocean2026',
+          font: 'Poppins',
+          size: 34,
+          color: '#A5F3FC',
+          align: 'center',
+          weight: 'bold',
+          style: 'normal',
+          letterSpacing: 30,
+          lineHeight: 1.16,
+          curve: 0,
+          x: 90,
+          y: 950,
+          w: 900,
+          h: 52,
+          rotation: 0,
+          z: 51,
+          opacity: 1,
+        },
+      ],
+    },
+  },
+);
+
+/**
  * Ramène les calques d'un modèle dans le format de la campagne.
  *
  * Un modèle est écrit dans **son** format (9:16, 1:1…). L'appliquer sur une
@@ -748,11 +1280,19 @@ function isUserImage(layer: Layer, anchorId?: string): boolean {
  * Le format et le type de campagne ne changent jamais : seul le décor est
  * remplacé. Les textes et les photos du créateur sont reconduits si
  * `preserveExisting` est actif, pour ne pas jeter un message déjà rédigé.
+ *
+ * `kind` est le type de la **campagne** éditée. Il n'est pas décoratif : c'est
+ * lui qui décide si le mode du modèle (`subject`) peut être posé. Voir le
+ * commentaire de `subject` ci-dessous — sans cette garde, un modèle détouré
+ * appliqué à un cadre photo ferait basculer son dimensionnement en « contenir »
+ * alors que le parcours participant, lui, ne détoure que les
+ * `background_frame`.
  */
 export function applyTemplate(
   current: Descriptor,
   template: FrameTemplate,
   preserveExisting = true,
+  kind?: CampaignKind,
 ): Descriptor {
   const clone: Descriptor = JSON.parse(JSON.stringify(template.descriptor));
   const from = ratioSpec(clone.ratio);
@@ -764,6 +1304,21 @@ export function applyTemplate(
     background: current.background,
     layers: rescaleTo(clone.layers, from, current.ratio),
     motion: clone.motion,
+    /*
+     * Le mode du modèle ne suit que le type de campagne qui le comprend.
+     *
+     * Un modèle détouré est un modèle de **Photo sur fond** : son `subject` n'a
+     * de sens que là. Ailleurs il serait au mieux ignoré, au pire nuisible —
+     * `photoFit()` lit `isCutout()` sans regarder le type de campagne, donc un
+     * cadre photo porteur de ce drapeau verrait sa photo **contenue** au lieu de
+     * couvrir, c'est-à-dire entourée de transparent là où le participant attend
+     * un fond plein.
+     *
+     * Fermé par défaut : sans `kind`, le mode n'est pas posé. Un appelant qui
+     * ignore le type de campagne ne peut donc pas propager un drapeau qu'il ne
+     * comprend pas.
+     */
+    subject: kind === 'background_frame' ? clone.subject : undefined,
   };
 
   if (!preserveExisting) {

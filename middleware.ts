@@ -2,6 +2,48 @@ import { NextResponse, type NextRequest } from 'next/server';
 import type { CookieOptions } from '@supabase/ssr';
 
 /**
+ * Les hôtes que le détourage sur l'appareil doit joindre.
+ *
+ * Sans eux, la CSP fait échouer le détourage **avant** toute question de réseau :
+ * `loadMediapipe()` et `loadTransformers()` font un `import()` d'une URL sur
+ * `cdn.jsdelivr.net` — refusé par `script-src` — et le WASM ainsi que les poids
+ * sont récupérés par `fetch` — refusé par `connect-src`. Le participant, lui,
+ * voyait « le modèle n'a pas pu être téléchargé », c'est-à-dire un message
+ * exact pour une cause fausse.
+ *
+ * La liste est **écrite ici en clair et non importée** de `lib/cutout.ts` : ce
+ * fichier tourne dans le middleware (runtime Edge) et l'y importer traînerait
+ * des symboles navigateur. Elle est courte, fermée, et chacun de ces hôtes est
+ * justifié par une entrée `hosts` du registre `CUTOUT_MODELS`.
+ *
+ * `wss:` est nécessaire pour MediaPipe, qui ouvre une connexion WebSocket vers
+ * son CDN lors de l'initialisation du graphe.
+ */
+const CUTOUT_HOSTS = [
+  'https://cdn.jsdelivr.net', // @mediapipe/tasks-vision, @huggingface/transformers
+  'https://storage.googleapis.com', // selfie_segmenter.tflite (modèle MediaPipe)
+  'https://huggingface.co', // MODNet, RMBG-1.4 (poids)
+  'https://cdn-lfs.huggingface.co', // les mêmes poids, servis par le CDN LFS
+];
+
+/**
+ * Les polices que le participant peut poser sur son texte.
+ *
+ * Elles sont chargées côté client par une balise `<link>` vers
+ * `fonts.googleapis.com` (`components/participant/participant-stage.tsx`), pour
+ * une raison précise : la police est choisie **après** le rendu, dans le
+ * panneau de réglages, donc `next/font` — qui fige les polices au build — ne
+ * peut pas les fournir. Sans ces deux hôtes, une police choisie par le
+ * participant ne s'applique jamais : le texte retombe silencieusement sur la
+ * police par défaut.
+ *
+ * `fonts.gstatic.com` sert les fichiers eux-mêmes, `fonts.googleapis.com` la
+ * feuille de style. Les deux sont nécessaires ; n'en autoriser qu'un donnerait
+ * une feuille de style dont les fichiers de police restent bloqués.
+ */
+const FONT_HOSTS = ['https://fonts.googleapis.com', 'https://fonts.gstatic.com'];
+
+/**
  * Sécurité + session Supabase :
  *
  * 1. En-têtes de sécurité (HSTS, CSP, X-Frame-Options, X-Content-Type-Options,
@@ -39,16 +81,30 @@ export async function middleware(request: NextRequest) {
       'Permissions-Policy',
       'camera=(), microphone=(), geolocation=()',
     );
-    // CSP stricte : scripts/style autorisés uniquement inline (Next.js) + self
+    /*
+     * CSP. Les hôtes du détourage sont autorisés **nommément** et non par un
+     * joker : le participant exécute du script tiers dans la page qui porte sa
+     * photo, la moindre ouverture en trop y est une porte. `wasm-unsafe-eval`
+     * est requis par WebAssembly, sans qui aucun des deux moteurs ne démarre ;
+     * il est plus étroit que `unsafe-eval`, déjà présent pour Next.js.
+     *
+     * **`odml.pa.googleapis.com` est volontairement ABSENT.** MediaPipe y envoie
+     * de la télémétrie d'usage (« odml » = On-Device Machine Learning). Laisser
+     * cette connexion passer contredirait la promesse affichée au participant —
+     * « votre photo est traitée sur votre appareil ». Le refus est donc le
+     * comportement voulu, et il n'empêche rien : le moteur démarre, détoure et
+     * rend son verdict sans ce journal. C'est une **décision de confidentialité
+     * inscrite dans l'en-tête**, pas un oubli.
+     */
     response.headers.set(
       'Content-Security-Policy',
       [
         "default-src 'self'",
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
-        "style-src 'self' 'unsafe-inline'",
+        `script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' ${CUTOUT_HOSTS.join(' ')}`,
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
         "img-src 'self' data: blob: https:",
-        "font-src 'self' data:",
-        "connect-src 'self' https://*.supabase.co https://*.supabase.in",
+        `font-src 'self' data: ${FONT_HOSTS.join(' ')}`,
+        `connect-src 'self' https://*.supabase.co https://*.supabase.in ${CUTOUT_HOSTS.join(' ')} wss://cdn.jsdelivr.net`,
         "frame-src 'none'",
         "object-src 'none'",
         "base-uri 'self'",

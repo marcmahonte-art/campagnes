@@ -23,7 +23,9 @@
  * 2. **La photo couvre toujours la zone.** Un cadre est un PNG à zones
  *    transparentes : si la photo laissait un trou, on verrait le damier. Les
  *    contraintes de déplacement rendent ce trou impossible, y compris en cas de
- *    code fautif en amont.
+ *    code fautif en amont. La règle souffre **une** exception, le détourage :
+ *    un sujet détaché de son arrière-plan n'a plus rien à couvrir, et le
+ *    couvrir l'amputerait. `PhotoFit` porte les deux cas.
  *
  * La zone vaut le cadre entier en mode Cadre, et l'emprise du calque désigné en
  * mode Fond (`photoZone`). Tout le reste du module s'écrit donc en géométrie de
@@ -35,6 +37,7 @@ import {
   PARTICIPANT_PHOTO_ID,
   PARTICIPANT_TEXT_ID,
   insertNeutralMotion,
+  isCutout,
   photoZone,
   type PhotoZone,
 } from './descriptor';
@@ -84,10 +87,45 @@ const INITIAL_VERTICAL_BIAS = 0.45;
 /* Géométrie                                                           */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Comment le média du participant s'ajuste à la zone photo.
+ *
+ * - `cover`   il **couvre** la zone : il déborde et se fait découper. C'est le
+ *   mode Fond classique — la zone est une fenêtre, et une fenêtre ne laisse
+ *   jamais voir le damier derrière elle.
+ * - `contain` il **tient entier** dans la zone. C'est le détourage : le sujet
+ *   n'a plus d'arrière-plan, donc plus rien à couvrir ; le couvrir l'amputerait.
+ *
+ * Le paramètre est optionnel partout, avec `cover` pour défaut : tout appel
+ * écrit avant le détourage garde exactement son résultat.
+ */
+export type PhotoFit = 'cover' | 'contain';
+
 /** Taille de la photo à l'échelle de couverture minimale (zoom = 1). */
 export function coverSize(photo: ParticipantPhoto, zone: PhotoZone): { w: number; h: number } {
   const scale = Math.max(zone.w / photo.naturalWidth, zone.h / photo.naturalHeight);
   return { w: photo.naturalWidth * scale, h: photo.naturalHeight * scale };
+}
+
+/**
+ * Taille de la photo à l'échelle où elle tient **entière** dans la zone (zoom = 1).
+ *
+ * Symétrique de `coverSize`, et volontairement écrit juste à côté : les deux ne
+ * diffèrent que par `Math.min` / `Math.max`, et les voir côte à côte rend
+ * difficile de se tromper de sens en les relisant.
+ */
+export function containSize(photo: ParticipantPhoto, zone: PhotoZone): { w: number; h: number } {
+  const scale = Math.min(zone.w / photo.naturalWidth, zone.h / photo.naturalHeight);
+  return { w: photo.naturalWidth * scale, h: photo.naturalHeight * scale };
+}
+
+/** Taille de référence d'un ajustement, au zoom 1. */
+export function baseSize(
+  photo: ParticipantPhoto,
+  zone: PhotoZone,
+  fit: PhotoFit = 'cover',
+): { w: number; h: number } {
+  return fit === 'contain' ? containSize(photo, zone) : coverSize(photo, zone);
 }
 
 /** Taille effective de la photo pour un zoom donné. */
@@ -95,8 +133,9 @@ export function photoSize(
   photo: ParticipantPhoto,
   zone: PhotoZone,
   zoom: number,
+  fit: PhotoFit = 'cover',
 ): { w: number; h: number } {
-  const base = coverSize(photo, zone);
+  const base = baseSize(photo, zone, fit);
   return { w: base.w * zoom, h: base.h * zoom };
 }
 
@@ -111,8 +150,9 @@ export function placementBounds(
   photo: ParticipantPhoto,
   zone: PhotoZone,
   zoom: number,
+  fit: PhotoFit = 'cover',
 ): { minX: number; maxX: number; minY: number; maxY: number } {
-  const { w, h } = photoSize(photo, zone, zoom);
+  const { w, h } = photoSize(photo, zone, zoom, fit);
   return {
     minX: zone.x - w + 30,
     maxX: zone.x + zone.w - 30,
@@ -126,9 +166,10 @@ export function clampPlacement(
   photo: ParticipantPhoto,
   zone: PhotoZone,
   placement: PhotoPlacement,
+  fit: PhotoFit = 'cover',
 ): PhotoPlacement {
   const zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, placement.zoom));
-  const bounds = placementBounds(photo, zone, zoom);
+  const bounds = placementBounds(photo, zone, zoom, fit);
   return {
     zoom,
     x: Math.min(bounds.maxX, Math.max(bounds.minX, placement.x)),
@@ -136,9 +177,18 @@ export function clampPlacement(
   };
 }
 
-/** Placement de départ : couverture initiale optimale (zoom 1), centré sur la zone. */
-export function initialPlacement(photo: ParticipantPhoto, zone: PhotoZone): PhotoPlacement {
-  const { w, h } = photoSize(photo, zone, 1);
+/**
+ * Placement de départ : ajustement optimal au zoom 1, centré sur la zone.
+ *
+ * « Optimal » vaut couverture en mode Fond classique et sujet entier en mode
+ * détourage — c'est `fit` qui tranche, et lui seul.
+ */
+export function initialPlacement(
+  photo: ParticipantPhoto,
+  zone: PhotoZone,
+  fit: PhotoFit = 'cover',
+): PhotoPlacement {
+  const { w, h } = photoSize(photo, zone, 1, fit);
   return {
     zoom: 1,
     x: zone.x + (zone.w - w) / 2,
@@ -156,17 +206,23 @@ export function zoomAroundCenter(
   zone: PhotoZone,
   placement: PhotoPlacement,
   nextZoom: number,
+  fit: PhotoFit = 'cover',
 ): PhotoPlacement {
   const clampedZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, nextZoom));
   const factor = clampedZoom / placement.zoom;
   const cx = zone.x + zone.w / 2;
   const cy = zone.y + zone.h / 2;
 
-  return clampPlacement(photo, zone, {
-    zoom: clampedZoom,
-    x: cx - (cx - placement.x) * factor,
-    y: cy - (cy - placement.y) * factor,
-  });
+  return clampPlacement(
+    photo,
+    zone,
+    {
+      zoom: clampedZoom,
+      x: cx - (cx - placement.x) * factor,
+      y: cy - (cy - placement.y) * factor,
+    },
+    fit,
+  );
 }
 
 /** Indique si la photo peut encore bouger sur chaque axe : toujours vrai (Twibbonize). */
@@ -487,6 +543,18 @@ export function participantTextLayer(
 /* ------------------------------------------------------------------ */
 
 /**
+ * L'ajustement du média pour un cadre donné.
+ *
+ * Le détourage est la **seule** chose qui fasse basculer en « contenir » : un
+ * sujet détaché de son arrière-plan n'a plus rien à couvrir, et le couvrir
+ * l'amputerait. Partout ailleurs la zone reste une fenêtre, qui doit être
+ * couverte — sinon on verrait le damier au travers.
+ */
+export function photoFit(frame: Descriptor): PhotoFit {
+  return isCutout(frame) ? 'contain' : 'cover';
+}
+
+/**
  * La couche image qui porte la photo du participant.
  *
  * Aucun arrondi : le placement affiché et le placement exporté sont les mêmes
@@ -498,8 +566,9 @@ export function photoLayer(
   placement: PhotoPlacement,
   z = 0,
   filter: PhotoFilter = 'none',
+  fit: PhotoFit = 'cover',
 ): ImageLayer {
-  const { w, h } = photoSize(photo, zone, placement.zoom);
+  const { w, h } = photoSize(photo, zone, placement.zoom, fit);
   return {
     id: PARTICIPANT_PHOTO_ID,
     type: 'image',
@@ -531,6 +600,26 @@ function gapBounds(sorted: Layer[], insertAt: number): { below: number; above: n
 }
 
 /**
+ * Où glisser les calques du participant dans la pile du créateur.
+ *
+ * Extrait de `composeDescriptor()` parce que la scène participant a besoin du
+ * **même** point d'insertion sans recomposer tout le descripteur. La nuance
+ * n'est pas cosmétique : le descripteur composé change à chaque déplacement —
+ * la géométrie de la photo en dépend — donc s'en servir comme source d'ordre
+ * ferait changer l'identité des calques à chaque geste, et la scène se
+ * reconstruirait en boucle pendant que le participant fait glisser sa photo.
+ *
+ * `sorted` est la pile déjà triée par `z` : l'appelant la trie une fois, les
+ * deux usages la partagent.
+ */
+export function participantInsertIndex(frame: Descriptor, sorted: Layer[]): number {
+  const anchorIndex = frame.photo_anchor
+    ? sorted.findIndex((layer) => layer.id === frame.photo_anchor)
+    : -1;
+  return anchorIndex === -1 ? 0 : anchorIndex + 1;
+}
+
+/**
  * Descripteur prêt à rendre : celui du créateur, plus les calques du participant
  * à leur place. L'ordre des calques du créateur est préservé à l'identique —
  * c'est ce qui garantit que le visuel produit est bien celui du cadre publié.
@@ -539,6 +628,12 @@ function gapBounds(sorted: Layer[], insertAt: number): { below: number; above: n
  * calque qui délimite la zone : ils masquent ce calque dans la zone, et son décor
  * reste visible tout autour. En **mode Cadre**, ils passent sous tous les calques
  * et n'apparaissent qu'à travers les zones transparentes du visuel.
+ *
+ * En **détourage**, la position est la même mais la découpe rectangulaire
+ * disparaît : c'est le canal alpha du sujet qui masque. Le décor reste donc
+ * visible tout autour **et** à travers ce que le sujet ne couvre pas — entre un
+ * bras et le buste, sous un menton. C'est précisément ce que la référence
+ * montre, et c'est impossible avec une photo rectangulaire.
  *
  * La photo garde cette logique de fenêtre. Le texte, lui, est volontairement
  * placé au-dessus de tous les calques du cadre : quand un participant écrit, le
@@ -559,13 +654,11 @@ export function composeDescriptor(
   if (!photo || !placement) return frame;
 
   const zone = photoZone(frame);
-  const safe = clampPlacement(photo, zone, placement);
+  const fit = photoFit(frame);
+  const safe = clampPlacement(photo, zone, placement, fit);
 
   const sorted = [...frame.layers].sort((a, b) => a.z - b.z);
-  const anchorIndex = frame.photo_anchor
-    ? sorted.findIndex((layer) => layer.id === frame.photo_anchor)
-    : -1;
-  const insertAt = anchorIndex === -1 ? 0 : anchorIndex + 1;
+  const insertAt = participantInsertIndex(frame, sorted);
 
   /*
    * Un texte vide n'est pas un calque : le participant qui efface ce qu'il a
@@ -580,7 +673,14 @@ export function composeDescriptor(
    * tableau, donc l'animation réserve aussi deux positions neutres distinctes.
    */
   const { below, above } = gapBounds(sorted, insertAt);
-  const photoParticipant = photoLayer(photo, zone, safe, (below + above) / 2, style.filter);
+  const photoParticipant = photoLayer(
+    photo,
+    zone,
+    safe,
+    (below + above) / 2,
+    style.filter,
+    fit,
+  );
   const textLayer = text
     ? participantTextLayer(
         text,

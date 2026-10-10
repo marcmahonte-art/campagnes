@@ -49,7 +49,26 @@ import { useWatermarkPass } from '@/components/participant/use-watermark-pass';
 import { backend } from '@/lib/backend';
 import { distributionService } from '@/lib/distribution-service';
 import { PrivateExportCoordinator, PrivateExportUnavailable, technicalHash, type PreparedPrivateExport } from '@/lib/distribution-export';
-import { frameZone, photoZone } from '@/lib/descriptor';
+import { frameZone, isCutout, photoZone } from '@/lib/descriptor';
+import {
+  ABANDON_AFTER_MS,
+  chooseModel,
+  cutoutErrorMessage,
+  cutoutFailureReason,
+  cutoutOutcome,
+  cutoutPhoto,
+  detectWebGpu,
+  downloadNeedsConsent,
+  firstLoadTransferBytes,
+  formatBytes,
+  isMeteredConnection,
+  shouldOfferServerFallback,
+  type ConnectionLike,
+  type CutoutModel,
+  type CutoutOutcome,
+  type GpuLike,
+} from '@/lib/cutout';
+import { emit } from '@/lib/telemetry';
 import { ratioSpec } from '@/lib/ratios';
 import type { PlanId } from '@/lib/plans';
 import {
@@ -81,8 +100,10 @@ import {
   initialPlacement,
   isSameParticipantState,
   movableAxes,
+  photoFit,
   readPhotoFile,
   zoomAroundCenter,
+  type ParticipantPhoto,
   type ParticipantState,
   type ParticipantText,
   type PhotoPlacement,
@@ -93,6 +114,32 @@ import { blockedMessage, privateLinkBlockedMessage, remaining } from '@/lib/quot
 import { exportPlanFor, shouldWatermark } from '@/lib/watermark-policy';
 import { FONTS } from '@/lib/fonts';
 import type { CampaignQuota, GalleryItem } from '@/lib/types';
+
+/**
+ * Ce que le détourage a donné — et l'original, toujours gardé.
+ *
+ * `original` est conservé dans **les trois** états, pas seulement en cas
+ * d'échec : un détourage réussi doit pouvoir être rejoué (le participant veut
+ * essayer un autre cadrage de la même photo), et une photo déjà détourée ne
+ * peut pas servir d'entrée à un second détourage — le masque s'appliquerait à
+ * un sujet qui n'a plus de fond, et le résultat serait un trou.
+ */
+type CutoutAttempt =
+  | { status: 'running'; original: ParticipantPhoto; message: string; ratio?: number }
+  | { status: 'done'; original: ParticipantPhoto; outcome: CutoutOutcome; message: string }
+  | { status: 'failed'; original: ParticipantPhoto; message: string };
+
+/**
+ * Ce qu'on dit quand le détourage dépasse le seuil d'attente.
+ *
+ * La formulation est contrainte par une décision : le recours au serveur est
+ * prévu par l'arbitrage du 2026-10-10, mais **le chemin serveur n'est pas
+ * écrit**. On ne peut donc pas le proposer. Ce message dit la seule chose qui
+ * soit vraie et utile — que ça continue, et que le détourage ne fait pas
+ * sortir la photo de l'appareil.
+ */
+const CUTOUT_SLOW_MESSAGE =
+  'Le détourage prend plus de temps que prévu. Votre photo est traitée sur votre appareil.';
 
 const TWIBBON_COLOR_PAGES: readonly string[][] = [
   ['#000000', '#374151', '#64748b', '#94a3b8', '#ffffff', '#ef4444'],
@@ -276,6 +323,23 @@ export function ParticipantJourney({
   const [exporting, setExporting] = useState<'png' | 'video' | null>(null);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+
+  /* ---------------- Détourage (campagnes `subject: 'cutout'`) ---------------- */
+  const [cutoutAttempt, setCutoutAttempt] = useState<CutoutAttempt | null>(null);
+  /**
+   * Le moteur qui sera employé, et s'il faut l'accord du participant.
+   *
+   * Calculé **avant** tout téléchargement, parce que la question de l'accord se
+   * pose avant, pas pendant. `null` tant qu'il n'est pas connu : on ne demande
+   * jamais rien sur une information qu'on n'a pas encore.
+   */
+  const [cutoutPlan, setCutoutPlan] = useState<{
+    model: CutoutModel;
+    needsConsent: boolean;
+  } | null>(null);
+  const [consentGranted, setConsentGranted] = useState(false);
+  /** L'accord est demandé : la photo est déjà affichée, le détourage attend. */
+  const [askingConsent, setAskingConsent] = useState(false);
   /**
    * Quota de la campagne, lu dès le chargement. `null` tant qu'il n'est pas
    * connu — on ne suppose jamais qu'il est ouvert, sinon un participant verrait
@@ -373,6 +437,183 @@ export function ParticipantJourney({
   const zone = useMemo(() => (frame ? photoZone(frame) : frameZone(ratio)), [frame, ratio]);
 
   /**
+   * L'ajustement du média : « couvrir » partout, « contenir » en détourage.
+   *
+   * Dérivé du cadre, jamais du type de campagne : c'est `subject` qui tranche,
+   * et un même `background_frame` peut décrire les deux. Toutes les fonctions de
+   * géométrie le reçoivent, sans quoi le placement affiché et le placement
+   * exporté ne porteraient plus les mêmes nombres.
+   */
+  const fit = frame ? photoFit(frame) : 'cover';
+
+  /**
+   * La campagne demande-t-elle un détourage ?
+   *
+   * Deux conditions, et les deux sont nécessaires : le **type** de campagne
+   * (`background_frame`) et le **drapeau** du descripteur (`subject: 'cutout'`).
+   * Un même `background_frame` peut décrire les deux modes — c'est `subject` qui
+   * tranche, et lui seul. Le type exclut au passage les campagnes vidéo : on ne
+   * détoure pas une vidéo.
+   */
+  const isCutoutCampaign =
+    campaign?.kind === 'background_frame' && frame !== null && isCutout(frame);
+
+  /*
+   * Quel moteur, et faut-il l'accord ? Tranché une fois, avant toute photo.
+   *
+   * `chooseModel()` est la **même** fonction que celle qu'emploiera
+   * `cutoutPhoto()` : le parcours ne redécide pas la stratégie à deux étages, il
+   * la lit. La recalculer autrement ferait diverger la taille annoncée au
+   * participant de celle qui se télécharge réellement.
+   */
+  useEffect(() => {
+    if (!isCutoutCampaign) return;
+    let alive = true;
+    void (async () => {
+      const nav = (globalThis as { navigator?: { gpu?: GpuLike; connection?: ConnectionLike } })
+        .navigator;
+      const webgpu = await detectWebGpu(nav?.gpu);
+      const model = chooseModel(webgpu);
+      if (!alive) return;
+      setCutoutPlan({
+        model,
+        needsConsent: downloadNeedsConsent(model, isMeteredConnection(nav?.connection)),
+      });
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [isCutoutCampaign]);
+
+  /**
+   * L'ouverture du parcours, comptée **une fois**.
+   *
+   * Une fois, et pas à chaque rendu : `campaign` et `frame` changent d'identité
+   * quand le quota se relit ou que le pass se rafraîchit, et un compteur
+   * d'ouvertures qui suit les rendus ne mesure plus rien. La garde est un
+   * `ref`, pas une dépendance — c'est la seule façon d'exprimer « une fois »
+   * avec un effet.
+   */
+  const ouvertureComptee = useRef(false);
+  useEffect(() => {
+    if (ouvertureComptee.current || !campaign || !frame) return;
+    ouvertureComptee.current = true;
+    emit('journey_open', { kind: campaign.kind });
+  }, [campaign, frame]);
+
+  /**
+   * Le détourage, avec son état de progression.
+   *
+   * Renvoie la photo à **afficher** : celle du détourage s'il a abouti, l'original
+   * sinon. Un échec ne laisse jamais le parcours sans image — le participant a
+   * fourni une photo, il doit en sortir quelque chose.
+   */
+  const applyCutout = useCallback(async (original: ParticipantPhoto): Promise<ParticipantPhoto> => {
+    setCutoutAttempt({ status: 'running', original, message: 'Préparation de votre photo…' });
+    const startedAt = Date.now();
+    /*
+     * Le seuil vient de l'arbitrage du 2026-10-10, et la décision passe par
+     * `shouldOfferServerFallback()` plutôt que par une comparaison recopiée :
+     * c'est cette fonction qui fait autorité sur le seuil.
+     *
+     * Elle décide ici d'un **message**, pas d'une bascule : le recours au serveur
+     * est prévu par l'arbitrage mais le chemin serveur n'est pas écrit, donc on
+     * ne le propose pas. Promettre un recours inexistant serait pire que de se
+     * taire.
+     */
+    const lent = setTimeout(() => {
+      setCutoutAttempt((attempt) =>
+        attempt && attempt.status === 'running' && shouldOfferServerFallback(Date.now() - startedAt)
+          ? { ...attempt, message: CUTOUT_SLOW_MESSAGE }
+          : attempt,
+      );
+    }, ABANDON_AFTER_MS);
+
+    try {
+      const result = await cutoutPhoto(original, {
+        onProgress: (p) =>
+          setCutoutAttempt((attempt) =>
+            attempt && attempt.status === 'running'
+              ? { ...attempt, message: p.message, ratio: p.ratio }
+              : attempt,
+          ),
+      });
+
+      const outcome = cutoutOutcome(result.quality);
+      if (outcome === 'unusable') {
+        /*
+         * Un masque qui a tout retiré n'est pas un résultat : c'est une image
+         * blanche. On le traite comme un échec, et le message vient de
+         * `judgeCutout()` — qui sait *pourquoi*, contrairement à nous.
+         */
+        /*
+         * Pas de `reason` ici, et c'est volontaire : le verdict dit déjà
+         * exactement ce qui s'est passé (« vide »). Inventer une raison
+         * supplémentaire serait une seconde description de la même chose, donc
+         * une seconde chose à tenir à jour.
+         */
+        emit('cutout_failed', {
+          runtime: cutoutPlan?.model.runtime,
+          verdict: result.quality.verdict,
+          outcome,
+          ms: Date.now() - startedAt,
+        });
+        setCutoutAttempt({ status: 'failed', original, message: result.quality.message });
+        return original;
+      }
+
+      emit('cutout_ok', {
+        runtime: cutoutPlan?.model.runtime,
+        verdict: result.quality.verdict,
+        outcome,
+        ms: Date.now() - startedAt,
+      });
+
+      setCutoutAttempt({ status: 'done', original, outcome, message: result.quality.message });
+      /*
+       * Le détourage ne réduit pas la photo — le masque est appliqué à la pleine
+       * résolution. Les dimensions sont donc celles de l'original, et le
+       * placement du participant reste valable tel quel.
+       */
+      return { src: result.src, naturalWidth: result.width, naturalHeight: result.height };
+    } catch (e) {
+      /*
+       * `cutoutFailureReason()` et non `cutoutErrorMessage()` : la mesure reçoit
+       * une valeur **fermée** (« network », « gpu »…), jamais le message. Un
+       * message d'erreur est du texte libre, et c'est précisément ce qu'on ne
+       * transmet pas.
+       */
+      emit('cutout_failed', {
+        runtime: cutoutPlan?.model.runtime,
+        reason: cutoutFailureReason(e),
+        ms: Date.now() - startedAt,
+      });
+      /*
+       * Trace de diagnostic, **jamais active pour un participant**.
+       *
+       * `cutoutErrorMessage()` traduit toute panne en six messages actionnables :
+       * c'est le bon contrat à l'écran et un mauvais outil de diagnostic. Quand
+       * le message générique s'affiche alors que le moteur tourne, la cause
+       * interne n'est visible nulle part. Le drapeau `?detourage=debug` l'expose,
+       * et il faut le poser **explicitement** — un parcours normal ne journalise
+       * rien.
+       *
+       * Ce qui est journalisé : la **pile** de l'erreur. Ce qui ne l'est pas : la
+       * photo, son contenu, ni sa source — une erreur nomme un fichier ou une
+       * URL, jamais l'image du participant.
+       */
+      if (typeof window !== 'undefined' &&
+          new URLSearchParams(window.location.search).get('detourage') === 'debug') {
+        console.error('[détourage] échec — raison :', cutoutFailureReason(e), '\nerreur brute :', e);
+      }
+      setCutoutAttempt({ status: 'failed', original, message: cutoutErrorMessage(e) });
+      return original;
+    } finally {
+      clearTimeout(lent);
+    }
+  }, [cutoutPlan]);
+
+  /**
    * Le filigrane suit la formule du **créateur** — le participant n'en a pas.
    * La projection publique expose ce seul booléen, jamais la formule.
    *
@@ -450,15 +691,79 @@ export function ParticipantJourney({
          * donc partir vide.
          */
         const replacing = photo !== null;
-        setPhoto(next, initialPlacement(next, zone), !replacing);
+
+        /*
+         * L'accord se demande **avant** le téléchargement, et il se demande sur
+         * la photo déjà affichée : le participant voit ce qu'il a choisi pendant
+         * qu'il décide. Le détourage attend son accord ; la photo, non.
+         */
+        if (isCutoutCampaign && cutoutPlan?.needsConsent && !consentGranted) {
+          setCutoutAttempt(null);
+          setAskingConsent(true);
+          setPhoto(next, initialPlacement(next, zone, fit), !replacing);
+          emit('photo_imported', { kind: campaign?.kind });
+          return;
+        }
+
+        const effective = isCutoutCampaign ? await applyCutout(next) : next;
+        setPhoto(effective, initialPlacement(effective, zone, fit), !replacing);
+        /*
+         * L'événement porte le **type** de campagne, jamais son nom, son
+         * identifiant ni son lien : c'est ce qui permet de comparer les parcours
+         * sans savoir de quelle campagne il s'agit.
+         */
+        emit('photo_imported', { kind: campaign?.kind });
       } catch (e) {
         setError(e instanceof Error ? e.message : "Cette image n'a pas pu être ouverte.");
       } finally {
         setReading(false);
       }
     },
-    [zone, photo, setPhoto],
+    [campaign, zone, photo, setPhoto, fit, isCutoutCampaign, cutoutPlan, consentGranted, applyCutout],
   );
+
+  /**
+   * Rejoue le détourage sur l'**original**, jamais sur le résultat.
+   *
+   * Détourer une photo déjà détourée n'a pas de sens : le masque s'appliquerait
+   * à un sujet sans fond, et il ne resterait qu'un trou. C'est la raison pour
+   * laquelle `original` est conservé dans les trois états de l'essai.
+   *
+   * Le placement courant est **conservé** : le détourage ne change pas les
+   * dimensions, donc le cadrage choisi reste juste. Le recalculer ramènerait la
+   * photo au centre sans raison, et le participant verrait son réglage disparaître.
+   */
+  const retryCutout = useCallback(async () => {
+    const attempt = cutoutAttempt;
+    if (!attempt) return;
+    setReading(true);
+    try {
+      const effective = await applyCutout(attempt.original);
+      setPhoto(effective, placement ?? initialPlacement(effective, zone, fit), false);
+    } finally {
+      setReading(false);
+    }
+  }, [cutoutAttempt, applyCutout, setPhoto, placement, zone, fit]);
+
+  /**
+   * L'accord donné : on détoure la photo déjà affichée, qui est l'original.
+   *
+   * `consentGranted` est posé **avant** l'attente, et il le reste : reposer la
+   * question à chaque photo ferait de l'accord une formalité qu'on clique sans
+   * lire, c'est-à-dire l'inverse de ce qu'il est censé être.
+   */
+  const grantCutoutConsent = useCallback(async () => {
+    setAskingConsent(false);
+    setConsentGranted(true);
+    if (!photo) return;
+    setReading(true);
+    try {
+      const effective = await applyCutout(photo);
+      setPhoto(effective, placement ?? initialPlacement(effective, zone, fit), false);
+    } finally {
+      setReading(false);
+    }
+  }, [photo, applyCutout, setPhoto, placement, zone, fit]);
 
   /* ---------------- Choix de la vidéo ---------------- */
   const chooseVideo = useCallback(
@@ -512,14 +817,14 @@ export function ParticipantJourney({
         setVideoEl(element);
 
         const pseudo = pseudoPhoto(next);
-        setPhoto(pseudo, initialPlacement(pseudo, zone), !replacing);
+        setPhoto(pseudo, initialPlacement(pseudo, zone, fit), !replacing);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Cette vidéo n'a pas pu être ouverte.");
       } finally {
         setReading(false);
       }
     },
-    [zone, clip, setPhoto],
+    [zone, clip, setPhoto, fit],
   );
 
   /* ---------------- Cycle de vie de l'élément vidéo ---------------- */
@@ -753,6 +1058,7 @@ export function ParticipantJourney({
       setError(null);
       setExporting(kind);
       setProgress(0);
+      const exportStartedAt = Date.now();
       try {
         if (kind === 'video' && (typeof MediaRecorder === 'undefined' || typeof HTMLCanvasElement.prototype.captureStream !== 'function')) {
           throw new Error(
@@ -831,6 +1137,13 @@ export function ParticipantJourney({
         notify(savedMessage);
 
         /*
+         * L'export est le seul moment où l'on sait que le participant est
+         * **reparti avec son visuel**. La durée est mesurée, mais rien de ce qui
+         * a été produit ne l'est : ni le fichier, ni son nom, ni la photo.
+         */
+        emit('export_ok', { kind: campaign.kind, ms: Date.now() - exportStartedAt });
+
+        /*
          * Le téléchargement est le seul instant du parcours que la plateforme
          * observe réellement : le participant peut copier un lien sans qu'elle
          * le voie, mais elle le voit télécharger. Il compte donc comme un
@@ -859,10 +1172,12 @@ export function ParticipantJourney({
       setError(null);
       setExporting(kind);
       setProgress(0);
+      const exportStartedAt = Date.now();
       try {
         const file = await renderFile(kind, 'free');
         downloadBlob(file.blob, file.filename);
         notify(savedMessage);
+        emit('export_ok', { kind: campaign.kind, ms: Date.now() - exportStartedAt });
       } catch (e) {
         setError(e instanceof Error ? e.message : "L'enregistrement a échoué.");
       } finally {
@@ -965,7 +1280,7 @@ export function ParticipantJourney({
               <ShieldCheck className="size-3.5" aria-hidden />
               {isVideoCampaign
                 ? 'Votre vidéo reste sur votre appareil'
-                : 'Votre photo reste sur votre appareil'}
+                : 'Votre photo est traitée sur votre appareil'}
             </span>
             {clientLogoUrl && (
               <img
@@ -992,6 +1307,94 @@ export function ParticipantJourney({
           <div className="mt-6 md:mt-8">
             {/* ---------------- Scène ---------------- */}
             <div className="min-w-0">
+              {/*
+                L'état du détourage, au-dessus du visuel.
+
+                Il n'apparaît que sur une campagne `subject: 'cutout'`, et
+                seulement quand il y a quelque chose à dire. Un bandeau
+                « tout va bien » n'apprendrait rien et déplacerait le canvas à
+                chaque détourage.
+              */}
+              {isCutoutCampaign && (askingConsent || cutoutAttempt) ? (
+                <div className="mb-3">
+                  {askingConsent && cutoutPlan ? (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 p-3.5">
+                      <p className="text-[13px] font-medium text-amber-900">
+                        Votre connexion est facturée au volume.
+                      </p>
+                      <p className="mt-1 text-[13px] leading-relaxed text-amber-800">
+                        Le détourage doit télécharger son moteur — environ{' '}
+                        {formatBytes(firstLoadTransferBytes(cutoutPlan.model))}. Votre photo, elle,
+                        ne quitte pas votre appareil.
+                      </p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <Button variant="primary" size="sm" onClick={() => void grantCutoutConsent()}>
+                          Détourer ma photo
+                        </Button>
+                        <Button variant="secondary" size="sm" onClick={() => setAskingConsent(false)}>
+                          Continuer sans détourer
+                        </Button>
+                      </div>
+                    </div>
+                  ) : cutoutAttempt?.status === 'running' ? (
+                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-3.5">
+                      <p className="flex items-center gap-2 text-[13px] text-gray-600">
+                        <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
+                        {cutoutAttempt.message}
+                      </p>
+                      {typeof cutoutAttempt.ratio === 'number' ? (
+                        <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-gray-200">
+                          <div
+                            className="h-full rounded-full bg-ink transition-[width] duration-200"
+                            style={{ width: `${Math.round(cutoutAttempt.ratio * 100)}%` }}
+                          />
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : cutoutAttempt?.status === 'failed' ? (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 p-3.5">
+                      <p className="text-[13px] font-medium text-amber-900">
+                        Le détourage n’a pas abouti.
+                      </p>
+                      <p className="mt-1 text-[13px] leading-relaxed text-amber-800">
+                        {cutoutAttempt.message}
+                      </p>
+                      <div className="mt-3">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => void retryCutout()}
+                          disabled={reading}
+                        >
+                          Réessayer
+                        </Button>
+                      </div>
+                    </div>
+                  ) : cutoutAttempt?.status === 'done' && cutoutAttempt.outcome === 'warn' ? (
+                    /*
+                     * Le cas `plein` est le plus trompeur : l'image paraît
+                     * normale, et sans ce message le participant croirait que le
+                     * fond a été retiré alors qu'il ne l'a pas été.
+                     */
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 p-3.5">
+                      <p className="text-[13px] leading-relaxed text-amber-800">
+                        {cutoutAttempt.message}
+                      </p>
+                      <div className="mt-3">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => void retryCutout()}
+                          disabled={reading}
+                        >
+                          Réessayer
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
               {photo && placement ? (
                 <ParticipantStage
                   descriptor={frame}
@@ -1065,7 +1468,12 @@ export function ParticipantJourney({
                     {reading ? (
                       <>
                         <Loader2 className="size-4 animate-spin" aria-hidden />
-                        Ouverture…
+                        {/*
+                          Le libellé suit ce qui se passe réellement : pendant un
+                          détourage, « Ouverture… » serait faux — le fichier est
+                          déjà lu, c'est le modèle qui travaille.
+                        */}
+                        {cutoutAttempt?.status === 'running' ? 'Détourage…' : 'Ouverture…'}
                       </>
                     ) : isVideoCampaign ? (
                       <>
@@ -1299,7 +1707,7 @@ export function ParticipantJourney({
                       onClick={() =>
                         setPlacement((current) =>
                           current
-                            ? zoomAroundCenter(photo, zone, current, current.zoom - 0.2)
+                            ? zoomAroundCenter(photo, zone, current, current.zoom - 0.2, fit)
                             : current,
                         )
                       }
@@ -1317,7 +1725,7 @@ export function ParticipantJourney({
                       onChange={(e) =>
                         setPlacement((current) =>
                           current
-                            ? zoomAroundCenter(photo, zone, current, Number(e.target.value))
+                            ? zoomAroundCenter(photo, zone, current, Number(e.target.value), fit)
                             : current,
                         )
                       }
@@ -1332,7 +1740,7 @@ export function ParticipantJourney({
                       onClick={() =>
                         setPlacement((current) =>
                           current
-                            ? zoomAroundCenter(photo, zone, current, current.zoom + 0.2)
+                            ? zoomAroundCenter(photo, zone, current, current.zoom + 0.2, fit)
                             : current,
                         )
                       }
@@ -1350,7 +1758,7 @@ export function ParticipantJourney({
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => setPlacement(initialPlacement(photo, zone))}
+                      onClick={() => setPlacement(initialPlacement(photo, zone, fit))}
                     >
                       <RotateCcw className="size-3.5" aria-hidden />
                       Recentrer
@@ -1917,7 +2325,7 @@ export function ParticipantJourney({
                 <p className="mt-4 border-t border-gray-200 pt-4 text-xs leading-relaxed text-gray-400">
                   {isVideoCampaign
                     ? 'Votre vidéo est composée dans votre navigateur. Elle n’est jamais envoyée à nos serveurs, et rien n’est conservé. Seul votre téléchargement est compté, afin que le créateur sache quand sa campagne est épuisée.'
-                    : 'Votre photo est traitée dans votre navigateur. Elle n’est jamais envoyée à nos serveurs, et rien n’est conservé. Seul votre téléchargement est compté, afin que le créateur sache quand sa campagne est épuisée.'}
+                    : 'Votre photo et son détourage sont traités dans votre navigateur, sans envoi à nos serveurs. Une seule exception : le retrait du filigrane avec un pass, qui doit passer par un rendu serveur et transmet alors votre visuel. Seul votre téléchargement est compté, afin que le créateur sache quand sa campagne est épuisée.'}
                 </p>
               </Card>
             )}

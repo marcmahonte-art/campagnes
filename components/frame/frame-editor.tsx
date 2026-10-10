@@ -1404,13 +1404,19 @@ export function FrameEditor({
         setError('Les modèles de cadres sont réservés aux formules payantes.');
         return;
       }
-      const next = applyTemplate(descriptorRef.current, template, preserveContent);
+      /*
+       * `kind` est passé au modèle, et ce n'est pas un détail : c'est lui qui
+       * autorise un modèle détouré à poser `subject: 'cutout'`. Sur un cadre
+       * photo, le drapeau serait posé sans que le parcours participant le
+       * traite — et il changerait quand même le dimensionnement de la photo.
+       */
+      const next = applyTemplate(descriptorRef.current, template, preserveContent, kind);
       await buildObjects(next);
       applyLocks();
       setSelectedId(null);
       onChange(next);
     },
-    [applyLocks, buildObjects, onChange, templatesUnlocked],
+    [applyLocks, buildObjects, kind, onChange, templatesUnlocked],
   );
 
   const selectedLayer = descriptor.layers.find((l) => l.id === selectedId) ?? null;

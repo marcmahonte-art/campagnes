@@ -6,6 +6,7 @@ import {
   Image as ImageIcon,
   Images,
   LayoutTemplate,
+  Scissors,
   Search,
   X,
 } from 'lucide-react';
@@ -163,6 +164,14 @@ export function TemplatesModal({
               {filtered.map((tpl) => {
                 const isVideo = tpl.kind === 'video_frame';
                 const isBg = tpl.kind === 'background_frame';
+                /*
+                 * Un modèle « Photo sur fond » peut accueillir la photo de deux
+                 * façons : dans une fenêtre rectangulaire, ou en sujet détouré.
+                 * Les deux se ressemblent sur une vignette schématique et ne
+                 * produisent pourtant pas le même visuel — le créateur doit
+                 * pouvoir le voir **avant** d'appliquer, pas après.
+                 */
+                const isCutoutTpl = isBg && tpl.descriptor.subject === 'cutout';
 
                 return (
                   <div
@@ -183,7 +192,9 @@ export function TemplatesModal({
                         {/* Simulation visuelle */}
                         {isBg && (
                           <div className="size-16 rounded border border-dashed border-purple bg-purple/20 flex items-center justify-center">
-                            <span className="text-[8px] font-medium text-purple-200">Zone photo</span>
+                            <span className="text-[8px] font-medium text-purple-200">
+                              {isCutoutTpl ? 'Sujet détouré' : 'Zone photo'}
+                            </span>
                           </div>
                         )}
                         {!isBg && (
@@ -205,16 +216,19 @@ export function TemplatesModal({
                             <Film className="size-2.5" /> Animé
                           </span>
                         )}
-                        {isBg && (
+                        {isCutoutTpl ? (
+                          <span className="flex items-center gap-1 rounded bg-coral/90 px-1.5 py-0.5 text-[9px] font-semibold text-white backdrop-blur">
+                            <Scissors className="size-2.5" /> Détouré
+                          </span>
+                        ) : isBg ? (
                           <span className="flex items-center gap-1 rounded bg-purple/90 px-1.5 py-0.5 text-[9px] font-semibold text-white backdrop-blur">
                             <Images className="size-2.5" /> Fond
                           </span>
-                        )}
-                        {!isVideo && !isBg && (
+                        ) : !isVideo ? (
                           <span className="flex items-center gap-1 rounded bg-black/60 px-1.5 py-0.5 text-[9px] font-medium text-white backdrop-blur">
                             <ImageIcon className="size-2.5" /> Cadre
                           </span>
-                        )}
+                        ) : null}
                       </div>
                     </div>
 
